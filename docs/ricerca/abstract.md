@@ -7,15 +7,21 @@ text; the numbers in brackets do not exist yet and come from E1–E3 in
 
 ---
 
+> **RISCRITTO l'11 agosto 2026 dopo il secondo giro di prior art.** La versione
+> precedente rivendicava l'intersezione sotto delega come contributo. È SPKI
+> RFC 2693 §6.3.1, 1999, e SentinelAgent arXiv 2604.02767, aprile 2026. Così
+> com'era, desk reject. Il perché e il riposizionamento stanno in
+> [prior-art.md](prior-art.md); qui c'è già la versione corretta.
+
 ## Title
 
-**Capability Laundering: Safety Restrictions Are Enforced Per-Agent, but
-Capabilities Compose Per-System**
+**Delegation Without a Credential: Why Authorization Systems Cannot See
+Agent-to-Agent Requests**
 
-Alternatives, in case the first reads as too rhetorical for the track:
+Alternatives:
 
+- *Tokenless Delegation in Multi-Vendor Agent Systems*
 - *The Union of Two Restricted Agents Is Not Restricted*
-- *Capability Intersection Under Delegation: Confining Multi-Vendor Agent Systems*
 
 ---
 
@@ -39,6 +45,20 @@ This is distinct from the confused deputy problem, where the deputy is deceived
 about the authority under which it acts. Here the second agent is deceived about
 nothing: it is asked to do something it is genuinely permitted to do. The defect
 is in composition, not in either component.
+
+The reason no authorization system catches this is sharper than the framing
+above, and it is our central claim. Every mechanism built to constrain
+delegation — SPKI's 5-tuple reduction (RFC 2693, 1999), macaroon attenuation,
+Biscuit, and recent agentic work such as SentinelAgent (2026) — presupposes that
+*something crosses the delegation boundary*: a token, a credential, a capability
+handle that can be narrowed in transit. The rule these systems enforce, that
+authority intersects rather than unions under delegation, has been settled for
+over two decades and we do not claim it.
+
+Between two agents on one laptop, nothing crosses. A sentence does. There is no
+token to attenuate, no credential to inspect, and therefore no delegation edge
+for any authorization system to see. **A natural-language peer request is a
+delegation edge that carries no credential, and that is why it is unguarded.**
 
 We make three contributions. First, a **capability differential** across [N]
 production agent harnesses on a single machine, showing that the union of their

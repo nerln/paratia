@@ -226,7 +226,7 @@ def cmd_unlock(args) -> int:
     esito = _corri(
         [
             "hdiutil", "attach", str(FORZIERE),
-            "-stdinpass", "-nobrowse",
+            "-stdinpass", "-nobrowse", "-owners", "on",
             "-mountpoint", str(MONTAGGIO),
         ],
         dentro=parola + b"\n",
@@ -567,7 +567,14 @@ def cmd_zona_apri(args) -> int:
         )
     parola = chiedi_passphrase(f"passphrase for {args.nome}: ")
     esito = _corri(
-        ["hdiutil", "attach", reg[args.nome]["bundle"], "-stdinpass", "-nobrowse", "-mountpoint", str(monte)],
+        # -owners on is not decoration. A freshly created encrypted sparsebundle
+        # attaches with ownership IGNORED by default, which means every uid on
+        # the machine is treated as the owner of everything inside and the mode
+        # bits pass unconditionally. Worse, it is a per-attach flag rather than a
+        # property of the image, so whoever runs `hdiutil attach` picks whether
+        # the boundary exists at all — and the default is the one without it.
+        ["hdiutil", "attach", reg[args.nome]["bundle"], "-stdinpass", "-nobrowse",
+         "-owners", "on", "-mountpoint", str(monte)],
         dentro=parola + b"\n",
     )
     if esito.returncode != 0:
@@ -602,6 +609,143 @@ def cmd_zona_elenco(args) -> int:
         stato = "open" if _monte_zona(nome).is_mount() else "closed"
         c_e = "" if Path(z["bundle"]).exists() else "  MISSING"
         print(f"{nome:<16} {stato:<7} {z['bundle']}{c_e}")
+    return 0
+
+
+# -------------------------------------------------------------- mirrors
+
+
+def _specchio_chiave() -> bytes:
+    """The HMAC key that makes pseudonyms stable. Lives in the compartment, so
+    tokens cannot be recomputed by anything that cannot open it."""
+    p = percorso("specchio-chiave")
+    if not p.exists():
+        p.write_bytes(os.urandom(32))
+        p.chmod(0o600)
+    return p.read_bytes()
+
+
+def _specchio_stato(nome: str) -> tuple[Path, dict]:
+    p = percorso(f"specchio-{nome}.json")
+    if not p.exists():
+        raise Rifiuto(f"no mirror called {nome!r}")
+    return p, json.loads(p.read_text())
+
+
+def cmd_specchio_nuovo(args) -> int:
+    da = Path(args.da).expanduser().resolve()
+    a = Path(args.a).expanduser().resolve()
+    if not da.is_dir():
+        raise Rifiuto(f"{da} is not a directory")
+    p = percorso(f"specchio-{args.nome}.json")
+    if p.exists():
+        raise Rifiuto(f"a mirror called {args.nome!r} already exists")
+    p.write_text(json.dumps({"da": str(da), "a": str(a), "motore": args.motore, "tabella": {}}, indent=1))
+    p.chmod(0o600)
+    annota("specchio-nuovo", nome=args.nome)
+    print(f"registered {args.nome}: {da}  ->  {a}")
+    if not args.motore:
+        print(
+            "\nNo detector engine set. The built-in rules find structured identifiers\n"
+            "— email, IBAN, codice fiscale, cards, phones, IPs, API keys — and they do\n"
+            "not find names or addresses in prose. If this tree has those, set one:\n"
+            "  paratia specchio motore " + args.nome + " 'rizzo-pii --json'"
+        )
+    return 0
+
+
+def cmd_specchio_motore(args) -> int:
+    p, stato = _specchio_stato(args.nome)
+    stato["motore"] = args.comando or None
+    p.write_text(json.dumps(stato, indent=1))
+    print(f"engine for {args.nome}: {stato['motore'] or 'none (built-in rules only)'}")
+    return 0
+
+
+def cmd_specchio_sincronizza(args) -> int:
+    if dentro_un_agente() and not args.force:
+        raise Rifiuto(
+            "refusing inside an agent session: building the mirror means reading "
+            "the originals, and the originals are what the mirror exists to keep "
+            "out of a transcript. Run it from your own terminal."
+        )
+    # Imported by path rather than by name: the command is normally reached
+    # through a symlink in ~/.local/bin, and the sibling module has to be found
+    # next to the real file rather than next to the link.
+    import importlib.util
+
+    _spec = importlib.util.spec_from_file_location("specchio", Path(__file__).resolve().parent / "specchio.py")
+    _s = importlib.util.module_from_spec(_spec)
+    sys.modules["specchio"] = _s
+    _spec.loader.exec_module(_s)
+
+    p, stato = _specchio_stato(args.nome)
+    chiave = _specchio_chiave()
+    tabella = stato.get("tabella", {})
+    esito = _s.rispecchia(
+        Path(stato["da"]), Path(stato["a"]), chiave, tabella,
+        motore=stato.get("motore"), copia_binari=args.copia_binari,
+    )
+    stato["tabella"] = tabella
+    p.write_text(json.dumps(stato, indent=1))
+    annota("specchio-sincronizza", nome=args.nome, file=esito.file_copiati, token=len(tabella))
+
+    print(f"{esito.file_copiati} file written, {esito.file_letti} scanned")
+    if esito.conteggio:
+        print("replaced: " + ", ".join(f"{t}×{n}" for t, n in sorted(esito.conteggio.items())))
+    else:
+        print("replaced: nothing — check that the detector fits this material")
+    print(f"{len(tabella)} distinct values in the table ({esito.nuovi_token} new), stored in the compartment")
+
+    if esito.binari:
+        print(f"\n{len(esito.binari)} file(s) NOT copied because they are not text, so nothing")
+        print("in them was scanned. Listing the first few:")
+        for b in esito.binari[:8]:
+            print(f"  {b}")
+        if len(esito.binari) > 8:
+            print(f"  ... and {len(esito.binari) - 8} more")
+
+    if not stato.get("motore"):
+        print(
+            "\nBuilt-in rules only. Names, addresses and anything needing to be\n"
+            "understood rather than matched are still in the mirror."
+        )
+    print(
+        "\nThis is pseudonymised, not anonymous. Under GDPR it is still personal\n"
+        "data (Recital 26) — the reversal table exists on purpose. It keeps\n"
+        "identifiers out of a context window; it is not a certificate."
+    )
+    return 0
+
+
+def cmd_specchio_risolvi(args) -> int:
+    if dentro_un_agente() and not args.force:
+        raise Rifiuto(
+            "refusing inside an agent session. Resolving a token is exactly the "
+            "step the mirror exists to prevent, and the answer would land in the "
+            "transcript."
+        )
+    _, stato = _specchio_stato(args.nome)
+    voce = stato.get("tabella", {}).get(args.token)
+    if not voce:
+        raise Rifiuto(f"{args.token} is not in this mirror's table")
+    annota("specchio-risolvi", nome=args.nome)
+    print(f"{voce['tipo']}: {voce['valore']}")
+    return 0
+
+
+def cmd_specchio_elenco(args) -> int:
+    if not aperto():
+        raise Rifiuto("the compartment is locked")
+    trovati = sorted(MONTAGGIO.glob("specchio-*.json"))
+    if not trovati:
+        print("no mirrors")
+        return 0
+    for p in trovati:
+        s = json.loads(p.read_text())
+        nome = p.stem.replace("specchio-", "")
+        print(f"{nome:<14} {s['da']} -> {s['a']}")
+        print(f"{'':<14} {len(s.get('tabella', {}))} values, engine: {s.get('motore') or 'built-in only'}")
     return 0
 
 
@@ -798,6 +942,36 @@ def costruisci() -> argparse.ArgumentParser:
     zc.set_defaults(fn=cmd_zona_chiudi)
 
     zs.add_parser("elenco", help="list zones").set_defaults(fn=cmd_zona_elenco)
+
+    sp = s.add_parser("specchio", help="a readable copy of a tree with the identifiers taken out")
+    sps = sp.add_subparsers(dest="sub", required=True)
+
+    spn = sps.add_parser("nuovo", help="register a mirror")
+    spn.add_argument("nome")
+    spn.add_argument("--da", required=True)
+    spn.add_argument("--a", required=True)
+    spn.add_argument("--motore", default=None, help="detector command, e.g. 'rizzo-pii --json'")
+    spn.set_defaults(fn=cmd_specchio_nuovo)
+
+    spm = sps.add_parser("motore", help="set or clear the detector engine")
+    spm.add_argument("nome")
+    spm.add_argument("comando", nargs="?", default=None)
+    spm.set_defaults(fn=cmd_specchio_motore)
+
+    sps_ = sps.add_parser("sincronizza", help="build or refresh the mirror")
+    sps_.add_argument("nome")
+    sps_.add_argument("--copia-binari", dest="copia_binari", action="store_true",
+                      help="also copy files that could not be scanned")
+    sps_.add_argument("--force", action="store_true")
+    sps_.set_defaults(fn=cmd_specchio_sincronizza)
+
+    spr = sps.add_parser("risolvi", help="turn a token back into its value")
+    spr.add_argument("nome")
+    spr.add_argument("token")
+    spr.add_argument("--force", action="store_true")
+    spr.set_defaults(fn=cmd_specchio_risolvi)
+
+    sps.add_parser("elenco", help="list mirrors").set_defaults(fn=cmd_specchio_elenco)
     return p
 
 
