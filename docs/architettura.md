@@ -13,6 +13,20 @@ should rely on the row.
 | 4 | Broker verbs | an agent choosing the command | the verb list living inside the compartment | only covers operations you declared in advance |
 | 5 | Delegation intersection | one agent asking a second agent for what it may not do itself | the same harness hook, reading the harness-written transcript | one-sided until the other harness runs its half |
 | 6 | Seal and attest | nothing. It reports | you, running `paratia attest` | detection after the fact, never prevention |
+| 7 | Zone (encrypted workspace) | another local account, a stolen disk, the cloud provider's copy | the cipher | **not** the session working inside it, by construction |
+| 8 | Second account | the agent reaching what you never handed it | the kernel, via uid | void on `noowners` volumes and on anything cloud-synced |
+
+Rows 7 and 8 answer a different question from rows 1–6, and the difference is
+the one people get wrong. Rows 1–6 keep something away from **the session**.
+Rows 7 and 8 keep it away from **everyone who is not the session**. A zone
+cannot do what a compartment does, and asking it to produces a workspace nobody
+can work in — an agent that cannot read the repository cannot work on the
+repository. See [confini.md](confini.md).
+
+Row 8 has a precondition that voids it silently: macOS home directories are
+group `staff`, every local account is in `staff`, so a second account without
+`chmod 700 ~` reads the whole home on first login. `paratia esposizione` checks
+for this and for `noowners` volumes, which are the other silent void.
 
 ## Why row 3 is the interesting one
 

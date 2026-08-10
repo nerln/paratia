@@ -59,6 +59,47 @@ secret stored under that name; `{}` is replaced by whatever extra arguments you
 passed. So the user declares the command once and you supply only the parts he
 left open.
 
+## Zones are not compartments — do not confuse them
+
+If the work is inside `/Volumes/zona-<something>`, that is a **zone**, and it is
+open on purpose so you can work in it. The gate ignores zone mountpoints
+entirely. Nothing is wrong, nothing needs locking, and telling the user to close
+it would be telling them to stop working.
+
+The difference is worth holding in one sentence: **a compartment hides secrets
+from you; a zone hides work from everyone who is not you.** A zone is encrypted
+at rest, which defends against another local account, a stolen disk and the
+copy the cloud provider keeps. It does not, and cannot, hide the repository from
+the session that is editing the repository.
+
+So if the user asks you to make their workspace unreadable to agents while an
+agent works on it, say plainly that this does not exist, and offer the zone —
+which gives them everything except that one impossible thing.
+
+Never suggest putting a zone in a cloud-synced folder. `paratia zona nuova`
+refuses those, and the refusal is load-bearing: a sparsebundle is thousands of
+band files that the provider syncs one at a time, and a band written while the
+image is mounted can arrive torn, taking the whole image with it.
+
+## When the user asks whether a second account would keep them safe
+
+Run `paratia esposizione` and answer from what it prints, not from general
+knowledge. The answer is machine-specific and the two common failures are both
+silent:
+
+- A home directory that is group-readable is readable by **every** local
+  account, because macOS puts all of them in `staff`. A second account created
+  without `chmod 700 ~` reads everything on its first login.
+- A volume mounted `noowners` discards the mode bits. On that disk uid
+  separation buys nothing at all, whatever the ownership says.
+
+`strumenti/secondo-account.sh` is his to run, never yours — it creates an
+account and changes home permissions. Dry-run first is its default.
+
+Do not recommend `diskutil enableOwnership` casually. It makes files that
+arrived from another Mac or a restore unreadable until they are chowned, and on
+this machine the external SSD holds work with a deadline.
+
 ## The commands, and who runs them
 
 Yours to run in a session:
