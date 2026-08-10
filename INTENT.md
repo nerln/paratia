@@ -96,12 +96,95 @@ Endpoint Security. Non l'ho fatto perché richiede la tua password di admin.
   perché l'intersezione sia vera serve anche l'hook lato Codex, e quello va
   scritto nel suo harness.
 
-## L'iterazione che mi aspetto da te
+## Secondo giro — le tue risposte, e le mie
 
-Tre domande su cui il progetto cambia forma, in ordine di quanto cambiano:
+Hai deciso: *capability laundering* va bene, vuoi il secondo account, SaTML come
+bersaglio, e il pezzo di opinione avviato in parallelo. Sulle sedi mi hai
+lasciato scegliere. La passphrase del forziere l'hai fatta tu.
 
-1. Il campo si chiama come? Ho scritto `docs/ricerca/campo.md` con la mia
-   proposta — *capability laundering* — ma è il tuo nome sul paper.
-2. Il livello di rilevazione ti basta o vuoi il secondo account?
-3. AISec '26 (workshop ACM CCS) è la mia raccomandazione come primo bersaglio,
-   non un journal di opinione. Il ragionamento è in `docs/ricerca/venue.md`.
+Poi hai chiesto tre cose, e le risposte sono diverse fra loro.
+
+### «Mi consigli di farlo?»
+
+Sì, ma non come te l'aspetti, e soprattutto **senza che tu ti sposti**.
+
+Avevi già in mano la risposta giusta quando hai scritto «e il workspace stesso
+allocato a sé stesso, no?». È quello: **il livello non è una proprietà tua, è
+una proprietà della sessione.** Tu resti uid 501 con tutto che funziona. Esiste
+un secondo account che non possiede niente di tuo, e un comando che ci apre
+dentro una sessione quando serve quel livello.
+
+| | gira come | vede | per cosa |
+|---|---|---|---|
+| sessione normale | tu | tutto | lavoro interattivo, mentre guardi |
+| sessione confinata | `_claude` | solo il cantiere | task pianificati, run autonome, e tutto ciò che arriva dall'altro capo del ponte |
+
+La seconda riga è dove sta il rischio vero. Una sessione davanti a cui sei
+seduto la interrompi. Un task pianificato alle 3 di notte no, e un turno aperto
+da Codex sul ponte nemmeno. Quelli sono i due casi da confinare, e sono anche
+quelli in cui non perdi niente: un task notturno non ha bisogno di computer-use.
+
+Un confine che devi attraversare per ogni cosa è un confine che spegni in una
+settimana. Per questo è a livelli e non globale.
+
+### «E così IO sarei al sicuro?»
+
+No, non automaticamente, e su questo ho guardato invece di rispondere a
+sentimento. `paratia esposizione` ti dà il verdetto sulla tua macchina. Al primo
+giro ha trovato quattro cose, e **due avrebbero reso il secondo account puro
+teatro**:
+
+**La tua home è `drwxr-x---`, gruppo `staff`.** Su macOS *ogni* account locale
+sta in staff. Quindi creare `_claude` senza fare anche `chmod 700 ~` gli darebbe
+in mano tutta la tua home dal primo minuto: chiavi SSH, token, profili del
+browser. Il confine sembrerebbe installato e non ci sarebbe. Questo è il passo
+2 dello script, ed è il motivo per cui lo script esiste invece di tre righe in
+un README.
+
+**`/Volumes/AppsAndFiles` è montato `noowners`.** Su quel disco i bit dei
+permessi sono buttati via: ogni account ha accesso completo a tutto,
+indipendentemente da chi possiede cosa. Lì il secondo account non compra niente.
+E lì ci sta Vesuvius.
+
+### «Il workspace su Drive e su SSD è attaccabile comunque, no?»
+
+Sì, ed è l'osservazione più affilata che hai fatto in tutto il progetto. Il
+motivo preciso è questo:
+
+> **I permessi sono una proprietà del volume. La cifratura è una proprietà del
+> file.**
+
+Un permesso vale solo finché il filesystem accetta di farlo rispettare, e su
+`noowners` non lo fa. Non vale affatto sul server di Google, che ha la sua copia
+e non ha mai visto i tuoi bit. La cifratura invece viaggia col contenuto: vale
+sull'SSD, vale nel Drive, vale sul disco rubato.
+
+Da qui è nata la distinzione che nel progetto non c'era, ed è il pezzo nuovo di
+questo giro:
+
+- **Forziere** = segreti. L'agente non li vede mai. Aperto, il gate blocca tutto.
+- **Zona** = lavoro. L'agente ci lavora dentro. Cifrata a riposo, difende da un
+  altro account, dal disco rubato e dal provider — **non** dalla sessione che ci
+  sta lavorando.
+
+E qui c'è il limite da tenere in testa, perché non è aggirabile con più
+ingegneria: **non puoi nascondere il workspace all'agente che ci lavora dentro.**
+Un agente che non può leggere il repo non può lavorare sul repo. Quello che puoi
+fare è nasconderlo a tutti gli altri. È meno di quello che avevi in mente, ma è
+il massimo che esiste, e dirtelo adesso vale più che scoprirlo fra sei mesi.
+
+Sul Drive in particolare: `paratia zona nuova` **rifiuta** una destinazione
+sincronizzata a meno che tu non insista con `--lo-so`. Uno sparsebundle dentro
+una cartella sincronizzata è un modo documentato di perdere tutto: il provider
+sincronizza le band una per una, non sa che sono un oggetto solo, e una band
+scritta a immagine montata può arrivare strappata. Il risultato è un'immagine
+che non si apre più.
+
+### Cosa resta aperto, e dipende da te
+
+`diskutil enableOwnership /Volumes/AppsAndFiles` è l'unico modo per far contare
+i permessi su quel disco. **Non l'ho fatto io e lo script non lo fa**: i file
+arrivati da un altro Mac o da un restore hanno un uid che finora veniva
+ignorato, e da quel momento non lo sarebbe più. Vesuvius sta lì ed è il progetto
+che non può perdere operatività. Fallo quando hai tempo di sistemare le
+ricadute, non prima del 31 agosto.

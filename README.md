@@ -110,6 +110,47 @@ session, and the key never appears in the transcript.
 paratia attest            # did anything that enforces this change since you sealed it?
 ```
 
+## Zones, which are not compartments
+
+A compartment hides secrets **from** the session. A zone hides work from
+everyone who **is not** the session. Conflating them gives you a workspace
+nobody can work in.
+
+```bash
+paratia zona nuova lavoro --dove /Volumes/SSD --size 40g
+paratia zona apri lavoro          # mounts at /Volumes/zona-lavoro
+paratia zona chiudi lavoro
+```
+
+An open zone does not stop the session — the gate ignores zone mountpoints
+entirely — because an agent that cannot read the repository cannot work on it.
+What a zone buys is everything else: another local account, a stolen disk, and
+the copy your cloud provider keeps. Creating one inside a synced folder is
+refused by default, for a reason spelled out in [docs/confini.md](docs/confini.md).
+
+## Where a boundary is worth nothing
+
+```bash
+paratia esposizione
+```
+
+Reports what on **this** machine a second account would and would not protect.
+It exists because the two ways this goes wrong are both silent: a home directory
+that is group-readable is readable by every local account, since macOS puts them
+all in `staff`; and a volume mounted `noowners` discards the mode bits, so uid
+separation buys exactly nothing on that disk. Either one makes a second account
+look installed when it is not there.
+
+```bash
+strumenti/secondo-account.sh          # prints what it would do, changes nothing
+strumenti/secondo-account.sh --esegui
+```
+
+Sets up a second account for agents **without moving you into it**: you keep the
+desktop app, screen access, your cloud mounts and your keys, and individual
+sessions run confined when the work calls for it. The reasoning, and the two
+cases where it buys nothing, are in [docs/confini.md](docs/confini.md).
+
 ## Read this before you trust it
 
 [docs/architettura.md](docs/architettura.md) is a table of six mechanisms and

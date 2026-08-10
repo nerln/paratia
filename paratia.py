@@ -426,6 +426,297 @@ def cmd_doctor(args) -> int:
     return 0 if ok else 1
 
 
+# ------------------------------------------------------------------- zones
+#
+# A zone is not a compartment, and conflating the two would be the most
+# expensive mistake in this program.
+#
+# The compartment holds secrets an agent must never read, so the invariant is
+# that it is closed while an agent runs, and the gate enforces exactly that. A
+# zone holds *work* — a repository, a dataset, a client's files — which the
+# agent has to read in order to be useful. There is no arrangement in which the
+# agent works on a thing and cannot see it.
+#
+# So a zone defends against everybody who is not the running session: another
+# local account on a volume that ignores ownership, whoever ends up holding the
+# SSD, and the copy of your folder that lives on somebody else's server. That is
+# a real threat model and it is not the agent's.
+#
+# Zones therefore mount under their own names, and the gate does not look at
+# them. Opening a zone does not stop the session.
+
+
+def _zone_casa() -> Path:
+    return CASA / "zone"
+
+
+def _zone_registro() -> dict:
+    p = _zone_casa() / "registro.json"
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text())
+    except json.JSONDecodeError:
+        return {}
+
+
+def _zone_scrivi(reg: dict) -> None:
+    _zone_casa().mkdir(parents=True, exist_ok=True)
+    (_zone_casa() / "registro.json").write_text(json.dumps(reg, indent=1, sort_keys=True))
+
+
+def _monte_zona(nome: str) -> Path:
+    return Path(f"/Volumes/zona-{nome}")
+
+
+def _volume_di(p: Path) -> str:
+    """Which mounted filesystem a path lives on."""
+    p = p.resolve()
+    while not p.is_mount() and p != p.parent:
+        p = p.parent
+    return str(p)
+
+
+def _sincronizzato(p: Path) -> bool:
+    """True when the path sits inside a cloud provider's synced tree.
+
+    Putting a sparsebundle inside one is a documented way to lose the whole
+    thing: the provider syncs individual band files, a band written while the
+    image is mounted arrives out of order or half-copied, and the result is an
+    image that will not attach. `zona nuova` refuses these by default.
+    """
+    s = str(p.resolve())
+    return any(
+        marchio in s
+        for marchio in ("/Library/CloudStorage/", "/Dropbox", "/OneDrive", "/Google Drive", "/iCloud Drive~")
+    )
+
+
+def cmd_zona_nuova(args) -> int:
+    if (spia := dentro_un_agente()) and not args.force:
+        raise Rifiuto(f"a zone's passphrase gets typed here, and {spia} is set. Your own terminal.")
+    dove = Path(args.dove).expanduser().resolve()
+    if not dove.is_dir():
+        raise Rifiuto(f"{dove} is not a directory")
+    if _sincronizzato(dove) and not args.lo_so:
+        raise Rifiuto(
+            f"{dove} is inside a cloud-synced tree. A sparsebundle there is a known "
+            "way to lose everything in it: the provider syncs band files one at a "
+            "time, a band written while the image is mounted can arrive torn, and "
+            "the image then refuses to attach. If you have a second copy elsewhere "
+            "and accept that, pass --lo-so."
+        )
+
+    reg = _zone_registro()
+    if args.nome in reg:
+        raise Rifiuto(f"a zone called {args.nome!r} is already registered")
+
+    bundle = dove / f"{args.nome}.sparsebundle"
+    if bundle.exists():
+        raise Rifiuto(f"{bundle} already exists")
+
+    print(
+        "A zone is encrypted at rest and readable while open. It defends against\n"
+        "another account, a stolen disk and a cloud provider. It does NOT hide the\n"
+        "work from an agent you are running: an agent that cannot read the repo\n"
+        "cannot work on it.\n"
+    )
+    uno = chiedi_passphrase(f"passphrase for zone {args.nome}: ")
+    due = chiedi_passphrase("again: ")
+    if uno != due:
+        raise Rifiuto("the two did not match, nothing was created")
+    if len(uno) < 12:
+        raise Rifiuto("under 12 characters, refused")
+
+    esito = _corri(
+        [
+            "hdiutil", "create",
+            "-size", args.size,
+            "-type", "SPARSEBUNDLE",
+            "-fs", "APFS",
+            "-encryption", "AES-256",
+            "-stdinpass",
+            "-volname", f"zona-{args.nome}",
+            str(bundle),
+        ],
+        dentro=uno + b"\n",
+    )
+    if esito.returncode != 0:
+        raise Rifiuto(f"hdiutil refused: {esito.stderr.decode(errors='replace').strip()}")
+
+    reg[args.nome] = {"bundle": str(bundle), "volume": _volume_di(dove), "creata": time.strftime("%Y-%m-%d")}
+    _zone_scrivi(reg)
+    annota("zona-nuova", nome=args.nome, dove=str(bundle))
+    print(f"\nMade {bundle} ({args.size}, AES-256).")
+    print(f"Open it with `paratia zona apri {args.nome}`, then move the work inside.")
+    return 0
+
+
+def cmd_zona_apri(args) -> int:
+    reg = _zone_registro()
+    if args.nome not in reg:
+        raise Rifiuto(f"no zone called {args.nome!r}. Known: {', '.join(sorted(reg)) or 'none'}")
+    monte = _monte_zona(args.nome)
+    if monte.is_mount():
+        print(f"already open at {monte}")
+        return 0
+    if dentro_un_agente() and not args.force:
+        raise Rifiuto(
+            f"a zone's passphrase gets typed here. Open it from your own terminal, "
+            f"then the session can work inside {monte} normally."
+        )
+    parola = chiedi_passphrase(f"passphrase for {args.nome}: ")
+    esito = _corri(
+        ["hdiutil", "attach", reg[args.nome]["bundle"], "-stdinpass", "-nobrowse", "-mountpoint", str(monte)],
+        dentro=parola + b"\n",
+    )
+    if esito.returncode != 0:
+        annota("zona-apri-fallito", nome=args.nome)
+        raise Rifiuto(f"did not open: {esito.stderr.decode(errors='replace').strip()}")
+    annota("zona-apri", nome=args.nome)
+    print(f"open at {monte} — agents may work in here, the gate does not block zones")
+    return 0
+
+
+def cmd_zona_chiudi(args) -> int:
+    monte = _monte_zona(args.nome)
+    if not monte.is_mount():
+        print("already closed")
+        return 0
+    esito = _corri(["hdiutil", "detach", str(monte)])
+    if esito.returncode != 0:
+        esito = _corri(["hdiutil", "detach", str(monte), "-force"])
+    if esito.returncode != 0:
+        raise Rifiuto(f"did not close: {esito.stderr.decode(errors='replace').strip()}")
+    annota("zona-chiudi", nome=args.nome)
+    print("closed")
+    return 0
+
+
+def cmd_zona_elenco(args) -> int:
+    reg = _zone_registro()
+    if not reg:
+        print("no zones")
+        return 0
+    for nome, z in sorted(reg.items()):
+        stato = "open" if _monte_zona(nome).is_mount() else "closed"
+        c_e = "" if Path(z["bundle"]).exists() else "  MISSING"
+        print(f"{nome:<16} {stato:<7} {z['bundle']}{c_e}")
+    return 0
+
+
+# -------------------------------------------------------------- exposure
+
+
+def _utenti_locali() -> list[str]:
+    fuori = _corri(["dscl", ".", "-list", "/Users", "UniqueID"]).stdout.decode(errors="replace")
+    utenti = []
+    for riga in fuori.splitlines():
+        pezzi = riga.split()
+        if len(pezzi) == 2 and pezzi[1].isdigit() and int(pezzi[1]) >= 500:
+            utenti.append(pezzi[0])
+    return utenti
+
+
+def _monti_senza_proprietari() -> list[str]:
+    fuori = _corri(["mount"]).stdout.decode(errors="replace")
+    senza = []
+    for riga in fuori.splitlines():
+        if " on " not in riga or "noowners" not in riga:
+            continue
+        punto = riga.split(" on ", 1)[1].split(" (", 1)[0]
+        senza.append(punto)
+    return senza
+
+
+def cmd_esposizione(args) -> int:
+    """What on this machine a second account would and would not protect.
+
+    Written because the answer is machine-specific and the two ways it goes
+    wrong are both silent. A home directory readable by group `staff` is
+    readable by every local account, since macOS puts every user in staff. And a
+    volume mounted `noowners` discards the mode bits entirely, so on that disk a
+    second account buys nothing at all — which is the case people discover after
+    they have already moved their work there.
+    """
+    righe: list[tuple[str, str, str]] = []
+
+    casa = Path.home()
+    modo = casa.stat().st_mode & 0o777
+    utenti = _utenti_locali()
+    altri = [u for u in utenti if u != casa.name]
+    if modo & 0o007:
+        righe.append(("home", "EXPOSED", f"{oct(modo)} — world-readable, every local account reads it"))
+    elif modo & 0o070:
+        righe.append((
+            "home", "EXPOSED" if altri else "WOULD BE",
+            f"{oct(modo)} — group-readable, and macOS puts every local account in staff. "
+            f"{'Readable now by: ' + ', '.join(altri) if altri else 'No second account yet, but one would read it on day one.'} "
+            f"Fix: chmod 750 -> 700 on {casa}",
+        ))
+    else:
+        righe.append(("home", "ok", f"{oct(modo)} — owner only"))
+
+    righe.append(("accounts", "ok" if len(utenti) == 1 else "note",
+                  f"{len(utenti)} local account(s): {', '.join(utenti)}"))
+
+    senza = _monti_senza_proprietari()
+    for punto in senza:
+        righe.append((
+            f"volume {punto}", "EXPOSED",
+            "mounted noowners — the mode bits are discarded on this volume, so a "
+            "second account has full access to everything here regardless of "
+            "ownership. Only encryption helps.",
+        ))
+    if not senza:
+        righe.append(("volumes", "ok", "every mounted volume enforces ownership"))
+
+    for radice in args.workspace:
+        p = Path(radice).expanduser()
+        if not p.exists():
+            continue
+        vol = _volume_di(p)
+        pericolo = vol in senza or any(vol.startswith(s) for s in senza)
+        righe.append((
+            f"workspace {p}", "EXPOSED" if pericolo else "ok",
+            f"on {vol}" + (" — which ignores ownership, so UID separation does nothing here" if pericolo else ""),
+        ))
+
+    righe.append(("compartment", "ok" if FORZIERE.exists() else "MISSING",
+                  ("locked" if not aperto() else "OPEN — agent tool calls are being denied right now")
+                  if FORZIERE.exists() else "no compartment yet, `paratia init`"))
+
+    impostazioni = Path.home() / ".claude" / "settings.json"
+    installato = False
+    if impostazioni.is_file():
+        try:
+            installato = "paratia-gate" in impostazioni.read_text()
+        except OSError:
+            pass
+    righe.append(("gate", "ok" if installato else "NOT INSTALLED",
+                  "PreToolUse hook found in settings.json" if installato
+                  else "the hook is not in ~/.claude/settings.json, so nothing is enforced in sessions"))
+
+    if aperto():
+        sigilli = leggi_json(SIGILLI, {})
+        rotti = [n for n, h in sigilli.items() if not Path(n).exists() or _impronta(Path(n)) != h]
+        righe.append(("seals", "ok" if not rotti else "CHANGED",
+                      f"{len(sigilli)} sealed, {len(rotti)} no longer match" if sigilli else "nothing sealed"))
+    else:
+        righe.append(("seals", "unknown", "compartment closed — `paratia unlock` then `paratia attest`"))
+
+    if args.json:
+        print(json.dumps([{"voce": a, "stato": b, "nota": c} for a, b, c in righe], indent=1))
+    else:
+        largo = max(len(a) for a, _, _ in righe)
+        for voce, stato, nota in righe:
+            print(f"{stato:<14} {voce:<{largo}}  {nota}")
+        brutti = [a for a, b, _ in righe if b in ("EXPOSED", "NOT INSTALLED", "MISSING", "CHANGED")]
+        if brutti:
+            print(f"\n{len(brutti)} item(s) need attention: {', '.join(brutti)}")
+    return 1 if any(b in ("EXPOSED", "CHANGED") for _, b, _ in righe) else 0
+
+
 # --------------------------------------------------------------------- entry
 
 
@@ -476,6 +767,37 @@ def costruisci() -> argparse.ArgumentParser:
     st.set_defaults(fn=cmd_status)
 
     s.add_parser("doctor", help="check this machine can run it").set_defaults(fn=cmd_doctor)
+
+    e = s.add_parser("esposizione", help="what a second account would and would not protect here")
+    e.add_argument("--json", action="store_true")
+    e.add_argument(
+        "--workspace", nargs="*",
+        default=["~/dev", "/Volumes/AppsAndFiles/dev", "~/Library/CloudStorage"],
+        help="workspace roots to locate on their volumes",
+    )
+    e.set_defaults(fn=cmd_esposizione)
+
+    z = s.add_parser("zona", help="encrypted workspace regions — readable while open, unlike the compartment")
+    zs = z.add_subparsers(dest="sub", required=True)
+
+    zn = zs.add_parser("nuova", help="create a zone")
+    zn.add_argument("nome")
+    zn.add_argument("--dove", required=True, help="directory to hold the image")
+    zn.add_argument("--size", default="20g")
+    zn.add_argument("--lo-so", dest="lo_so", action="store_true", help="allow creating inside a cloud-synced tree")
+    zn.add_argument("--force", action="store_true")
+    zn.set_defaults(fn=cmd_zona_nuova)
+
+    za = zs.add_parser("apri", help="open a zone")
+    za.add_argument("nome")
+    za.add_argument("--force", action="store_true")
+    za.set_defaults(fn=cmd_zona_apri)
+
+    zc = zs.add_parser("chiudi", help="close a zone")
+    zc.add_argument("nome")
+    zc.set_defaults(fn=cmd_zona_chiudi)
+
+    zs.add_parser("elenco", help="list zones").set_defaults(fn=cmd_zona_elenco)
     return p
 
 
