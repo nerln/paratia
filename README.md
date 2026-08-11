@@ -61,12 +61,25 @@ turn. Computer-use, the browser, the simulator, `paratia` itself, `security`,
 ## Install
 
 ```bash
+pip install git+https://github.com/nerln/paratia.git
+paratia doctor
+```
+
+Or from a checkout, which is what you want if you also intend to run the hooks
+and the scripts in `strumenti/`:
+
+```bash
 git clone https://github.com/nerln/paratia.git ~/dev/paratia
 ln -s ~/dev/paratia/paratia.py ~/.local/bin/paratia
 paratia doctor
 ```
 
 Python 3.11+, macOS, no third-party packages.
+
+`pip install` gives you the command and nothing more. The hooks are not a Python
+package and pip does not place them; they are wired into `~/.claude` by hand, in
+the step further down. Skip that step and you have the compartment without the
+gate, which is the half that does not need an agent to cooperate.
 
 Then, in your own terminal, never in an agent session:
 

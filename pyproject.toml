@@ -1,0 +1,25 @@
+[project]
+name = "paratia"
+version = "1.0.0"
+description = "Files an agent cannot read, enforced by the harness rather than requested in a prompt."
+readme = "README.md"
+license = {text = "GPL-3.0-or-later"}
+requires-python = ">=3.11"
+authors = [{name = "Eugenio Nerelli"}]
+
+# No runtime dependencies, on purpose. Every dependency is a maintainer who can
+# push code onto this machine; the standard library is enough for this job.
+dependencies = []
+
+[project.scripts]
+paratia = "paratia:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# Flat modules, not a package. paratia.py loads specchio.py by path from its own
+# directory, so the two have to land side by side. The hooks are deliberately
+# absent: they are wired into ~/.claude, not installed by pip.
+only-include = ["paratia.py", "specchio.py"]
