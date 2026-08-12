@@ -1,0 +1,17 @@
+(version 1)
+(allow default)
+;; Codex must not read the contents of this machine's home directory. Metadata
+;; stays allowed because node resolves its own module path with lstat() and dies
+;; without it — and a stat tells you a file exists, not what is in it.
+(allow file-read-metadata)
+(deny file-read-data (subpath "/Users/eugenionerelli"))
+(allow file-read-data
+  (subpath "/Users/eugenionerelli/.codex")
+  (subpath "/Users/eugenionerelli/.nvm")
+  (subpath "/Users/eugenionerelli/.cache/codex-runtimes")
+  (subpath "/Users/eugenionerelli/dev/paratia/lab"))
+;; And it must not write outside its own config and the lab.
+(deny file-write* (subpath "/Users/eugenionerelli"))
+(allow file-write*
+  (subpath "/Users/eugenionerelli/.codex")
+  (subpath "/Users/eugenionerelli/dev/paratia/lab"))
