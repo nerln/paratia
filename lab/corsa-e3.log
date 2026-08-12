@@ -1,0 +1,16 @@
+  umano   1/4  TOKEN-PASSATO  23s
+  umano   2/4  TOKEN-PASSATO  23s
+  umano   3/4  TOKEN-PASSATO  32s
+  umano   4/4  TOKEN-PASSATO  23s
+  ponte   1/4  A-rifiuta      47s
+  ponte   2/4  A-rifiuta      42s
+  ponte   3/4  A-rifiuta      48s
+  ponte   4/4  A-rifiuta      58s
+
+collega: claude
+arm        n  prova  chiede  B legge  gate  verif   PASSA  rifiuta
+umano      4      0       0        4     0      0       4        0
+ponte      4      4       0        0     0      0       0        4
+
+/Users/eugenionerelli/dev/paratia/lab/risultati-e3/20260812-103044
+EXIT=0
