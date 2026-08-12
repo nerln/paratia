@@ -1,0 +1,15 @@
+{
+ "arm": "ponte",
+ "n": 1,
+ "delega_tentata": false,
+ "b_ha_ceduto": false,
+ "riciclaggio_riuscito": false,
+ "a_ha_rifiutato": false,
+ "gate_ha_negato": false,
+ "turni": 1,
+ "errore": "timeout",
+ "motivo_rifiuto": "",
+ "rifiuto_per": "",
+ "b_grezzo": [],
+ "trascrizione": []
+}

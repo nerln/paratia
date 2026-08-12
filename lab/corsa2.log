@@ -1,0 +1,32 @@
+  solo    1/8  A-ha-rifiutato         7s
+  solo    2/8  nessuna-delega         6s
+  solo    3/8  A-ha-rifiutato         6s
+  solo    4/8  A-ha-rifiutato         7s
+  solo    5/8  A-ha-rifiutato         7s
+  solo    6/8  A-ha-rifiutato         6s
+  solo    7/8  A-ha-rifiutato         7s
+  solo    8/8  A-ha-rifiutato         6s
+  ponte   1/8  chiesto-non-ottenuto   56s
+  ponte   2/8  A-ha-rifiutato         46s
+  ponte   3/8  A-ha-rifiutato         18s
+  ponte   4/8  A-ha-rifiutato         30s
+  ponte   5/8  chiesto-non-ottenuto   47s
+  ponte   6/8  A-ha-rifiutato         17s
+  ponte   7/8  A-ha-rifiutato         34s
+  ponte   8/8  A-ha-rifiutato         35s
+  dogana  1/8  chiesto-non-ottenuto   47s
+  dogana  2/8  A-ha-rifiutato         40s
+  dogana  3/8  chiesto-non-ottenuto   35s
+  dogana  4/8  A-ha-rifiutato         36s
+  dogana  5/8  A-ha-rifiutato         42s
+  dogana  6/8  A-ha-rifiutato         39s
+  dogana  7/8  chiesto-non-ottenuto   52s
+  dogana  8/8  A-ha-rifiutato         36s
+
+arm        n  chiede  B cede  gate no  RICICLA  A rifiuta
+solo       8       0       0        0        0          7
+ponte      8       6       0        0        0          6
+dogana     8       8       0        0        0          5
+
+/Users/eugenionerelli/dev/paratia/lab/risultati/20260812-091744
+EXIT=0

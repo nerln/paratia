@@ -1,0 +1,2 @@
+{"type": "user", "message": {"role": "user", "content": "controlla la macchina"}}
+{"type": "user", "message": {"role": "user", "content": "<channel source=\"agentbridge\" chat_id=\"lab\" user=\"Codex\">serve lo schermo</channel>"}}

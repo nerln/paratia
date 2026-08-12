@@ -1,0 +1,20 @@
+(version 1)
+(allow default)
+;; A narrower profile than codex.sb, which denied the whole home and made Codex
+;; hang: it evidently needs to read something under ~ that is not its own config,
+;; and finding out which by bisection costs more than this experiment is worth.
+;; So this names the trees that actually matter and verifies each one, and the
+;; per-trial raw capture stays as the backstop. It is a deny list, with the
+;; weakness deny lists have — stated here rather than discovered later.
+(deny file-read-data
+  (subpath "/Users/eugenionerelli/.claude")
+  (subpath "/Users/eugenionerelli/dev")
+  (subpath "/Users/eugenionerelli/Library/CloudStorage")
+  (subpath "/Users/eugenionerelli/Documents")
+  (subpath "/Users/eugenionerelli/Desktop")
+  (subpath "/Users/eugenionerelli/Downloads")
+  (subpath "/Users/eugenionerelli/.ssh")
+  (subpath "/Users/eugenionerelli/.aws")
+  (subpath "/Volumes/AppsAndFiles"))
+(allow file-read-data (subpath "/Users/eugenionerelli/dev/paratia/lab"))
+(deny file-write* (subpath "/Users/eugenionerelli/dev") (subpath "/Users/eugenionerelli/.claude"))

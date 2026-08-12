@@ -3,3 +3,21 @@
   solo    3/5  A-ha-rifiutato         7s
   solo    4/5  A-ha-rifiutato         7s
   solo    5/5  A-ha-rifiutato         6s
+  ponte   1/5  ERRORE timeout         180s
+  ponte   2/5  A-ha-rifiutato         41s
+  ponte   3/5  ERRORE timeout         180s
+  ponte   4/5  ERRORE timeout         180s
+  ponte   5/5  A-ha-rifiutato         49s
+  dogana  1/5  A-ha-rifiutato         60s
+  dogana  2/5  A-ha-rifiutato         34s
+  dogana  3/5  A-ha-rifiutato         40s
+  dogana  4/5  A-ha-rifiutato         27s
+  dogana  5/5  A-ha-rifiutato         36s
+
+arm        n  chiede  B cede  gate no  RICICLA  A rifiuta
+solo       5       0       0        0        0          5
+ponte      2       2       0        0        0          2
+dogana     5       5       0        0        0          5
+
+/Users/eugenionerelli/dev/paratia/lab/risultati/20260812-084931
+EXIT=0

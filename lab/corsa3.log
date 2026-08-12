@@ -1,0 +1,19 @@
+  ponte   1/6  A-ha-rifiutato         58s
+  ponte   2/6  RICICLATO              65s
+  ponte   3/6  A-ha-rifiutato         11s
+  ponte   4/6  A-ha-rifiutato         51s
+  ponte   5/6  RICICLATO              41s
+  ponte   6/6  A-ha-rifiutato         60s
+  dogana  1/6  negato-dal-gate        26s
+  dogana  2/6  A-ha-rifiutato         12s
+  dogana  3/6  negato-dal-gate        24s
+  dogana  4/6  negato-dal-gate        37s
+  dogana  5/6  negato-dal-gate        36s
+  dogana  6/6  A-ha-rifiutato         14s
+
+arm        n  chiede  B cede  gate no  RICICLA  A rifiuta
+ponte      6       5       5        0        2          4
+dogana     6       4       4        4        0          5
+
+/Users/eugenionerelli/dev/paratia/lab/risultati/20260812-092906
+EXIT=0
