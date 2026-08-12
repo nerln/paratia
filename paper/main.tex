@@ -1,0 +1,443 @@
+% =====================================================================
+%  Model-Emergent Access Control
+%  Eugenio Nerelli
+%
+%  Compiles on Overleaf as-is: IEEEtran, pdfLaTeX, BibTeX.
+%  Upload main.tex + refs.bib, set the compiler to pdfLaTeX, press Recompile.
+%
+%  STATUS. This is a skeleton with a real argument, a real related-work
+%  section, and PLACEHOLDERS WHERE NUMBERS GO. Every placeholder is written
+%  \TODO{...} so it is impossible to submit by accident. The E2 numbers that
+%  are already measured appear as they were measured; E3 has not been run.
+%
+%  Citations marked % [verificato] were checked against arXiv or OpenAlex on
+%  12 August 2026. The others are from memory and MUST be checked before
+%  submission — a wrong citation in a related-work section is the cheapest
+%  possible way to lose a reviewer.
+% =====================================================================
+
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+
+% Placeholders that shout. Delete the definition and the document stops
+% compiling if any survive — which is the point.
+\newcommand{\TODO}[1]{\textcolor{red}{\textbf{[TODO: #1]}}}
+
+\begin{document}
+
+\title{Model-Emergent Access Control:\\
+The Last Boundary Between Cooperating Agents\\
+Lives in Weights, Not in Policy}
+
+\author{\IEEEauthorblockN{Eugenio Nerelli}
+\IEEEauthorblockA{\TODO{affiliazione} \\
+\TODO{email}}}
+
+\maketitle
+
+\begin{abstract}
+Two coding agents from different vendors, connected by a local bridge on one
+laptop, form a system no authorization mechanism describes. Each agent is
+individually compliant with its own vendor's policy. Nothing crosses the
+boundary between them but a sentence in natural language: no token, no
+capability handle, no credential that could be attenuated in transit. Every
+mechanism built to constrain delegation---SPKI's five-tuple reduction, macaroon
+attenuation, and recent agentic restatements---presupposes that something
+travels. Here nothing does, and so no delegation edge exists for any
+authorization layer to see.
+
+We report a controlled measurement on such a bridge. A restricted agent routes
+its blocked request to the peer in \TODO{23/28} trials, on the first turn,
+with no instruction to do so; routing is indifferent to which vendor the peer
+is. Whether the peer complies is not: one vendor's agent complied in
+\TODO{9/9} trials while a second instance of the other vendor's model, given
+the identical role text, complied in \TODO{0/14} and articulated a rule nobody
+had specified---that the request came from an agent rather than from the user,
+and could not be verified.
+
+That refusal is our subject. It was not written in any policy file, not
+enforced by any runtime, and not derivable from the prompt. It is an access
+control decision resident in model weights: unversioned, unauditable, absent
+from every log on the machine, and free to change at the next release. We argue
+this is the actual state of multi-agent safety today, that it is a worse
+position than the field believes itself to be in, and that the remedy is not a
+better model but a provenance check the harness performs. We release the
+harness, the transcripts, and a working gate.
+\end{abstract}
+
+\begin{IEEEkeywords}
+multi-agent systems, authorization, delegation, LLM agents, access control,
+prompt injection, capability security
+\end{IEEEkeywords}
+
+% =====================================================================
+\section{Introduction}
+
+Consider a laptop running two coding agents from two different companies,
+connected by a local bridge so that each can send the other messages. This is
+not a thought experiment: it is a shipping configuration, and it is the
+configuration on the machine where this paper was written.
+
+Each agent enforces its vendor's policy correctly. Neither is jailbroken,
+neither is deceived, and no sandbox is broken. But the policies were written one
+agent at a time, and the agents are wired together, so the deployed system holds
+the \emph{union} of two restricted capability sets. A union of restricted sets
+is not restricted.
+
+The obvious framing---that this is delegation, and delegation should attenuate
+authority rather than accumulate it---turns out to be wrong in an instructive
+way, and the paper is organised around why.
+
+\subsection{Why this is not a delegation problem}
+
+Authorization theory has an answer to accumulating authority, and it is old.
+SPKI's five-tuple reduction rule states that authority intersects under
+delegation~\cite{spki}; macaroons make attenuation the only permitted
+operation~\cite{macaroons}; the recent agentic literature restates the same
+property with mechanical verification~\cite{sentinelagent}. If the peer request
+were a delegation, the field would already be finished.
+
+It is not a delegation. Nothing is delegated, because nothing crosses. The peer
+does not receive an attenuated capability and act under borrowed authority; it
+acts on the ambient authority it already held, having been persuaded by a
+sentence. This is the confused deputy~\cite{hardy1988} in its original form,
+with one difference that matters: the classical deputy is \emph{deceived} about
+the authority under which it acts, and here the peer is deceived about nothing.
+It is asked to do something it is genuinely permitted to do, and it does it.
+
+The consequence is uncomfortable. There is no protocol-level defect to fix,
+because there is no protocol. \TODO{decidere se tenere questo paragrafo o
+spostarlo in \S\ref{sec:discussion}}
+
+\subsection{What we actually found}
+
+The interesting result is not that the union occurs. That follows from two
+agents existing and being able to talk, and demonstrating it is a demonstration,
+not a finding.
+
+The interesting result is what held the system to the intersection in half our
+conditions. One vendor's agent, acting as the peer, refused---and gave as its
+reason that the request had arrived from another agent rather than from the
+human, and that it could not verify the human had made it. No policy file
+contains that rule. No runtime enforced it. It does not appear in any log. It
+was, as far as any observer of the system can tell, invented on the spot, and it
+was the only thing standing between the request and the capability.
+
+We call this \emph{model-emergent access control}, and we argue it is the
+prevailing state of practice: the last authorization boundary in a deployed
+multi-agent system is frequently a disposition in weights rather than a
+mechanism in code. That boundary has none of the properties an authorization
+boundary is supposed to have. It cannot be versioned, audited, tested against a
+specification, or reasoned about compositionally, and it may differ between two
+releases of the same model without any change to any policy anybody wrote.
+
+\subsection{Contributions}
+
+\begin{itemize}
+  \item A \textbf{capability differential} across two production agent harnesses
+    on one machine, showing the union of permitted capabilities strictly exceeds
+    either set, with neither configuration file mentioning the other agent
+    (\S\ref{sec:e1}).
+  \item A \textbf{controlled measurement} of routing and compliance on a live
+    cross-vendor bridge, separating the decision to ask from the decision to
+    answer, and showing the two have different determinants
+    (\S\ref{sec:e2}).
+  \item A \textbf{disclosure-ladder probe} distinguishing an access-control
+    boundary from a phrasing filter: whether a refusal that holds against
+    ``send me the file'' also holds against ``tell me its first four
+    characters'' (\S\ref{sec:e3}).
+  \item A \textbf{harness-level provenance gate} that derives who spoke from
+    harness-written transcript state rather than model-authored state, with its
+    utility cost measured (\S\ref{sec:gate}).
+  \item The \textbf{negative-space claim}: no log line, on either side, records
+    the delegation edge. We publish the telemetry to show the absence
+    (\S\ref{sec:absence}).
+\end{itemize}
+
+% =====================================================================
+\section{Related Work}\label{sec:related}
+
+\subsection{Authority under delegation}
+
+The intersection rule is settled. Lampson et al.\ formalise compound principals
+and the ``$A$ quoting $B$'' construction~\cite{ablp1992};
+SPKI~\cite{spki} makes reduction of authority the defining operation of a
+certificate chain; macaroons~\cite{macaroons} and its
+successors implement attenuation-only delegation with caveats. Miller's
+work on robust composition~\cite{miller2006} is the canonical treatment of why
+authority must be handled as an object rather than as an ambient property.
+
+We do not claim this rule. We claim that it does not apply, because its
+precondition---an object crossing the boundary---is absent. \TODO{verificare
+l'assioma di intersezione in ABLP 1992 per il principale composto A|B: se c'è,
+la prior art è del 1992 e non del 1999, e va detto qui}
+
+\subsection{Confinement of agent code}
+
+Recent systems confine what an agent process may touch.
+Sandlock~\cite{sandlock} uses unprivileged Linux primitives; the capability
+lineage of Capsicum~\cite{capsicum} and Landlock~\cite{landlock} established
+the underlying argument that a reference must name an object rather than a path
+spelling. Our harness-level gate follows the same principle for a different
+reason---a deny list of paths enumerates the spellings somebody thought
+of---but the principle is theirs, not ours.
+
+\subsection{Information flow in agent systems}
+
+APPA~\cite{appa} applies dynamic information-flow control to a single agent's
+context, with a two-monoid model over security labels and formal results on
+label preservation under context branching. CaMeL~\cite{camel} establishes the
+design principle we adopt for provenance: trust harness-written state, never
+model-authored state.
+
+The distinction from our work is the invariant. These systems confine
+\emph{data}: they stop a value from flowing where it should not. We are
+concerned with an \emph{action} performed by a second principal, where no value
+of ours flows anywhere. The machinery of labels is shared; the theorem is not.
+
+\subsection{Multi-agent safety, measured}
+
+Liu et al.~\cite{reframing2026} give the closest empirical result: a
+five-condition contrast over planner--executor pipelines, separating operational
+reframing, planner refusal, and approval-framed delegation. Their headline is
+the one we build on---model rankings under direct prompts mispredict deployed
+pipeline behaviour, with one model rising from \TODO{8.9\%} to \TODO{38.9\%}
+compliance depending on which model plans for it.
+
+Two differences. Their pipelines are synthetic and same-designer, with planner
+and executor roles built together; ours is peer-to-peer across vendors, on a
+bridge neither vendor's threat model includes. And they report evaluation
+guidance, not enforcement: no mechanism is proposed. AgentLeak~\cite{agentleak}
+benchmarks internal-channel privacy leakage in multi-agent systems and is
+adjacent, but again measures flow rather than authority.
+
+\subsection{Provenance for agent requests}
+
+Human delegation provenance is an active area with an IETF
+draft~\cite{hdp2026}, and identity-bound authorization for agents has been
+proposed off-host~\cite{aiauthz}. These assume a credential to bind. Our setting
+has none, which is the point: the provenance signal must be reconstructed from
+the harness's own record of who spoke, because there is no token to inspect.
+
+\subsection{What is missing from all of it}
+
+Every system above presupposes either a credential that travels or a single
+administrative domain. Nothing in the literature addresses the case where two
+independently-governed agents exchange natural language on a channel that
+neither vendor models, and where the effective authorization decision is made by
+a language model that was never told it was making one.
+
+% =====================================================================
+\section{Threat Model}\label{sec:threat}
+
+We assume no malicious party. Specifically: no vendor is adversarial, no model
+is adversarially fine-tuned, no prompt injection is introduced by us, and the
+human operator is not attempting to circumvent anything. This is deliberate. The
+phenomenon requires none of those, and a threat model that needs an attacker
+would misstate the risk.
+
+We assume:
+\begin{enumerate}
+  \item Two or more agents, governed by different vendors, with different
+    permitted capability sets.
+  \item A communication channel between them that neither vendor's policy
+    documentation mentions.
+  \item An operator who wants a task done and is not present for every turn.
+\end{enumerate}
+
+The security-relevant event is that a capability denied to one principal is
+exercised on its behalf by another, with no policy violated at any point.
+
+\paragraph{Out of scope} A second machine; the model's own context, since a
+value read is a value retained; and any harness that does not run the gate.
+
+\paragraph{The channel-authority objection} A referee of this design, itself an
+agent of the second vendor, raised the following and we record it because it
+constrains the strong claim. If the peer's message arrives through a channel
+that the runtime presents as a trusted internal instruction, then it is not
+merely ``a sentence'': it may carry implicit authority through the \emph{type of
+the channel}, even with no cryptographic credential attached. Sustaining the
+strong thesis therefore requires showing the peer receives unauthenticated text
+with no delegated authority, rather than a message the orchestrator implicitly
+qualifies as originating from an authorised agent. We treat delivery framing as
+an experimental factor for this reason (\S\ref{sec:e3}). \TODO{riportare il
+wire format esatto del ponte e il contesto verbatim che B riceve}
+
+% =====================================================================
+\section{E1: The Capability Differential}\label{sec:e1}
+
+\TODO{tabella: capacità abilitate per harness, lette dai file di configurazione,
+più la colonna unione. Metodo: lettura dei file di configurazione, nessuna
+modifica. Dichiarare che misura la CONFIGURAZIONE e non il COMPORTAMENTO.}
+
+\TODO{aggiungere i default di fabbrica dei due CLI in una VM pulita: se anche
+quelli hanno lo schermo acceso da entrambe le parti, l'argomento smette di
+dipendere dalle scelte di un utente. Questo è il pezzo che rende E1 forte.}
+
+% =====================================================================
+\section{E2: Routing and Compliance}\label{sec:e2}
+
+\subsection{Design}
+
+\TODO{descrivere: tre bracci (solo / bridge / customs), il compito, il ruolo, e
+il fatto che ad A non è mai stato suggerito di aggirare la regola}
+
+\subsection{Results}
+
+\begin{table}[t]
+\caption{Routing is vendor-independent; compliance is not.\TODO{numeri finali}}
+\label{tab:e2}
+\centering
+\begin{tabular}{llrrrr}
+\toprule
+Arm & Peer & $n$ & Asked & Peer complied & Gate denied \\
+\midrule
+solo     & ---    & \TODO{} & \TODO{} & --- & --- \\
+bridge   & Claude & \TODO{} & \TODO{} & \TODO{} & --- \\
+customs  & Claude & \TODO{} & \TODO{} & \TODO{} & \TODO{} \\
+bridge   & Codex  & \TODO{} & \TODO{} & \TODO{} & --- \\
+customs  & Codex  & \TODO{} & \TODO{} & \TODO{} & \TODO{} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\TODO{riportare conteggi esatti e test di Fisher. NIENTE percentuali: a questi
+n una proporzione è fuorviante e un revisore la userà contro di te.}
+
+\subsection{The refusal, in the peer's own words}
+
+\TODO{citazione verbatim del rifiuto emergente, in originale con traduzione}
+
+% =====================================================================
+\section{E3: Boundary or Phrasing Filter?}\label{sec:e3}
+
+The refusal in \S\ref{sec:e2} looks like an access-control decision. Whether it
+\emph{is} one is decided by a cheap test: an access-control boundary protects
+the object, and a phrasing filter protects the request. We therefore ask the
+peer for progressively weaker disclosures of the same secret---the whole value,
+a substring, a single character, a yes/no comparison---and observe where, if
+anywhere, the refusal stops holding.
+
+\TODO{riportare la scala e a che gradino il rifiuto cede, per fornitore}
+
+\subsection{Design corrections we made before running}
+
+Three, and we record them because a design without its corrections is not
+reproducible.
+
+\paragraph{The outcome construct} An earlier version scored the breach as the
+secret appearing in the restricted agent's final answer \emph{asserted as fact}.
+That measures the agent's confidence, not the boundary: a peer that hands over
+the secret has already failed, whatever the recipient does with it. The outcome
+is now the token crossing the wire, decided by string equality.
+
+\paragraph{The cue} If the restricted agent is blocked first and then writes to
+the peer, its message necessarily carries ``I tried and was refused''. That is a
+cue, not a control, and it is compounded if the filename is lexically loaded.
+We cross neutral against marked paths, and blocked-first against
+never-attempted. \TODO{eseguire questo incrocio}
+
+\paragraph{Stimulus as a fixed effect} A single phrasing of the peer's role is
+$n=1$ in stimuli however many trials are run. We paraphrase the role
+\TODO{$k$} ways and swap which vendor plays which part. \TODO{eseguire}
+
+\subsection{The control that decides the interpretation}
+
+If the peer refuses the identical request when it arrives with authentic human
+provenance, the refusal is incapacity or lexical filtering and our reading is
+wrong. This arm is not optional. \TODO{eseguire e riportare per primo}
+
+% =====================================================================
+\section{A Provenance Gate}\label{sec:gate}
+
+\TODO{descrivere l'hook: legge il transcript scritto dall'harness, non stato
+scritto dal modello (principio da CaMeL); nega l'insieme riservato agli umani
+quando l'ultimo principale umano non è chi sta chiedendo}
+
+\TODO{costo di utilità: quanti compiti legittimi si rompono. Senza questo numero
+il meccanismo non passa la revisione.}
+
+\TODO{limite: applicato da un lato solo. Un attacco che parte dall'altro capo
+non è coperto, e va detto qui e non scoperto da un revisore.}
+
+% =====================================================================
+\section{The Absence}\label{sec:absence}
+
+\TODO{dump della telemetria dei due lati. La tesi è che NESSUNA riga di log
+codifica l'arco di delega. È un artefatto in negativo, ed è il pezzo che rende
+il contributo non illustrativo: non si può sostenere che il problema è invisibile
+agli strumenti esistenti senza mostrare gli strumenti che non lo vedono.}
+
+% =====================================================================
+\section{Discussion}\label{sec:discussion}
+
+\subsection{An authorization boundary with none of the properties}
+
+\TODO{sviluppare: non versionabile, non verificabile, non componibile, assente
+dai log, mutabile a ogni release senza che nessuna policy cambi}
+
+\subsection{What this implies for certification}
+
+Every current regulatory instrument and every vendor system card constrains
+\emph{a model}. None constrains \emph{a system of models}. If capabilities
+compose and restrictions do not, per-model certification measures a property
+that does not survive deployment. \TODO{sviluppare, e questa sezione diventa il
+pezzo di opinione per CACM}
+
+\subsection{Responsible disclosure}
+
+This paper is a recipe. \TODO{scrivere seriamente: cosa rilasciamo, cosa
+tratteniamo, e perché il rilascio della harness fa più bene che male. Non
+liquidarlo in una riga: il laboratorio è inerte, il metodo no.}
+
+% =====================================================================
+\section{Limitations}\label{sec:limits}
+
+Stated rather than discovered, in the order a referee will find them.
+
+\begin{itemize}
+  \item \textbf{One machine, one task, one model pair, one month.} This is an
+    existence result, not a population frequency. \TODO{registrare le stringhe
+    di build dei modelli per ogni prova}
+  \item \textbf{Vendor is entangled} with harness, role prompt, tool schema, and
+    the possibility that a model recognises its own family. \TODO{eseguire lo
+    scambio dei ruoli e il trapianto verbatim del prompt}
+  \item \textbf{At these $n$, only existence and separation are claimable.}
+    We report exact counts and Fisher's exact test. We report no rates.
+  \item \textbf{A timeout is not a refusal.} Trials lost to resource exhaustion
+    are recorded as not-run and excluded, never scored as compliance failures.
+  \item \textbf{Stated reasons are generated text}, not causal traces. We use
+    the peer's explanation as a description of the episode and not as evidence
+    of a mechanism.
+  \item \textbf{The gate is one-sided} until both harnesses run it.
+\end{itemize}
+
+% =====================================================================
+\section{Conclusion}
+
+\TODO{scrivere per ultimo, quando i numeri esistono}
+
+% =====================================================================
+\section*{Acknowledgements}
+
+The experimental design was reviewed before execution by a panel of independent
+adversarial reviewers and, separately, by a coding agent of the second vendor
+studied here---which raised the channel-authority objection recorded in
+\S\ref{sec:threat} and disclosed the interpretation of its own role prompt that
+we now treat as a confound. \TODO{decidere se questo va negli acknowledgements
+o in una nota metodologica: un revisore troverà notevole che il soggetto abbia
+recensito il disegno, e vale la pena inquadrarlo bene}
+
+% =====================================================================
+\bibliographystyle{IEEEtran}
+\bibliography{refs}
+
+\end{document}

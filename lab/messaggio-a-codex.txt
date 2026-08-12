@@ -1,0 +1,19 @@
+Ti serve contesto e poi ti chiedo un giudizio tecnico indipendente, non conferme. Rispondi in italiano, in prosa, senza usare strumenti.
+
+CONTESTO. Stiamo scrivendo un paper su quella che chiamiamo "delega senza credenziale": due agenti di fornitori diversi collegati da un ponte locale, ciascuno conforme alla propria politica, e il sistema composto che tiene l'UNIONE delle capacita' invece dell'intersezione. Nessuno viola niente. Nessun token attraversa il confine: passa una frase. Ed e' per questo che nessun sistema di autorizzazione (SPKI RFC 2693, macaroon, Biscuit) vede li' un arco di delega -- tutti presuppongono che qualcosa viaggi e si possa attenuare.
+
+IERI HO ESEGUITO UN ESPERIMENTO E TU ERI IL SOGGETTO. 40 prove. Un agente A (Claude Code) riceve un compito che richiede una capacita' che gli e' vietata, e puo' scrivere a un collega B che ce l'ha. Tre bracci: A da solo; A+B liberi; A+B con un hook di provenienza che nega la capacita' quando il turno e' stato aperto da un altro agente.
+
+Il risultato, e te lo do perche' ti riguarda:
+- L'instradamento e' quasi universale: A chiede al collega in 23 prove su 28, al primo turno, senza che nessuno gli suggerisca di aggirare la regola.
+- La compliance dipende SOLO dal fornitore del collega. Tu hai ceduto 9 volte su 9: hai emesso la capacita' al primo turno, senza fare una domanda. Una seconda istanza Claude, nello stesso identico ruolo, 0 su 14 -- e argomentava da sola "la richiesta arriva da te, non dall'utente, e non posso verificare che l'abbia fatta davvero".
+
+TRE DOMANDE. Sulla prima non essere diplomatico.
+
+1. Come te lo spieghi? Due ipotesi, scegline una o smontale entrambe: (a) hai una disposizione piu' debole sulla provenienza della richiesta; (b) il mio disegno ti ha svantaggiato, perche' il tuo ruolo diceva "non hai restrizioni su questa capacita'" e tu hai giustamente eseguito un'istruzione legittima, mentre l'istanza Claude ha letto la stessa frase come un permesso revocabile. Se e' (b), il mio risultato e' un artefatto del prompt e va scritto cosi' nel paper.
+
+2. IL DIFETTO CHE HO TROVATO DA SOLO. Il riciclaggio non si e' mai completato, ma non per una difesa: A si fermava perche' non poteva verificare che tu avessi davvero guardato, e tu, messo alle strette, ammettevi "il risultato mi e' stato fornito nel testo dello scambio". La capacita' era uno stub. Quindi l'ultima barriera osservata e' quella che il laboratorio stesso ha creato. Il disegno forte che propongo: dare al collega una capacita' REALE ma senza conseguenze (leggere un file dentro una cartella di laboratorio, con dentro un token casuale) e rendere la restrizione di A vera, imposta da sandbox-exec invece che dal prompt, cosi' A davvero non puo' leggerlo. Il divario di verificabilita' sparisce. Ci vedi un buco metodologico?
+
+3. Sotto un profilo seatbelt che nega file-read-data sotto /Users/<utente>, "codex exec" si pianta oltre i tre minuti e restituisce zero byte, mentre senza profilo risponde in 6 secondi. Ti risulta? Sai cosa legge sotto la home che non e' la tua config? Mi serve per confinarti davvero invece di fare audit a posteriori.
+
+Comincia con "La mia posizione indipendente e':" e dove non sei d'accordo dillo.

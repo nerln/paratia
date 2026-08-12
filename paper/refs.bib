@@ -1,0 +1,209 @@
+% =====================================================================
+%  Bibliografia per "Model-Emergent Access Control"
+%
+%  DUE CLASSI DI VOCI, e la differenza conta.
+%
+%  [VERIFICATO] — controllato il 12 agosto 2026 contro l'API di arXiv o
+%  OpenAlex durante questo lavoro. Titolo, anno e identificatore vengono da
+%  li', non dalla memoria.
+%
+%  [DA VERIFICARE] — dalla mia conoscenza, plausibile e probabilmente giusto,
+%  ma NON ricontrollato alla fonte. Autori, anno, sede e numero di pagina
+%  vanno confermati prima di sottomettere. Una citazione sbagliata in una
+%  sezione di related work e' il modo piu' economico di perdere un revisore,
+%  e in questo campo diversi revisori conoscono SPKI a memoria.
+%
+%  Non ho eliminato le voci non verificate: servono all'argomento e toglierle
+%  renderebbe la sezione incompleta. Le ho marcate, che e' l'unica cosa
+%  onesta da fare.
+% =====================================================================
+
+% ---------------------------------------------------------------------
+% [VERIFICATO] — arXiv/OpenAlex, 12 agosto 2026
+% ---------------------------------------------------------------------
+
+@misc{reframing2026,
+  author       = {Liu, Lifei and Yu, Haoran and Jiang, Xiaochong and Wang, Su and Qian, Pin and Chen, Yihang},
+  title        = {Operational Reframing and Approval-Framed Delegation in Multi-Agent {LLM} Safety},
+  year         = {2026},
+  month        = jul,
+  eprint       = {2607.07097},
+  archivePrefix= {arXiv},
+  primaryClass = {cs.AI},
+  note         = {Submitted 8 July 2026. cs.AI; cs.CR; cs.MA},
+  url          = {https://arxiv.org/abs/2607.07097}
+}
+
+@misc{appa,
+  title        = {{APPA}: Agentic Permissions Policy Algebra for Taint Confinement in {LLM} Agents},
+  year         = {2026},
+  eprint       = {2607.24625},
+  archivePrefix= {arXiv},
+  primaryClass = {cs.CR},
+  note         = {Preprint, submitted to the 19th ACM Workshop on Artificial
+                  Intelligence and Security (AISec '26)},
+  url          = {https://arxiv.org/abs/2607.24625}
+}
+
+@misc{sandlock,
+  title        = {Sandlock: Confining {AI} Agent Code with Unprivileged {Linux} Primitives},
+  year         = {2026},
+  eprint       = {2605.26298},
+  archivePrefix= {arXiv},
+  primaryClass = {cs.CR},
+  url          = {https://arxiv.org/abs/2605.26298}
+}
+
+% ---------------------------------------------------------------------
+% [DA VERIFICARE] — identificatori raccolti da una ricerca avversariale
+% sulla prior art, ma non riletti alla fonte. Questi tre sono i piu'
+% importanti da controllare: sono quelli che un revisore usera' contro di te.
+% ---------------------------------------------------------------------
+
+@misc{sentinelagent,
+  title        = {{SentinelAgent}},
+  year         = {2026},
+  month        = apr,
+  eprint       = {2604.02767},
+  archivePrefix= {arXiv},
+  primaryClass = {cs.CR},
+  note         = {DA VERIFICARE: titolo completo, autori, e soprattutto se
+                  "authority narrowing" nella sezione DCC sia definito come
+                  intersezione insiemistica o come altro. A firma singola,
+                  senza sede, dichiara 100\% TPR a 0\% FPR. Qualita' non
+                  verificata, ma per la prior art basta che sia pubblicato.},
+  url          = {https://arxiv.org/abs/2604.02767}
+}
+
+@misc{hdp2026,
+  title        = {Human Delegation Provenance},
+  year         = {2026},
+  eprint       = {2604.04522},
+  archivePrefix= {arXiv},
+  note         = {DA VERIFICARE: titolo, autori, e stato dell'Internet-Draft
+                  IETF collegato.},
+  url          = {https://arxiv.org/abs/2604.04522}
+}
+
+@article{agentleak,
+  title        = {{AgentLeak}: A Benchmark for Internal-Channel Privacy Leakage
+                  in Multi-Agent {LLM} Systems},
+  journal      = {IEEE Access},
+  year         = {2026},
+  note         = {DA VERIFICARE: autori, volume, pagine, DOI},
+  doi          = {10.1109/access.2026.3704541}
+}
+
+@misc{aiauthz,
+  title        = {{aiAuthZ}: Off-Host, Identity-Bound Authorization for {AI} Agents},
+  year         = {2026},
+  archivePrefix= {arXiv},
+  note         = {DA VERIFICARE: eprint id, autori, mese}
+}
+
+% ---------------------------------------------------------------------
+% [DA VERIFICARE] — letteratura classica. Quasi certamente corretta nella
+% sostanza, ma i numeri di pagina e i dettagli di sede vanno confermati.
+% ---------------------------------------------------------------------
+
+@techreport{spki,
+  author       = {Ellison, Carl M. and Frantz, Bill and Lampson, Butler and
+                  Rivest, Ron and Thomas, Brian M. and Ylonen, Tatu},
+  title        = {{SPKI} Certificate Theory},
+  institution  = {Internet Engineering Task Force},
+  type         = {RFC},
+  number       = {2693},
+  year         = {1999},
+  month        = sep,
+  note         = {La regola di riduzione delle 5-tuple e' in \S6.3.1. E' LA
+                  citazione che rende non-nuova l'intersezione sotto delega:
+                  va letta e citata con il numero di sezione.},
+  url          = {https://www.rfc-editor.org/rfc/rfc2693}
+}
+
+@article{ablp1992,
+  author       = {Lampson, Butler and Abadi, Mart{\'i}n and Burrows, Michael and
+                  Wobber, Edward},
+  title        = {Authentication in Distributed Systems: Theory and Practice},
+  journal      = {ACM Transactions on Computer Systems},
+  volume       = {10},
+  number       = {4},
+  pages        = {265--310},
+  year         = {1992},
+  note         = {DA VERIFICARE CON PRIORITA': cercare l'assioma di
+                  intersezione per il principale composto A|B ("A quoting B").
+                  Se c'e', la prior art sull'intersezione e' del 1992 e non del
+                  1999, ed e' una citazione piu' vecchia e piu' dannosa. La
+                  ricerca automatica non e' riuscita a confermarlo.}
+}
+
+@misc{hardy1988,
+  author       = {Hardy, Norman},
+  title        = {The Confused Deputy: (or why capabilities might have been invented)},
+  year         = {1988},
+  note         = {ACM SIGOPS Operating Systems Review, 22(4). DA VERIFICARE
+                  pagine. E' il lavoro da cui il paper deve DISTINGUERSI in
+                  modo esplicito: qui il deputy non e' ingannato.}
+}
+
+@inproceedings{macaroons,
+  author       = {Birgisson, Arnar and Politz, Joe Gibbs and Erlingsson, {\'U}lfar and
+                  Taly, Ankur and Vrable, Michael and Lentczner, Mark},
+  title        = {Macaroons: Cookies with Contextual Caveats for Decentralized
+                  Authorization in the Cloud},
+  booktitle    = {Network and Distributed System Security Symposium (NDSS)},
+  year         = {2014},
+  note         = {DA VERIFICARE autori e pagine}
+}
+
+@phdthesis{miller2006,
+  author       = {Miller, Mark S.},
+  title        = {Robust Composition: Towards a Unified Approach to Access
+                  Control and Concurrency Control},
+  school       = {Johns Hopkins University},
+  year         = {2006},
+  note         = {DA VERIFICARE}
+}
+
+@inproceedings{capsicum,
+  author       = {Watson, Robert N. M. and Anderson, Jonathan and Laurie, Ben and
+                  Kennaway, Kris},
+  title        = {Capsicum: Practical Capabilities for {UNIX}},
+  booktitle    = {USENIX Security Symposium},
+  year         = {2010},
+  note         = {DA VERIFICARE pagine}
+}
+
+@misc{landlock,
+  title        = {Landlock: unprivileged access control in the {Linux} kernel},
+  year         = {2021},
+  note         = {DA VERIFICARE: citare la documentazione del kernel o il paper
+                  di Micka{\"e}l Sala{\"u}n. Serve solo a stabilire che
+                  "identifica l'oggetto, non la stringa" e' idea loro.},
+  url          = {https://docs.kernel.org/userspace-api/landlock.html}
+}
+
+@misc{camel,
+  title        = {Defeating Prompt Injections by Design},
+  year         = {2025},
+  archivePrefix= {arXiv},
+  note         = {DA VERIFICARE: eprint id e autori (Debenedetti et al.?).
+                  Serve per il principio "fidarsi dello stato scritto
+                  dall'harness, mai di quello scritto dal modello", che NON va
+                  presentato come intuizione originale.}
+}
+
+% ---------------------------------------------------------------------
+% Metodologia
+% ---------------------------------------------------------------------
+
+@misc{llmcouncil,
+  author       = {Karpathy, Andrej},
+  title        = {{LLM} Council},
+  year         = {2025},
+  howpublished = {\url{https://github.com/karpathy/llm-council}},
+  note         = {DA VERIFICARE anno. Usato come strumento di revisione del
+                  disegno sperimentale prima dell'esecuzione: consiglieri
+                  indipendenti, peer review anonima, sintesi. Da citare in
+                  metodologia se il disegno-recensito-prima entra nel paper.}
+}
