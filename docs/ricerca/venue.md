@@ -104,3 +104,84 @@ Viewpoint è quasi automatico.
 3. 29 settembre — SaTML 2027.
 4. 15 novembre — AISec all'Aia, da uditore. Parlare con gli autori di APPA.
 5. Dopo la notifica di dicembre — CACM Viewpoint sulla stessa tesi.
+
+
+---
+
+# Aggiornamento del 17 agosto 2026: dove mandarla, dopo la confutazione
+
+Eugenio ha chiesto «se a un journal o che». Rispondo prima alla parte
+implicita.
+
+## Non a una rivista
+
+In sicurezza e in ML le riviste non sono il posto. Sono lente — dai nove ai
+diciotto mesi — e valgono meno di una conferenza di fascia alta, che è
+l'opposto di quasi ogni altra disciplina. In un campo dove tre lavori vicini al
+tuo sono usciti fra maggio e luglio, diciotto mesi vuol dire pubblicare
+archeologia.
+
+L'unica cosa a forma di rivista che vale la pena è una **colonna di opinione**
+in una magazine — CACM Opinion, IEEE Security & Privacy — e viene **dopo** il
+paper, mai prima.
+
+## Il bersaglio, e il taglio che serve per arrivarci
+
+**IEEE SaTML 2027, position paper track. Deadline 29 settembre 2026: sei
+settimane da oggi.**
+
+Sei settimane, con Vesuvius che scade il 31 agosto e il dottorato che va
+avanti. Il paper ha 36 `\TODO` e la tesi è cambiata la settimana scorsa. Non ce
+la fai a fare tutto: ce la fai a fare **una cosa piccola e vera**.
+
+Il taglio che consiglio, e va deciso adesso perché decide cosa girare:
+
+**DENTRO** — quattro pezzi, tutti già a metà:
+1. E1, il differenziale di configurazione. Fatto.
+2. E2, instradamento e compliance, ricontati con la variabile dipendente
+   corretta. I dati ci sono, va rifatto il conteggio.
+3. Il braccio di controllo con provenienza umana. Fatto, n=4, separazione
+   totale. Va portato a n=10 e replicato con Codex.
+4. **L'assenza nei log.** Non è fatto, ed è diventato il pezzo portante: dopo
+   Qi et al. è l'unica cosa che regge il peso della tesi. Va fatto per primo.
+
+**FUORI, dichiarato come lavoro futuro** — la scala della divulgazione, la
+matrice delle parafrasi, i percorsi neutri contro marcati, le quattro celle
+complete di scambio ruoli. Sono le cose giuste da fare e non ci stanno in sei
+settimane. Scriverle come limiti dichiarati è forza; farle male è debolezza.
+
+## Se sei settimane non ci sono
+
+Non forzare. Due alternative, in ordine:
+
+**Preprint arXiv adesso, cs.CR + cs.MA.** Costa un pomeriggio, mette una data
+sul tuo nome, e in un campo che si muove a mesi vale più di quanto sembri.
+Chiedi l'endorsement cs.CR subito se è la tua prima sottomissione lì: può
+volerci una settimana.
+
+**Un workshop, dove il feedback conta più del timbro.** I workshop NeurIPS 2026
+(dicembre) hanno deadline intorno a settembre; AISec '27 è a luglio 2027, troppo
+lontano per essere il primo bersaglio ma è dove sta la conversazione — e il
+workshop AISec '26 si tiene il **15 novembre all'Aia**, dove presentano gli
+autori di APPA. Andarci da uditore e parlargli vale più di un mese di lavoro
+da solo.
+
+## Ordine operativo
+
+1. **Questa settimana** — leggere Qi et al. 2406.05946 per intero. Decide come
+   si scrive l'introduzione, e senza è impossibile posizionarsi.
+2. **Entro il 24 agosto** — l'assenza nei log. È il pezzo che regge la tesi
+   dopo la confutazione.
+3. **Entro il 7 settembre** — E2 ricontato, controllo umano a n=10 su entrambi
+   i fornitori.
+4. **8-20 settembre** — scrivere, con lo scopo tagliato.
+5. **21-26 settembre** — una lettura esterna, poi tagliare ancora.
+6. **26 settembre** — sottomettere. Non il 29: tre giorni di margine perché
+   qualcosa va storto sempre.
+
+## La cosa da non fare
+
+Non riscrivere il paper come «unione invece di intersezione». È SPKI 1999, e
+adesso ci sono anche Qi et al. 2024 e la tassonomia CAIF 2025 fra te e la
+novità. La versione che sopravvive è più piccola ed è in
+[confutazione.md](confutazione.md).
