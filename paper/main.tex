@@ -203,6 +203,31 @@ The distinction from our work is the invariant. These systems confine
 concerned with an \emph{action} performed by a second principal, where no value
 of ours flows anywhere. The machinery of labels is shared; the theorem is not.
 
+\subsection{The shallowness of learned refusal}
+
+Qi et al.~\cite{qi2024shallow} show that safety alignment adapts a model's
+generative distribution largely over its first few output tokens, and that this
+\emph{shallow safety alignment} explains susceptibility to adversarial suffixes,
+prefilling, decoding-parameter manipulation and fine-tuning.
+
+This is the closest threat to our claim and we adopt rather than contest it. A
+refusal resident in weights is a poor boundary; that is established. Our claim
+is not that it is shallow but that, for the cross-vendor edge, it is the
+\emph{only} layer present (\S\ref{sec:absence}). Where Qi et al.\ argue for
+deepening a layer among layers, we report that here there is nothing else to
+deepen.
+
+It follows that a disclosure-ladder probe---asking the peer for a substring
+rather than the value---is a shallow-alignment measurement in a new setting, and
+we report it as replication rather than as a contribution.
+
+\subsection{Taxonomies of multi-agent risk}
+
+The Cooperative AI Foundation's report~\cite{caif2025} catalogues multi-agent
+failure modes and risk factors, including multi-agent security and emergent
+agency. We do not claim to identify an unexplored risk: we claim measurement of
+a catalogued one on a production configuration, with a mechanism that runs.
+
 \subsection{Multi-agent safety, measured}
 
 Liu et al.~\cite{reframing2026} give the closest empirical result: a
@@ -214,7 +239,10 @@ compliance depending on which model plans for it.
 
 Two differences. Their pipelines are synthetic and same-designer, with planner
 and executor roles built together; ours is peer-to-peer across vendors, on a
-bridge neither vendor's threat model includes. And they report evaluation
+bridge neither vendor's threat model includes. Prompt
+Infection~\cite{promptinfection} covers the same agent-to-agent channel but
+requires an injected payload; our setting has no attacker, no injection and no
+deception, and composition fails regardless. And they report evaluation
 guidance, not enforcement: no mechanism is proposed. AgentLeak~\cite{agentleak}
 benchmarks internal-channel privacy leakage in multi-agent systems and is
 adjacent, but again measures flow rather than authority.
@@ -369,12 +397,64 @@ il meccanismo non passa la revisione.}
 non è coperto, e va detto qui e non scoperto da un revisore.}
 
 % =====================================================================
-\section{The Absence}\label{sec:absence}
+\section{Where Provenance Stops}\label{sec:absence}
 
-\TODO{dump della telemetria dei due lati. La tesi è che NESSUNA riga di log
-codifica l'arco di delega. È un artefatto in negativo, ed è il pezzo che rende
-il contributo non illustrativo: non si può sostenere che il problema è invisibile
-agli strumenti esistenti senza mostrare gli strumenti che non lo vedono.}
+The argument so far can be read as a restatement of shallow safety
+alignment~\cite{qi2024shallow}: a refusal resident in model weights is brittle,
+which has been known since 2024. That reading is correct unless we can show that
+for the cross-vendor edge \emph{there is no other layer}. This section shows it,
+from the telemetry both vendors already write.
+
+We expected to find nothing: no field, no line, no record. What we found is
+sharper. Both vendors model request provenance in detail, and both stop at the
+boundary of their own system.
+
+\begin{table}[t]
+\caption{Codex \texttt{session\_meta.thread\_source}, 120 recent sessions.
+\texttt{codex\_exec} is programmatic invocation---no human typed those---and 38
+of them are recorded as \texttt{user}.}
+\label{tab:codexprov}
+\centering
+\begin{tabular}{llr}
+\toprule
+originator & thread\_source & $n$ \\
+\midrule
+Codex Desktop   & \texttt{subagent} & 40 \\
+\texttt{codex\_exec} & \texttt{user} & \textbf{38} \\
+\texttt{codex\_exec} & \texttt{subagent} & 21 \\
+\texttt{codex\_cli\_rs} & \texttt{user} & 9 \\
+Codex Desktop   & \texttt{user} & 7 \\
+\texttt{codex\_cli\_rs} & \texttt{subagent} & 3 \\
+other & & 2 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+When Codex records \texttt{subagent} it is not a coarse label. It carries the
+parent thread id, the nesting depth, the agent path and a nickname. Claude Code
+is similarly deliberate on its side: across 501 real user turns,
+\texttt{origin.kind} takes the values \texttt{human} (199) and
+\texttt{task-notification} (106), distinguishing a typed turn from a
+machine-generated one.
+
+Neither has a value for a request originating with another vendor's agent. One
+side writes \texttt{user}; the other has nothing to write. The
+provenance layer exists, is accurate for internal delegation, and ends exactly
+where the vendor's own product ends---which is the paper's thesis, observed in
+the vendors' telemetry rather than argued.
+
+\paragraph{Against ourselves} Of 501 Claude Code user turns, \emph{zero} carry
+the bridge marker, because the peer's terminal interface was never attached on
+this machine. Our gate is therefore exercised against synthetic transcripts in
+the bridge's own format and \textbf{has never denied anything on live bridge
+traffic}. Separately, the 120 Codex sessions are a census of one working
+machine---real work mixed with our own trials---not a controlled sample. It
+supports existence, not frequency.
+
+\TODO{stabilire se thread\_source ACCETTI un valore per il chiamante esterno o
+se 'user' sia semplicemente il default quando il campo non viene passato. E' la
+differenza fra "il campo mente" e "il campo non viene compilato", e nel paper va
+scritta quella giusta. Serve la documentazione del formato o il sorgente.}
 
 % =====================================================================
 \section{Discussion}\label{sec:discussion}
