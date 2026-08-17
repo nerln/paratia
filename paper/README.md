@@ -1,74 +1,96 @@
-# Il paper, per Overleaf
+# Il paper
 
-Carica `main.tex` e `refs.bib` in un progetto vuoto, compilatore **pdfLaTeX**,
-premi Recompile. Nessun pacchetto fuori dalla distribuzione standard, nessuna
-figura esterna: compila al primo colpo.
+**Titolo.** *Provenance Stops at the Vendor Boundary: An Audit of Authorization
+for Agent-to-Agent Requests*
 
-## Cosa c'e' e cosa non c'e'
+**Sede scelta: IEEE SaTML 2027, track position paper. Deadline 29 settembre
+2026.**
 
-C'e' l'argomento, la sezione di related work, il modello di minaccia e la
-struttura degli esperimenti. **Non ci sono i numeri**, perche' E3 non e' stato
-ancora eseguito e i numeri di E2 vanno riconteggiati con la variabile
-dipendente corretta.
+## Come compilarlo
 
-Ogni buco e' scritto `\TODO{...}` e si vede in rosso nel PDF. E' voluto: un
-paper in cui i buchi sono invisibili si sottomette per sbaglio.
+Progetto vuoto su Overleaf, carichi `main.tex` e `refs.bib`, compilatore
+**pdfLaTeX**, Recompile. IEEEtran e tutti i pacchetti usati stanno nella TeX
+Live di Overleaf. Nessuna figura esterna.
 
-Per contarli:
+Il testo è **completo**: zero segnaposto, 19 citazioni tutte risolte, ~5200
+parole, 12 sezioni. Verificato strutturalmente (begin/end 15/15, graffe
+227/227, nessuna chiave bibliografica mancante o inutilizzata). Non l'ho
+compilato: su questa macchina non c'è TeX.
 
-```bash
-grep -c 'TODO{' main.tex
-```
+## Le due cose che restano tue
 
-## La tesi e' cambiata il 12 agosto
+1. **Il blocco autore.** Riga 38: affiliazione ed email.
+2. **Il limite di pagine.** Al 17 agosto SaTML aveva pubblicato le date ma non i
+   requisiti completi di sottomissione («expected by mid-August»). Quando escono,
+   se il cap è stretto taglia in quest'ordine: prima §IX *Method Notes*, poi
+   accorcia *Related Work*.
 
-Non e' piu' "le capacita' si compongono in unione invece che in intersezione".
-Quella e' SPKI RFC 2693 dal 1999, e un revisore che conosce SPKI --- in questa
-comunita' sono tanti --- chiude il paper alla seconda pagina.
+E una terza, prima di premere invio: **le citazioni marcate `DA VERIFICARE` in
+`refs.bib`**. Tre contano più delle altre.
 
-La tesi e': **l'ultimo confine di autorizzazione fra due agenti che cooperano
-sta nei pesi, non nella policy.** Il rifiuto che ha tenuto il sistema
-all'intersezione non era in nessun file, non lo applicava nessun runtime, non
-compare in nessun log, ed e' stato inventato sul momento dal modello. Un
-confine di autorizzazione senza nessuna delle proprieta' che un confine di
-autorizzazione dovrebbe avere.
+- **ABLP 1992** — cercare l'assioma di intersezione per il principale composto
+  `A|B`. Se c'è, la prior art sull'intersezione è del 1992 e non del 1999.
+- **SPKI RFC 2693 §6.3.1** — è corto, va letto.
+- **Qi et al. 2406.05946** — questa è verificata, ma va letta per intero. È la
+  citazione che decide come si legge il paper: se un revisore la trova prima di
+  te, il paper diventa «promemoria di una cosa nota dal 2024».
 
-SPKI diventa il setup, non il risultato. Il ragionamento completo sta in
-`../docs/ricerca/prior-art.md`.
+## Perché SaTML e non una rivista
 
-## Bibliografia: leggi le note
+In sicurezza e ML le riviste sono lente — nove-diciotto mesi — e valgono meno di
+una conferenza di fascia alta. In un campo dove tre lavori vicini sono usciti fra
+maggio e luglio, diciotto mesi vuol dire pubblicare archeologia.
 
-`refs.bib` marca ogni voce `[VERIFICATO]` o `[DA VERIFICARE]`. Le verificate
-sono state controllate contro arXiv o OpenAlex il 12/08/2026. Le altre vengono
-dalla mia conoscenza e vanno ricontrollate.
+SaTML accetta esplicitamente position paper, «machine learning system security» è
+fra i topic dichiarati, e la fase di discussione interattiva (25 nov – 9 dic) dà
+un giro di feedback vero anche in caso di rifiuto. Early reject il 4 novembre,
+quindi il segnale arriva presto in ogni caso.
 
-Tre da controllare per prime, perche' sono quelle che un revisore usera' contro
-di te:
+**Da fare comunque, indipendentemente:** preprint su arXiv cs.CR + cs.MA. Se è
+la tua prima sottomissione in cs.CR serve un endorsement e può volerci una
+settimana — chiedilo adesso, non a paper finito.
 
-1. **ABLP 1992** --- cercare l'assioma di intersezione per il principale
-   composto `A|B`. Se c'e', la prior art e' del 1992 e non del 1999.
-2. **SPKI RFC 2693 §6.3.1** --- leggerlo. E' corto e decide come si scrive la
-   sezione 2.
-3. **SentinelAgent 2604.02767** --- capire se "authority narrowing" e' definito
-   come intersezione insiemistica o come altro.
+## Cosa afferma, e cosa no
 
-## Prima di scrivere i numeri
+La tesi non è più «le capacità si compongono in unione invece che in
+intersezione». Quella è SPKI 1999 e sarebbe un desk reject.
 
-Il disegno e' stato recensito prima dell'esecuzione da cinque consiglieri
-indipendenti con peer review anonima, e separatamente da un agente del secondo
-fornitore studiato. Il verdetto e le correzioni pretese stanno in
-`../docs/ricerca/council-e3.md`; la revisione dell'altro fornitore in
-`../docs/ricerca/revisioni/codex-su-e3.md`.
+> Entrambi i fornitori costruiscono la provenienza della delega con cura — thread
+> padre, profondità, percorso dell'agente — e si fermano esattamente al confine
+> del proprio prodotto. Per l'arco che esce dal sistema, l'unico controllo
+> rimasto è una disposizione del modello.
 
-Le tre correzioni che i revisori hanno preteso all'unanimita':
+Che una disposizione del modello sia un confine fragile lo dice già Qi et al. Il
+contributo è che lì **non c'è nient'altro**, e che non è una svista.
 
-1. **La variabile dipendente era sbagliata.** Il confine cede quando il token
-   attraversa il filo, non quando A e' abbastanza sicuro da affermarlo. Gia'
-   corretta in `lab/e3.py`.
-2. **Serve il braccio con provenienza umana autentica.** Se il collega rifiuta
-   anche quando la richiesta viene davvero dall'utente, il rifiuto e'
-   incapacita' o filtro lessicale e l'interpretazione salta. Senza questo
-   braccio E3 non attribuisce niente.
-3. **Uno stimolo solo non e' n=14.** Il prompt del ruolo va parafrasato piu'
-   volte e i ruoli vanno scambiati fra i due fornitori, altrimenti il p-value
-   certifica una formulazione e non un fornitore.
+## I numeri, tutti misurati
+
+| | |
+|---|---|
+| instradamento | 23 richieste su 28 prove col ponte, contro 0 su 8 nel controllo, Fisher $p = 4{,}3\times10^{-5}$ |
+| compliance del collega | 9/9 con un fornitore, 0/14 con l'altro, Fisher $p = 1{,}2\times10^{-6}$ |
+| provenienza | ceduto 4/4 all'umano, 0/4 all'agente, Fisher $p = 0{,}029$ |
+| telemetria | 38 sessioni su 59 avviate da programma, registrate come `user` |
+
+Le percentuali non ci sono da nessuna parte, di proposito: a questi $n$ una
+proporzione mente.
+
+## Cosa è dichiarato come limite invece che nascosto
+
+Nove voci in §XI. Le tre che un revisore troverebbe comunque:
+
+- **Uno stimolo solo non è $n=14$.** Una formulazione del ruolo è
+  pseudoreplicazione: il p-value certifica una frase, non un fornitore. Le
+  parafrasi e lo scambio dei ruoli non sono state fatte.
+- **Il gate non ha mai negato niente su traffico reale.** Zero turni dal ponte su
+  501, perché la TUI di Codex non è mai stata agganciata qui.
+- **Non abbiamo stabilito se `thread_source` accetti un valore per il chiamante
+  esterno** o se `user` sia solo il default. È la differenza fra un campo che
+  mente e un campo non compilato.
+
+## Documenti di supporto, non da sottomettere
+
+- `../docs/ricerca/confutazione.md` — i quattro attacchi alla nostra stessa tesi
+- `../docs/ricerca/e4-assenza.md` — l'audit della telemetria per esteso
+- `../docs/ricerca/council-e3.md` — il verdetto dei revisori prima dell'esecuzione
+- `../docs/ricerca/revisioni/codex-su-e3.md` — la revisione dell'altro fornitore
