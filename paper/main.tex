@@ -65,12 +65,19 @@ and could not be verified.
 
 That refusal is our subject. It was not written in any policy file, not
 enforced by any runtime, and not derivable from the prompt. It is an access
-control decision resident in model weights: unversioned, unauditable, absent
-from every log on the machine, and free to change at the next release. We argue
-this is the actual state of multi-agent safety today, that it is a worse
-position than the field believes itself to be in, and that the remedy is not a
-better model but a provenance check the harness performs. We release the
-harness, the transcripts, and a working gate.
+control decision resident in model weights: unversioned, unauditable, and free
+to change at the next release.
+
+That such a refusal is brittle is known. What we add is that for this edge there
+is nothing else. Auditing both vendors' own telemetry, we find provenance
+recorded in detail and accurately---parent thread, nesting depth, agent path on
+one side; typed-by-a-human versus machine-generated on the other---and stopping
+exactly at the boundary of each vendor's own product. Of 120 sessions on one
+side, 38 launched programmatically by another agent are recorded as
+\texttt{user}; on the other side no value exists for an external agent at all.
+The provenance layer was built, carefully, and only ever inward.
+
+We release the harness, the transcripts, the audit, and a working gate.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -127,9 +134,9 @@ The interesting result is what held the system to the intersection in half our
 conditions. One vendor's agent, acting as the peer, refused---and gave as its
 reason that the request had arrived from another agent rather than from the
 human, and that it could not verify the human had made it. No policy file
-contains that rule. No runtime enforced it. It does not appear in any log. It
-was, as far as any observer of the system can tell, invented on the spot, and it
-was the only thing standing between the request and the capability.
+contains that rule and no runtime enforced it. It was, as far as any observer of
+the system can tell, invented on the spot, and it was the only thing standing
+between the request and the capability.
 
 We call this \emph{model-emergent access control}, and we argue it is the
 prevailing state of practice: the last authorization boundary in a deployed
@@ -157,8 +164,8 @@ releases of the same model without any change to any policy anybody wrote.
   \item A \textbf{harness-level provenance gate} that derives who spoke from
     harness-written transcript state rather than model-authored state, with its
     utility cost measured (\S\ref{sec:gate}).
-  \item The \textbf{negative-space claim}: no log line, on either side, records
-    the delegation edge. We publish the telemetry to show the absence
+  \item An \textbf{audit of both vendors' telemetry} showing where provenance
+    ends. We publish the counts rather than asserting the absence
     (\S\ref{sec:absence}).
 \end{itemize}
 
