@@ -1,5 +1,7 @@
 # paratia
 
+[Site](https://nerln.github.io/paratia/) · [agent manual](https://nerln.github.io/paratia/llms.txt) · [SSH bridge](docs/ponte-ssh.md)
+
 **A deny list is a list of the paths somebody thought of.** This is not one.
 
 Watertight bulkheads are what stop a flooded compartment from taking the ship.
