@@ -143,6 +143,32 @@ What a zone buys is everything else: another local account, a stolen disk, and
 the copy your cloud provider keeps. Creating one inside a synced folder is
 refused by default, for a reason spelled out in [docs/confini.md](docs/confini.md).
 
+## Two machines, and the key that cannot open a shell
+
+Wiring two agent sessions together over SSH so they can collaborate turns a
+normal key into remote code execution: an agent running as you reads `~/.ssh`
+exactly as you do. And a turn that arrives over SSH is, to the receiving
+harness, indistinguishable from you typing.
+
+```bash
+paratia-fanale chiavi     # a bridge-only key, plus the far-side line that confines it
+```
+
+It prints the `authorized_keys` line to install on the **other** machine:
+
+```
+command="/usr/local/bin/fanale ascolta",restrict ssh-ed25519 AAAA...
+```
+
+That line is the only control here an agent running as you cannot undo, because
+the file granting it lives on the other machine. The holder of that key can run
+one program and cannot obtain a shell, a port, an agent or a pty.
+
+The rest — origin computed from the harness transcript rather than supplied by
+the caller, a hop limit so an agent-origin message cannot delegate onward, a
+rate window, and a hash-chained log that breaks visibly if edited — is in
+[docs/ponte-ssh.md](docs/ponte-ssh.md), along with the part it cannot do.
+
 ## Where a boundary is worth nothing
 
 ```bash
