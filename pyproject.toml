@@ -13,6 +13,7 @@ dependencies = []
 
 [project.scripts]
 paratia = "paratia:main"
+paratia-fanale = "fanale:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -22,4 +23,4 @@ build-backend = "hatchling.build"
 # Flat modules, not a package. paratia.py loads specchio.py by path from its own
 # directory, so the two have to land side by side. The hooks are deliberately
 # absent: they are wired into ~/.claude, not installed by pip.
-only-include = ["paratia.py", "specchio.py"]
+only-include = ["paratia.py", "specchio.py", "fanale.py"]

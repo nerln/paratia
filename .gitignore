@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 .DS_Store
 *.sparsebundle
+lab/e3/riservato/
+lab/e3/pubblico/

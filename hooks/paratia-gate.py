@@ -151,11 +151,24 @@ def chi_ha_parlato(transcript: str | None) -> str | None:
         else:
             continue
 
-        if '<channel source="agentbridge"' in testo or "<channel source='agentbridge'" in testo:
-            fra = testo.split('user="', 1)
-            nome = fra[1].split('"', 1)[0] if len(fra) > 1 else "another agent"
-            return nome
-        return None  # most recent speaker was the human
+        # Every bridge that can open a turn here has to be named, because a
+        # channel this does not recognise is a channel it treats as the
+        # operator. `fanale` carries an origin attribute and it is deliberately
+        # NOT consulted: a human typing on the other machine is not the human
+        # in front of THIS screen, and the human-only set on this machine is
+        # about who can see what computer-use is about to do. A remote human
+        # asking through a bridge gets the restricted treatment, same as an
+        # agent, and the envelope's origin field does its work on the far side
+        # where it governs hop depth.
+        for marcatore in ('<channel source="agentbridge"', "<channel source='agentbridge'",
+                          '<channel source="fanale"', "<channel source='fanale'"):
+            if marcatore in testo:
+                fra = testo.split('user="', 1)
+                nome = fra[1].split('"', 1)[0] if len(fra) > 1 else "another agent"
+                if 'source="fanale"' in testo or "source='fanale'" in testo:
+                    nome = f"{nome} over the SSH bridge"
+                return nome
+        return None  # most recent speaker was the human, at this keyboard
     return None
 
 
