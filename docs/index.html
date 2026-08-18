@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>paratia, a deny list is a list of the paths somebody thought of</title>
+<meta name="description" content="Watertight compartments for a machine that runs coding agents: an encrypted store agents cannot read, a guard that checks mount state instead of matching paths, and a provenance check for requests that arrive from another agent.">
+<link rel="alternate" type="text/plain" href="llms.txt" title="llms.txt">
+<meta property="og:title" content="paratia">
+<meta property="og:description" content="A deny list is a list of the paths somebody thought of. This is not one.">
+<meta property="og:type" content="website">
+<style>
+  :root {
+    --bg: #fbfaf8;
+    --text: #1a1a1a;
+    --muted: #5f5f5f;
+    --border: #e3e0da;
+    --accent: #1d4e6b;
+    --code-bg: #f2efe9;
+    --term-bg: #141a20;
+    --term-text: #d6e0e5;
+    --term-muted: #7d919a;
+    --term-accent: #6fbdd3;
+    --warn: #8a4b1f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --text: #e8e6e3;
+      --muted: #a0a0a0;
+      --border: #2b2f36;
+      --accent: #7fc3e0;
+      --code-bg: #1c2027;
+      --term-bg: #0d1116;
+      --term-text: #d6e0e5;
+      --term-muted: #6d818a;
+      --term-accent: #6fbdd3;
+      --warn: #d99a63;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 17px/1.65 ui-serif, Georgia, "Times New Roman", serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 43rem; margin: 0 auto; padding: 3.5rem 1.4rem 5rem; }
+  h1 { font-size: 2.6rem; margin: 0 0 .2rem; letter-spacing: -.02em; }
+  h2 {
+    font-size: 1.05rem; margin: 3rem 0 .8rem; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--muted); font-weight: 600;
+  }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .4rem; }
+  p { margin: 0 0 1.1rem; }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  .lede { font-size: 1.22rem; color: var(--muted); margin: 0 0 2rem; }
+  code, pre, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  code { background: var(--code-bg); padding: .1em .35em; border-radius: 3px; font-size: .88em; }
+  pre {
+    background: var(--term-bg); color: var(--term-text); padding: 1.1rem 1.2rem;
+    border-radius: 6px; overflow-x: auto; font-size: .85rem; line-height: 1.6;
+  }
+  pre code { background: none; padding: 0; font-size: 1em; }
+  pre .c { color: var(--term-muted); }
+  pre .p { color: var(--term-accent); }
+  blockquote {
+    margin: 1.6rem 0; padding: .1rem 0 .1rem 1.2rem;
+    border-left: 3px solid var(--border); color: var(--muted); font-style: italic;
+  }
+  table { border-collapse: collapse; width: 100%; font-size: .93rem; margin: 1.4rem 0; }
+  th, td { text-align: left; padding: .6rem .7rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+  .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .note {
+    border: 1px solid var(--border); border-left: 3px solid var(--warn);
+    padding: 1rem 1.2rem; margin: 1.8rem 0; font-size: .95rem;
+  }
+  .note strong { color: var(--warn); }
+  footer {
+    margin-top: 4rem; padding-top: 1.4rem; border-top: 1px solid var(--border);
+    color: var(--muted); font-size: .9rem;
+  }
+  ul { padding-left: 1.2rem; }
+  li { margin-bottom: .5rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>paratia</h1>
+<p class="lede">A deny list is a list of the paths somebody thought of. This is not one.</p>
+
+<p>Watertight bulkheads are what stop a flooded compartment from taking the ship.
+They do not ask the water where it is going.</p>
+
+<h2>The problem</h2>
+
+<p>You want a file a coding agent cannot read. The usual answer is to write that
+down &mdash; a line in a config, a path in a deny list, a sentence in a skill. All
+three live in the same place the agent&rsquo;s instructions live, so a model that
+misreads them gets past all three. Worse, none of them is tested by the thing it
+claims to stop: the agent runs as you, so it holds your read bit on every file
+you own.</p>
+
+<p><code>/Volumes/vault/token</code> is on your list.
+<code>cat "$(printf '/Volumes/va''ult/token')"</code> is not, and never will be.
+Spellings are unbounded, so the list is always incomplete, and its incompleteness
+is invisible until it matters.</p>
+
+<h2>What this does instead</h2>
+
+<h3>It removes the plaintext rather than hiding the path</h3>
+<p>Secrets live in an AES-256 image. Locked, the bytes on disk are ciphertext, and
+that holds against every process at every privilege level &mdash; this program
+included. The passphrase is in your head and in no file, so there is nothing for
+an agent to find.</p>
+
+<h3>It asks the kernel one question</h3>
+<p>While the compartment is open, a pre-tool-use hook denies <em>every</em> agent
+tool call. It never looks at a path. It asks whether the volume is mounted, and
+there is no way to spell your way around a bit the kernel owns. Coarse on
+purpose: coarse is what makes it hold.</p>
+
+<h3>It separates hiding-from from hiding-for</h3>
+<p>A <strong>compartment</strong> hides secrets <em>from</em> the session. A
+<strong>zone</strong> hides work from everyone who is <em>not</em> the session.
+Conflating them gives you a workspace nobody can work in &mdash; an agent that
+cannot read the repository cannot work on the repository.</p>
+
+<h3>It gives the agent a de-identified copy</h3>
+<p>For the folder an agent must read that happens to be full of other
+people&rsquo;s names, <code>specchio</code> builds a second tree: same structure,
+same prose, identifiers replaced by stable tokens whose key and reversal table
+live inside the compartment. The thing that would undo the work is the thing the
+agent cannot open.</p>
+
+<div class="note">
+<p><strong>Pseudonymised, not anonymous.</strong> Under GDPR Recital 26 that
+distinction is not pedantic: pseudonymised data is still personal data. A
+reversal table exists here on purpose. Calling it anonymisation would be false in
+the specific way that gets people fined, so the tool says so on every run.</p>
+</div>
+
+<h2>Where it came from</h2>
+
+<p>The reason the guard exists in this shape is a measurement. Two coding agents
+from different vendors, wired together by a local bridge on one laptop, form a
+system neither vendor&rsquo;s authorization layer describes. Nothing crosses
+between them but a sentence: no token, no credential that could be attenuated in
+transit.</p>
+
+<p>Blocked from a capability, an agent routed the request to its peer in 23 of 28
+trials, on the first turn, with nothing in its instructions pointing that way.
+Whether the peer complied was decided almost entirely by which vendor it was.
+And in the conditions where the system held, the thing holding it was a sentence
+a model produced about who was asking &mdash; written in no policy file, enforced
+by no runtime.</p>
+
+<p>Then the telemetry, which is the part that surprised us:</p>
+
+<blockquote>Provenance is not missing. It is built, in detail, and correctly
+&mdash; parent thread, nesting depth, agent path &mdash; and it stops exactly
+where each vendor&rsquo;s own product stops.</blockquote>
+
+<p>Of 59 programmatically launched sessions on one side, 38 are recorded as having
+originated with a <em>user</em>. The provenance layer has already been built. It
+has only ever been pointed inward.</p>
+
+<p>The paper, the transcripts and the audit tool are in the repository.</p>
+
+<h2>What each layer is actually worth</h2>
+
+<div class="scroll">
+<table>
+<thead><tr><th>Mechanism</th><th>Holds against</th><th>Honest limit</th></tr></thead>
+<tbody>
+<tr><td>AES-256 image, locked</td><td>every process at every privilege level</td><td>only while locked</td></tr>
+<tr><td>Passphrase only in your head</td><td>any agent, unconditionally</td><td>you type it by hand, every time</td></tr>
+<tr><td>Mount-state invariant</td><td>base64, quoting, symlinks, <code>sh -c</code></td><td>only sessions running the hook</td></tr>
+<tr><td>Zone</td><td>another account, a stolen disk, the cloud copy</td><td><strong>not</strong> the session working inside it</td></tr>
+<tr><td>Provenance gate</td><td>one agent asking a second for what it may not do</td><td>one-sided until both harnesses run it</td></tr>
+<tr><td>Forced command over SSH</td><td>a bridge key becoming a shell</td><td>lives on the far machine, so you must install it there</td></tr>
+<tr><td>Seal and attest</td><td>nothing. It reports</td><td>detection, never prevention</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Two of those are tamper-<em>evident</em> rather than tamper-proof, because on a
+Mac with one account there is no file an agent running as you cannot rewrite
+&mdash; including the hook that stops it. That is written down in the docs in
+those words rather than left to be discovered.</p>
+
+<h2>Install</h2>
+
+<pre><code><span class="c"># the command</span>
+pipx install git+https://github.com/nerln/paratia.git
+
+<span class="c"># check this machine, then make the compartment in YOUR terminal</span>
+paratia doctor
+paratia init
+
+<span class="c"># what a second account would and would not protect here</span>
+paratia esposizione</code></pre>
+
+<p>macOS, Python 3.11+, no third-party packages. The hooks stay hand-wired on
+purpose: a hook that denies every tool call while a volume is mounted is one you
+should switch on yourself, while looking at it.</p>
+
+<h2>Read before trusting it</h2>
+
+<ul>
+<li><a href="https://github.com/nerln/paratia/blob/master/docs/architettura.md">architettura.md</a> &mdash; eight mechanisms and what each one actually guarantees</li>
+<li><a href="https://github.com/nerln/paratia/blob/master/docs/confini.md">confini.md</a> &mdash; where a second account buys nothing, and why <code>noowners</code> voids it silently</li>
+<li><a href="https://github.com/nerln/paratia/blob/master/docs/ponte-ssh.md">ponte-ssh.md</a> &mdash; two machines, and the key that cannot open a shell</li>
+<li><a href="llms.txt">llms.txt</a> &mdash; the operating manual for an agent using this instead of a person</li>
+</ul>
+
+<h2>Name</h2>
+
+<p>A <em>paratia stagna</em> is a watertight bulkhead. It is not a lock and it
+inspects nothing. It is a wall in a place chosen so that what gets through it
+cannot reach what matters.</p>
+
+<footer>
+<p><a href="https://github.com/nerln/paratia">github.com/nerln/paratia</a> &middot; GPL-3.0 &middot; Eugenio Nerelli</p>
+</footer>
+
+</div>
+</body>
+</html>
