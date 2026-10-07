@@ -864,6 +864,209 @@ def cmd_esposizione(args) -> int:
 # --------------------------------------------------------------------- entry
 
 
+# ------------------------------------------------------------------ labels
+#
+# A label is a judgement about content, written down. It is not a boundary and
+# this file does not pretend otherwise: `etichette.py` opens with the paragraph
+# saying so, and every command below repeats the part that matters — the bytes
+# are protected by `applica` moving them somewhere encrypted, never by the label
+# naming them. See docs/architettura.md, which now has a row 9 for exactly this.
+
+
+def _etichette():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "etichette", Path(__file__).resolve().parent / "etichette.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["etichette"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def cmd_etichetta_segna(args) -> int:
+    E = _etichette()
+    try:
+        r = E.segna(args.percorso, args.come, args.nota or "")
+    except E.Rifiuto as e:
+        raise Rifiuto(str(e)) from e
+    annota("etichetta-segna", percorso=r["percorso"], etichetta=r["etichetta"])
+    print(f"{r['etichetta']}  {r['percorso']}")
+    print("nothing has moved. `paratia etichetta piano` to see what would.")
+    return 0
+
+
+def cmd_etichetta_togli(args) -> int:
+    E = _etichette()
+    if E.togli(args.percorso):
+        annota("etichetta-togli", percorso=args.percorso)
+        print(f"removed the label on {args.percorso}")
+        return 0
+    print(f"no label on {args.percorso}", file=sys.stderr)
+    return 1
+
+
+def cmd_etichetta_elenco(args) -> int:
+    E = _etichette()
+    righe = E.elenco()
+    if args.json:
+        print(json.dumps(righe, ensure_ascii=False, indent=1))
+        return 0
+    if not righe:
+        print("nothing labelled yet.")
+        return 0
+    largo = max(len(r["etichetta"]) for r in righe)
+    for r in righe:
+        manca = "" if r["esiste"] else "  (gone)"
+        nota = f"  — {r['nota']}" if r.get("nota") else ""
+        print(f"{r['etichetta']:<{largo}}  {r['percorso']}{manca}{nota}")
+    return 0
+
+
+def cmd_etichetta_piano(args) -> int:
+    E = _etichette()
+    p = E.piano(sincronizzato=_sincronizzato)
+    if args.json:
+        print(json.dumps(p, ensure_ascii=False, indent=1))
+        return 0
+
+    if not p["mosse"] and not p["problemi"]:
+        print("nothing labelled yet, so there is nothing to move.")
+        return 0
+
+    for m in p["mosse"]:
+        piu = "+" if m["troncato"] else ""
+        print(f"{m['etichetta']:<12} {m['percorso']}")
+        print(f"{'':<12}   → {m['destinazione']}, {_umano(m['byte'])} in {m['file']}{piu} files")
+        if m.get("avviso"):
+            print(f"{'':<12}   ! {m['avviso']}")
+    for q in p["problemi"]:
+        print(f"{'(problem)':<12} {q['percorso']}: {q['perche']}")
+    print(f"\n{_umano(p['byte_totali'])} in total. `paratia etichetta applica` to stage it.")
+    return 0
+
+
+def _umano(b: int) -> str:
+    for u in ("B", "KB", "MB", "GB", "TB"):
+        if b < 1024 or u == "TB":
+            return f"{b:.0f}{u}" if u == "B" else f"{b:.1f}{u}"
+        b /= 1024
+    return f"{b:.1f}TB"
+
+
+def cmd_etichetta_applica(args) -> int:
+    """Copy labelled trees into the place that actually protects them.
+
+    Two deliberate refusals. It does not delete the source — `rsync` and
+    `stiva` do verified moves better than a reimplementation here would, and a
+    program that both copies and deletes on the same run is one bug away from
+    doing only the second. And it will not run while the compartment is closed
+    for `riservato` items, because staging them anywhere else first would put
+    the plaintext exactly where the label said it should not be.
+    """
+    E = _etichette()
+    p = E.piano(sincronizzato=_sincronizzato)
+    if not p["mosse"]:
+        print("nothing to apply.")
+        return 0
+
+    riservati = [m for m in p["mosse"] if m["etichetta"] == E.RISERVATO]
+    if riservati and not aperto():
+        raise Rifiuto(
+            "there are `riservato` items and the compartment is locked. "
+            "`paratia unlock` in your own terminal first — staging them anywhere "
+            "else on the way in would defeat the point."
+        )
+
+    reg = _zone_registro()
+    lavoro = []
+    for m in p["mosse"]:
+        origine = Path(m["percorso"])
+        if m["etichetta"] == E.RISERVATO:
+            destinazione = MONTAGGIO / origine.name
+        else:
+            nome = m["etichetta"][len(E.PREFISSO_ZONA):]
+            if nome not in reg.get("zone", reg):
+                print(f"skipped {origine}: zone {nome!r} does not exist "
+                      f"(`paratia zona nuova {nome} --dove ... --size ...`)", file=sys.stderr)
+                continue
+            monte = _monte_zona(nome)
+            if not monte.is_mount():
+                print(f"skipped {origine}: zone {nome!r} is closed "
+                      f"(`paratia zona apri {nome}`)", file=sys.stderr)
+                continue
+            destinazione = monte / origine.name
+        lavoro.append((origine, destinazione, m))
+
+    if not lavoro:
+        print("nothing could be applied. Open the zones it needs, then run it again.")
+        return 1
+
+    for origine, destinazione, m in lavoro:
+        print(f"{'copy' if args.esegui else 'would copy'}  {origine}")
+        print(f"{'':>4}    → {destinazione}  ({_umano(m['byte'])})")
+        for e in m.get("esclusi", ()):
+            print(f"{'':>4}    minus {e}  (labelled separately)")
+
+    if not args.esegui:
+        print("\nnothing ran. Add --esegui to do it.")
+        print("the source is never deleted here: check the copy, then remove it yourself.")
+        return 0
+
+    fallite = 0
+    for origine, destinazione, m in lavoro:
+        if destinazione.is_symlink():
+            print(f"symlink, skipped: {destinazione} (the copy must stay on the encrypted volume)",
+                  file=sys.stderr)
+            fallite += 1
+            continue
+        if destinazione.exists() and not args.sovrascrivi:
+            print(f"exists, skipped: {destinazione}  (--sovrascrivi to replace)", file=sys.stderr)
+            fallite += 1
+            continue
+        # The carve-outs from the plan, as paths relative to the source root and
+        # anchored with a leading slash, which is how rsync reads "this exact
+        # one" rather than "anything with this name anywhere in the tree".
+        esclusioni = []
+        for e in m.get("esclusi", ()):
+            try:
+                relativo = str(Path(e).relative_to(origine))
+            except ValueError:
+                continue
+            # Labels name literal paths; rsync exclusions are glob patterns.
+            # Backslashes only need escaping when rsync sees a wildcard.
+            if any(c in relativo for c in "*?["):
+                relativo = relativo.replace("\\", "\\\\")
+                for c in "*?[":
+                    relativo = relativo.replace(c, "\\" + c)
+            esclusioni += ["--exclude", "/" + relativo]
+        esito = _corri(["rsync", "-a", "--checksum", "--partial", *esclusioni,
+                        str(origine) + ("/" if origine.is_dir() else ""),
+                        str(destinazione)])
+        if esito.returncode != 0:
+            print(f"rsync failed on {origine}: "
+                  f"{esito.stderr.decode(errors='replace').strip()}", file=sys.stderr)
+            fallite += 1
+            continue
+        annota("etichetta-applica", origine=str(origine), destinazione=str(destinazione))
+        print(f"copied  {origine} → {destinazione}")
+
+    print("\nthe originals are still where they were. Verify the copies, then delete them "
+          "yourself — this command will not.")
+    return 1 if fallite else 0
+
+
+def cmd_finder(args) -> int:
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "finder", Path(__file__).resolve().parent / "finder.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["finder"] = mod
+    spec.loader.exec_module(mod)
+    return mod.servi(args.porta, args.apri, args.forza)
+
+
 def costruisci() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="paratia",
@@ -972,6 +1175,43 @@ def costruisci() -> argparse.ArgumentParser:
     spr.set_defaults(fn=cmd_specchio_risolvi)
 
     sps.add_parser("elenco", help="list mirrors").set_defaults(fn=cmd_specchio_elenco)
+
+    et = s.add_parser(
+        "etichetta",
+        help="record which paths belong behind a bulkhead — a plan, not a boundary",
+    )
+    ets = et.add_subparsers(dest="sotto", required=True)
+
+    ete = ets.add_parser("segna", help="label a file or folder")
+    ete.add_argument("percorso")
+    ete.add_argument("--come", required=True,
+                     help="riservato | pubblico | zona:<name>")
+    ete.add_argument("--nota", help="why, for the version of you that reads this in a year")
+    ete.set_defaults(fn=cmd_etichetta_segna)
+
+    ett = ets.add_parser("togli", help="remove a label")
+    ett.add_argument("percorso")
+    ett.set_defaults(fn=cmd_etichetta_togli)
+
+    etl = ets.add_parser("elenco", help="every label, and whether its path still exists")
+    etl.add_argument("--json", action="store_true")
+    etl.set_defaults(fn=cmd_etichetta_elenco)
+
+    etp = ets.add_parser("piano", help="what applying the labels would move, and where")
+    etp.add_argument("--json", action="store_true")
+    etp.set_defaults(fn=cmd_etichetta_piano)
+
+    eta = ets.add_parser("applica", help="copy labelled trees into the compartment or their zone")
+    eta.add_argument("--esegui", action="store_true", help="actually copy; without it, prints only")
+    eta.add_argument("--sovrascrivi", action="store_true", help="replace a destination that exists")
+    eta.set_defaults(fn=cmd_etichetta_applica)
+
+    fi = s.add_parser("finder", help="browse and label from a browser, on any OS")
+    fi.add_argument("--porta", type=int, default=8787)
+    fi.add_argument("--non-aprire", dest="apri", action="store_false")
+    fi.add_argument("--forza", action="store_true", help="start even inside an agent session")
+    fi.set_defaults(fn=cmd_finder)
+
     return p
 
 

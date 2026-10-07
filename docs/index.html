@@ -73,6 +73,29 @@
   th, td { text-align: left; padding: .6rem .7rem; border-bottom: 1px solid var(--border); vertical-align: top; }
   th { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
   .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  figure { margin: 1.6rem 0; }
+  figure img {
+    display: block; width: 100%; height: auto;
+    border: 1px solid var(--border); border-radius: 4px;
+  }
+  figcaption {
+    font-size: .88rem; color: var(--muted); margin-top: .5rem;
+    line-height: 1.5;
+  }
+  /* The three labels, coloured as the finder colours them, so the prose and the
+     screenshots agree without the reader having to work out that they match. */
+  .tag-r, .tag-z, .tag-p {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: .8em; padding: .04em .38em; border-radius: 100px;
+    border: 1px solid currentColor; white-space: nowrap;
+  }
+  .tag-r { color: #8a2f2f; }
+  .tag-z { color: var(--accent); }
+  .tag-p { color: #3d6b3d; }
+  @media (prefers-color-scheme: dark) {
+    .tag-r { color: #e08a83; }
+    .tag-p { color: #8fbf8f; }
+  }
   .note {
     border: 1px solid var(--border); border-left: 3px solid var(--warn);
     padding: 1rem 1.2rem; margin: 1.8rem 0; font-size: .95rem;
@@ -143,6 +166,52 @@ reversal table exists here on purpose. Calling it anonymisation would be false i
 the specific way that gets people fined, so the tool says so on every run.</p>
 </div>
 
+<h3>It gives you somewhere to write down what belongs where</h3>
+<p>The compartment answers <em>how</em>. It does not answer <em>what</em>, and on a
+disk with three hundred thousand files that is the part that actually stops
+people. <code>paratia finder</code> serves one page to your own browser: walk the
+tree, mark a folder <span class="tag-r">riservato</span>,
+<span class="tag-z">zona:&lt;name&gt;</span> or <span class="tag-p">pubblico</span>,
+and read what that would move before anything moves.</p>
+
+<figure>
+  <img src="immagini/finder.png" alt="The paratia finder in a browser: a folder listing with riservato, zona and pubblico labels, and a panel below headed The plan showing three moves with their sizes and destinations." loading="lazy" width="2480" height="1240">
+  <figcaption>Names, sizes and labels. Never file contents &mdash; a tool that
+  reads your files to help you decide which files should be unreadable has
+  argued itself out of a job.</figcaption>
+</figure>
+
+<p>A label on a folder carries to everything under it until a nearer label says
+otherwise, so a <span class="tag-p">pubblico</span> subfolder carves an exception
+out of a <span class="tag-r">riservato</span> parent without a rule that says so.
+The plan honours the carve-out and so does the copy.</p>
+
+<figure>
+  <img src="immagini/finder-eredita.png" alt="Inside a folder marked riservato: three files each showing an inherited riservato label in a dashed outline, with no remove button, because the label belongs to the parent." loading="lazy" width="2480" height="940">
+  <figcaption>Inherited labels are dashed and cannot be removed from the child.
+  The label belongs to the folder above.</figcaption>
+</figure>
+
+<div class="note">
+<p><strong>A label is a plan, not a boundary.</strong> The store is a JSON file in
+your home directory, owned by your uid, which is the uid the agent runs as: it can
+read it and it can rewrite it. Wiring it into the gate as a deny rule would buy
+nothing either, for the reason this whole page is about &mdash; a rule about paths
+is a rule about spellings. What protects bytes is
+<code>paratia etichetta applica</code>, which copies them into the compartment or a
+zone, where the cipher does the work. The label is the decision; the move is the
+mechanism. This tool keeps those two words apart on purpose, and it never deletes
+your original.</p>
+</div>
+
+<pre><code><span class="c"># mark, then look before anything moves</span>
+paratia etichetta segna ~/Documenti/contratti --come riservato
+paratia etichetta segna ~/dev/tesi --come zona:tesi
+paratia etichetta piano
+
+<span class="c"># or do it in a browser, on any of the three operating systems</span>
+paratia finder</code></pre>
+
 <h2>Where it came from</h2>
 
 <p>The reason the guard exists in this shape is a measurement. Two coding agents
@@ -183,6 +252,7 @@ has only ever been pointed inward.</p>
 <tr><td>Provenance gate</td><td>one agent asking a second for what it may not do</td><td>one-sided until both harnesses run it</td></tr>
 <tr><td>Forced command over SSH</td><td>a bridge key becoming a shell</td><td>lives on the far machine, so you must install it there</td></tr>
 <tr><td>Seal and attest</td><td>nothing. It reports</td><td>detection, never prevention</td></tr>
+<tr><td>Label</td><td>nothing. It records a decision</td><td>a file the agent can rewrite. <code>applica</code> is what protects the bytes</td></tr>
 </tbody>
 </table>
 </div>

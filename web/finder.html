@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>paratia finder</title>
+<style>
+  :root {
+    --bg: #fbfaf8; --text: #1a1a1a; --muted: #5f5f5f; --border: #e3e0da;
+    --accent: #1d4e6b; --code-bg: #f2efe9; --surface: #ffffff;
+    --riservato: #8a2f2f; --riservato-bg: #f7ebe9;
+    --zona: #1d4e6b; --zona-bg: #e8eff4;
+    --pubblico: #3d6b3d; --pubblico-bg: #ebf2e9;
+    --warn: #8a4b1f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a; --text: #e8e6e3; --muted: #a0a0a0; --border: #2b2f36;
+      --accent: #7fc3e0; --code-bg: #1c2027; --surface: #191c22;
+      --riservato: #e08a83; --riservato-bg: #2a1c1c;
+      --zona: #7fc3e0; --zona-bg: #16242c;
+      --pubblico: #8fbf8f; --pubblico-bg: #1a231a;
+      --warn: #d99a63;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.55 ui-serif, Georgia, "Times New Roman", serif;
+  }
+  .mono, code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .82em; }
+
+  header {
+    border-bottom: 1px solid var(--border); padding: 1rem 1.4rem;
+    display: flex; gap: 1rem; align-items: baseline; flex-wrap: wrap;
+    position: sticky; top: 0; background: var(--bg); z-index: 5;
+  }
+  header h1 { font-size: 1.15rem; margin: 0; letter-spacing: -.01em; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: .85rem; }
+  header .spacer { flex: 1; }
+
+  .wrap { display: grid; grid-template-columns: 15rem 1fr; gap: 0; min-height: calc(100vh - 3.6rem); }
+  @media (max-width: 780px) { .wrap { grid-template-columns: 1fr; } aside { border-right: none !important; border-bottom: 1px solid var(--border); } }
+
+  aside { border-right: 1px solid var(--border); padding: 1.1rem 1rem; }
+  aside h2, .panel h2 {
+    font-size: .7rem; text-transform: uppercase; letter-spacing: .1em;
+    color: var(--muted); margin: 0 0 .6rem; font-weight: 600;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+  }
+  aside button.radice {
+    display: block; width: 100%; text-align: left; background: none; border: none;
+    padding: .34rem .5rem; border-radius: 3px; cursor: pointer; color: var(--text);
+    font: inherit; font-size: .9rem;
+  }
+  aside button.radice:hover { background: var(--code-bg); }
+
+  main { padding: 1.1rem 1.4rem 4rem; min-width: 0; }
+
+  .crumbs { font-size: .84rem; margin-bottom: .9rem; word-break: break-all; }
+  .crumbs button {
+    background: none; border: none; padding: 0 .1rem; cursor: pointer;
+    color: var(--accent); font: inherit; font-family: ui-monospace, Menlo, monospace; font-size: .8rem;
+  }
+  .crumbs button:hover { text-decoration: underline; }
+  .crumbs .sep { color: var(--muted); }
+
+  .bar { display: flex; gap: .8rem; align-items: center; flex-wrap: wrap; margin-bottom: .9rem; }
+  .bar label { font-size: .84rem; color: var(--muted); display: flex; gap: .35rem; align-items: center; cursor: pointer; }
+  .bar input[type=text],
+  .bar input[type=search] {
+    font: inherit; font-size: .88rem; padding: .3rem .55rem; border: 1px solid var(--border);
+    border-radius: 3px; background: var(--surface); color: var(--text); min-width: 12rem;
+  }
+
+  .banner {
+    border: 1px solid var(--border); border-left: 3px solid var(--warn); background: var(--surface);
+    padding: .7rem .9rem; border-radius: 3px; font-size: .86rem; color: var(--muted); margin-bottom: 1rem;
+  }
+  .banner strong { color: var(--text); }
+
+  table { border-collapse: collapse; width: 100%; }
+  th {
+    text-align: left; font-size: .68rem; text-transform: uppercase; letter-spacing: .09em;
+    color: var(--muted); font-weight: 600; padding: .4rem .5rem; border-bottom: 1px solid var(--border);
+    font-family: ui-sans-serif, system-ui, sans-serif;
+  }
+  td { padding: .3rem .5rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tr.riga:hover td { background: var(--code-bg); }
+  td.nome { width: 100%; }
+  td.peso { text-align: right; white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
+  td.azioni { white-space: nowrap; }
+
+  .nome button.apri {
+    background: none; border: none; padding: 0; cursor: pointer; color: var(--text);
+    font: inherit; text-align: left; word-break: break-all;
+  }
+  .nome button.apri:hover { color: var(--accent); text-decoration: underline; }
+  .nome span.file { word-break: break-all; }
+  .ico { display: inline-block; width: 1.1rem; color: var(--muted); }
+
+  .tag {
+    display: inline-block; font-size: .68rem; padding: .09rem .42rem; border-radius: 100px;
+    font-family: ui-sans-serif, system-ui, sans-serif; letter-spacing: .02em; margin-left: .45rem;
+    border: 1px solid transparent; vertical-align: middle;
+  }
+  .tag.riservato { color: var(--riservato); background: var(--riservato-bg); border-color: var(--riservato); }
+  .tag.zona { color: var(--zona); background: var(--zona-bg); border-color: var(--zona); }
+  .tag.pubblico { color: var(--pubblico); background: var(--pubblico-bg); border-color: var(--pubblico); }
+  .tag.ered { opacity: .62; border-style: dashed; }
+
+  button.set {
+    font: inherit; font-family: ui-sans-serif, system-ui, sans-serif; font-size: .7rem;
+    padding: .14rem .42rem; margin-left: .2rem; border: 1px solid var(--border);
+    background: var(--surface); color: var(--muted); border-radius: 3px; cursor: pointer;
+  }
+  button.set:hover { border-color: var(--accent); color: var(--accent); }
+  button.set.on { border-color: currentColor; }
+  button.set.r:hover, button.set.r.on { color: var(--riservato); border-color: var(--riservato); }
+  button.set.z:hover, button.set.z.on { color: var(--zona); border-color: var(--zona); }
+  button.set.p:hover, button.set.p.on { color: var(--pubblico); border-color: var(--pubblico); }
+  button.set.x:hover { color: var(--warn); border-color: var(--warn); }
+
+  .panel {
+    margin-top: 2.2rem; border-top: 1px solid var(--border); padding-top: 1.1rem;
+  }
+  .conta { display: flex; gap: 1.4rem; flex-wrap: wrap; margin-bottom: .9rem; }
+  .conta div { font-size: .84rem; }
+  .conta b { font-size: 1.3rem; font-weight: 600; display: block; font-variant-numeric: tabular-nums; }
+  .mossa {
+    border: 1px solid var(--border); border-radius: 3px; padding: .6rem .8rem;
+    margin-bottom: .5rem; background: var(--surface); font-size: .86rem;
+  }
+  .mossa .dove { color: var(--muted); }
+  .mossa .avviso { color: var(--warn); display: block; margin-top: .3rem; font-size: .82rem; }
+  .vuoto { color: var(--muted); font-size: .88rem; font-style: italic; }
+  .errore { color: var(--riservato); font-size: .88rem; }
+  #brindisi {
+    position: fixed; bottom: 1.2rem; left: 50%; transform: translateX(-50%);
+    background: var(--text); color: var(--bg); padding: .45rem .9rem; border-radius: 4px;
+    font-size: .85rem; opacity: 0; transition: opacity .18s; pointer-events: none; z-index: 20;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+  }
+  #brindisi.on { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>paratia finder</h1>
+  <span class="sub">label what belongs behind a bulkhead</span>
+  <span class="spacer"></span>
+  <span class="sub mono" id="conta-testa"></span>
+</header>
+
+<div class="wrap">
+  <aside>
+    <h2>Roots</h2>
+    <div id="radici"></div>
+  </aside>
+
+  <main>
+    <div class="banner">
+      <strong>A label is a plan, not a boundary.</strong> This file is in your home directory and
+      an agent running as you can rewrite it. What protects bytes is
+      <code>paratia etichetta applica</code>, which moves them into the compartment or a zone,
+      where the cipher does the work.
+    </div>
+
+    <div class="crumbs" id="crumbs"></div>
+
+    <div class="bar">
+      <input type="text" id="percorso" placeholder="go to a path — start here" aria-label="Go to path" style="min-width:16rem">
+      <input type="search" id="filtro" placeholder="filter these entries" aria-label="Filter entries">
+      <label><input type="checkbox" id="nascosti"> show dotfiles</label>
+      <span class="spacer"></span>
+    </div>
+
+    <div id="errore" class="errore"></div>
+
+    <table>
+      <thead><tr>
+        <th>Name</th><th style="text-align:right">Size</th><th>Label</th>
+      </tr></thead>
+      <tbody id="righe"></tbody>
+    </table>
+
+    <section class="panel">
+      <h2>The plan</h2>
+      <div class="conta" id="conta"></div>
+      <div id="mosse"></div>
+    </section>
+  </main>
+</div>
+
+<div id="brindisi"></div>
+
+<script>
+(function () {
+  var T = new URLSearchParams(location.search).get('t') || '';
+  var qui = null, dati = null;
+
+  function api(rotta, opz) {
+    opz = opz || {};
+    opz.headers = Object.assign({'X-Paratia': T}, opz.headers || {});
+    return fetch(rotta, opz).then(function (r) {
+      return r.json().then(function (j) {
+        if (!r.ok) throw new Error(j.errore || ('HTTP ' + r.status));
+        return j;
+      });
+    });
+  }
+
+  function peso(b) {
+    if (!b) return '';
+    var u = ['B', 'K', 'M', 'G', 'T'], i = 0;
+    while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+    return (i === 0 ? b : b.toFixed(b < 10 ? 1 : 0)) + u[i];
+  }
+
+  function dillo(t) {
+    var b = document.getElementById('brindisi');
+    b.textContent = t; b.classList.add('on');
+    clearTimeout(b._t); b._t = setTimeout(function () { b.classList.remove('on'); }, 1900);
+  }
+
+  function classeTag(e) {
+    if (!e) return '';
+    if (e === 'riservato') return 'riservato';
+    if (e === 'pubblico') return 'pubblico';
+    return 'zona';
+  }
+
+  function tag(e, ered, da) {
+    if (!e) return '';
+    var s = document.createElement('span');
+    s.className = 'tag ' + classeTag(e) + (ered ? ' ered' : '');
+    s.textContent = e;
+    if (ered) s.title = 'inherited from ' + da;
+    return s.outerHTML;
+  }
+
+  function crumbs(p) {
+    var c = document.getElementById('crumbs');
+    c.innerHTML = '';
+    var sep = p.indexOf('\\') >= 0 && p.indexOf('/') < 0 ? '\\' : '/';
+    var parti = p.split(sep).filter(Boolean);
+    var acc = (sep === '/' ? '' : '');
+    var pezzi = [];
+    if (sep === '/') { pezzi.push({ n: '/', p: '/' }); }
+    parti.forEach(function (n) {
+      acc = acc + sep + n;
+      pezzi.push({ n: n, p: (sep === '/' ? acc : acc.replace(/^\\/, '')) });
+    });
+    pezzi.forEach(function (x, i) {
+      if (i) { var s = document.createElement('span'); s.className = 'sep'; s.textContent = ' ' + sep + ' '; c.appendChild(s); }
+      var b = document.createElement('button');
+      b.textContent = x.n; b.onclick = function () { vai(x.p); };
+      c.appendChild(b);
+    });
+  }
+
+  function disegna() {
+    if (!dati) return;
+    var q = document.getElementById('filtro').value.toLowerCase();
+    var tb = document.getElementById('righe');
+    tb.innerHTML = '';
+    var visti = 0;
+
+    dati.figli.forEach(function (f) {
+      if (q && f.nome.toLowerCase().indexOf(q) < 0) return;
+      visti++;
+      var tr = document.createElement('tr');
+      tr.className = 'riga';
+
+      var td1 = document.createElement('td');
+      td1.className = 'nome';
+      var ico = document.createElement('span');
+      ico.className = 'ico';
+      ico.textContent = f.cartella ? '▸' : (f.collegamento ? '↗' : '·');
+      td1.appendChild(ico);
+      if (f.cartella) {
+        var b = document.createElement('button');
+        b.className = 'apri'; b.textContent = f.nome;
+        b.onclick = function () { vai(f.percorso); };
+        td1.appendChild(b);
+      } else {
+        var s = document.createElement('span');
+        s.className = 'file'; s.textContent = f.nome;
+        td1.appendChild(s);
+      }
+      td1.insertAdjacentHTML('beforeend', tag(f.etichetta, f.ereditata, f.da));
+      tr.appendChild(td1);
+
+      var td2 = document.createElement('td');
+      td2.className = 'peso';
+      td2.textContent = f.cartella ? '' : peso(f.peso);
+      tr.appendChild(td2);
+
+      var td3 = document.createElement('td');
+      td3.className = 'azioni';
+      [['riservato', 'r', 'riservato'], ['zona', 'z', 'zona:'], ['pubblico', 'p', 'pubblico']]
+        .forEach(function (par) {
+          var bt = document.createElement('button');
+          bt.className = 'set ' + par[1] + (f.etichetta === par[0] && !f.ereditata ? ' on' : '');
+          bt.textContent = par[0][0].toUpperCase();
+          bt.title = par[0];
+          bt.onclick = function () { segna(f.percorso, par[2]); };
+          td3.appendChild(bt);
+        });
+      if (f.etichetta && !f.ereditata) {
+        var bx = document.createElement('button');
+        bx.className = 'set x'; bx.textContent = '×'; bx.title = 'remove label';
+        bx.onclick = function () { togli(f.percorso); };
+        td3.appendChild(bx);
+      }
+      tr.appendChild(td3);
+      tb.appendChild(tr);
+    });
+
+    if (!visti) {
+      var tr = document.createElement('tr');
+      var td = document.createElement('td');
+      td.colSpan = 3; td.className = 'vuoto';
+      td.textContent = q ? 'nothing here matches that' : 'this folder is empty';
+      tr.appendChild(td); tb.appendChild(tr);
+    }
+  }
+
+  function segna(p, e) {
+    if (e === 'zona:') {
+      var n = prompt('Zone name (paratia zona nuova <name>):', 'lavoro');
+      if (!n) return;
+      e = 'zona:' + n.trim();
+    }
+    api('/api/segna', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ percorso: p, etichetta: e })
+    }).then(function () { dillo(e + ' → ' + p.split(/[\\/]/).pop()); ricarica(); })
+      .catch(function (err) { dillo(err.message); });
+  }
+
+  function togli(p) {
+    api('/api/togli', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ percorso: p })
+    }).then(function () { dillo('label removed'); ricarica(); })
+      .catch(function (err) { dillo(err.message); });
+  }
+
+  function piano() {
+    api('/api/piano').then(function (p) {
+      var c = document.getElementById('conta');
+      c.innerHTML = '';
+      [['riservato', p.conta.riservato], ['zones', p.conta.zone], ['public', p.conta.pubblico]]
+        .forEach(function (x) {
+          var d = document.createElement('div');
+          d.innerHTML = '<b>' + x[1] + '</b>' + x[0];
+          c.appendChild(d);
+        });
+      var tot = document.createElement('div');
+      tot.innerHTML = '<b>' + (peso(p.byte_totali) || '0') + '</b>to move';
+      c.appendChild(tot);
+
+      document.getElementById('conta-testa').textContent =
+        p.mosse.length + ' labelled · ' + (peso(p.byte_totali) || '0');
+
+      var m = document.getElementById('mosse');
+      m.innerHTML = '';
+      if (!p.mosse.length && !p.problemi.length) {
+        m.innerHTML = '<p class="vuoto">Nothing labelled yet. Label a folder and it will show up here with what <code>applica</code> would do to it.</p>';
+        return;
+      }
+      p.mosse.forEach(function (x) {
+        var d = document.createElement('div');
+        d.className = 'mossa';
+        var code = document.createElement('code');
+        code.textContent = x.percorso;
+        d.appendChild(code);
+        var dest = document.createElement('span');
+        dest.className = 'dove';
+        dest.textContent = ' ' + x.etichetta + ' → ' + x.destinazione + ', ' +
+          (peso(x.byte) || '0') + ' in ' + x.file + (x.troncato ? '+' : '') +
+          ' file' + (x.file === 1 ? '' : 's');
+        d.appendChild(dest);
+        if (x.avviso) {
+          var warning = document.createElement('span');
+          warning.className = 'avviso';
+          warning.textContent = x.avviso;
+          d.appendChild(warning);
+        }
+        m.appendChild(d);
+      });
+      p.problemi.forEach(function (x) {
+        var d = document.createElement('div');
+        d.className = 'mossa';
+        var code = document.createElement('code');
+        code.textContent = x.percorso;
+        d.appendChild(code);
+        var warning = document.createElement('span');
+        warning.className = 'avviso';
+        warning.textContent = x.perche;
+        d.appendChild(warning);
+        m.appendChild(d);
+      });
+    }).catch(function (e) { document.getElementById('errore').textContent = e.message; });
+  }
+
+  function vai(p) {
+    document.getElementById('errore').textContent = '';
+    document.getElementById('percorso').value = p;
+    var n = document.getElementById('nascosti').checked ? '1' : '0';
+    api('/api/sfoglia?percorso=' + encodeURIComponent(p) + '&nascosti=' + n)
+      .then(function (d) { qui = d.radice; dati = d; crumbs(d.radice); disegna(); })
+      .catch(function (e) { document.getElementById('errore').textContent = e.message; });
+  }
+
+  function ricarica() { if (qui) vai(qui); piano(); }
+
+  // Enter on the input rather than a <form>: the response carries
+  // `form-action 'none'`, which blocks submission outright, so a form here
+  // would look wired up and silently do nothing.
+  document.getElementById('percorso').addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    // `~` is expanded server-side by expanduser(), so this passes it through.
+    var p = e.target.value.trim();
+    if (p) vai(p);
+  });
+  document.getElementById('filtro').addEventListener('input', disegna);
+  document.getElementById('nascosti').addEventListener('change', function () { if (qui) vai(qui); });
+
+  api('/api/radici').then(function (r) {
+    var box = document.getElementById('radici');
+    r.radici.forEach(function (x) {
+      var b = document.createElement('button');
+      b.className = 'radice';
+      b.textContent = x.nome;
+      b.title = x.percorso;
+      b.onclick = function () { vai(x.percorso); };
+      box.appendChild(b);
+    });
+    // ?dove=<path> opens straight at a folder, so "start from here" is a link
+    // you can keep rather than a walk you repeat every time you reopen this.
+    var dove = new URLSearchParams(location.search).get('dove');
+    if (dove) vai(dove);
+    else if (r.radici.length) vai(r.radici[0].percorso);
+    piano();
+  }).catch(function (e) { document.getElementById('errore').textContent = e.message; });
+})();
+</script>
+</body>
+</html>

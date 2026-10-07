@@ -15,6 +15,16 @@ should rely on the row.
 | 6 | Seal and attest | nothing. It reports | you, running `paratia attest` | detection after the fact, never prevention |
 | 7 | Zone (encrypted workspace) | another local account, a stolen disk, the cloud provider's copy | the cipher | **not** the session working inside it, by construction |
 | 8 | Second account | the agent reaching what you never handed it | the kernel, via uid | void on `noowners` volumes and on anything cloud-synced |
+| 9 | Label | nothing. It records a decision about a path | you, reading `paratia etichetta piano` | a JSON file in `~`, owned by the uid the agent runs as. It is the input to row 1 or row 7, never a substitute for either |
+
+Row 9 is the one most likely to be misread, so it is worth saying plainly: a
+label is not a deny list that this document forgot to argue against. It is never
+consulted at tool-call time by anything. It is a note to yourself about which
+paths deserve row 1 or row 7, and its only mechanical effect is that `applica`
+reads it and copies. If a future change ever makes the gate consult it, that
+change has to delete `test_l_archivio_e_un_file_normale_scrivibile` and
+`test_etichettare_non_sposta_nulla`, which exist to make that deletion a
+deliberate act rather than a drift.
 
 Rows 7 and 8 answer a different question from rows 1–6, and the difference is
 the one people get wrong. Rows 1–6 keep something away from **the session**.

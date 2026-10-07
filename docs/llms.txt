@@ -144,6 +144,35 @@ the new state as correct, which is exactly wrong if the change was not the
 operator's. Show which file, and let them read the diff first.
 
 
+## Labels, and what to say when asked to trust them
+
+`paratia etichetta` records that a path belongs in the compartment
+(`riservato`), in an encrypted zone (`zona:<name>`), or deliberately where it is
+(`pubblico`). A label on a folder carries to everything under it until a nearer
+label says otherwise.
+
+It is a plan. It is not a boundary, and you should say so plainly rather than
+letting someone believe a folder is protected because it is labelled:
+
+- The store is `~/.paratia/etichette.json`, a normal file owned by the uid you
+  run as. You can read it. You can rewrite it. So can anything else running as
+  the operator.
+- Nothing consults it at tool-call time. It is not wired into the gate and
+  should not be. A rule about paths is a rule about spellings, which is the
+  argument this whole tool is built on.
+- The bytes are protected when `paratia etichetta applica` has copied them into
+  the compartment or a zone, and the cipher is doing the work. Before that, a
+  `riservato` folder is exactly as readable as it was.
+
+So: `paratia etichetta piano` is a fine thing to run and report. If asked
+whether labelling something has protected it, the answer is no, not yet, and the
+next step is `applica` — which prints what it would do and copies nothing until
+`--esegui`, and never deletes the original.
+
+`paratia finder` is the operator's, not yours: it refuses to start inside an
+agent session, and the `--forza` override exists for screenshots, not for you.
+
+
 ## What this does not protect, and you should say so
 
 - A secret read while the compartment was open is in the context window. Closing
@@ -165,6 +194,8 @@ Yours, inside a session:
     paratia broker <verb>       use a secret without seeing it
     paratia attest              check the sealed policy files still match
     paratia esposizione         what a second account would and would not protect
+    paratia etichetta piano     what the labels say should move, and where
+    paratia etichetta elenco    every label, and whether its path still exists
     paratia-fanale leggi        drain the bridge queue
 
 The operator's, in their own terminal, never yours:
@@ -173,6 +204,8 @@ The operator's, in their own terminal, never yours:
     paratia unlock              needs it; refuses inside an agent session
     paratia put / get           stores or prints a value you must not hold
     paratia seal <files>        records hashes at a moment no agent was running
+    paratia etichetta applica   copies labelled trees in; --esegui to do it
+    paratia finder              the labelling GUI; refuses inside a session
     paratia-fanale chiavi       makes the bridge key and prints the far-side line
     strumenti/*.sh              creates accounts, changes permissions, touches volumes
 

@@ -143,6 +143,44 @@ What a zone buys is everything else: another local account, a stolen disk, and
 the copy your cloud provider keeps. Creating one inside a synced folder is
 refused by default, for a reason spelled out in [docs/confini.md](docs/confini.md).
 
+## Labels, which are a plan and not a boundary
+
+The compartment answers *how*. It does not answer *what*, and on a disk with
+three hundred thousand files that is the part that actually stops people.
+
+```bash
+paratia etichetta segna ~/Documenti/contratti --come riservato --nota "scans"
+paratia etichetta segna ~/dev/tesi --come zona:tesi
+paratia etichetta piano          # what applying these would move, and where
+paratia etichetta applica        # prints only; --esegui to copy
+```
+
+The vocabulary is four words and stays four words: `riservato` (into the
+compartment), `zona:<name>` (into that encrypted zone), `pubblico` (looked at,
+deliberately left alone), and absent (nobody has looked yet, which is the state
+`piano` counts loudest). A label on a folder carries to everything under it
+until a nearer label says otherwise, so a `pubblico` subfolder carves an
+exception out of a `riservato` parent — and both the plan and the copy honour
+the carve-out.
+
+`paratia finder` serves one page to your own browser and does the same job with
+a mouse, on macOS, Linux and Windows, because the standard library has an HTTP
+server on all three and a native toolkit worth shipping on none. It binds
+loopback, mints a token per run that is never written to disk, refuses to start
+inside an agent session, and **never sends file contents** — names, sizes and
+labels only. `?dove=<path>` opens it straight at a folder.
+
+> **Read this part twice.** The label store is `~/.paratia/etichette.json`: a
+> file in your home directory, owned by the uid the agent runs as. It can read it
+> and it can rewrite it. Wiring it into the gate as a deny rule would buy nothing
+> either, for the reason this whole README is about — a rule about paths is a
+> rule about spellings. What protects bytes is `applica` moving them somewhere
+> encrypted, where the cipher does the work. The label is the decision; the move
+> is the mechanism. `applica` also never deletes your original: `rsync` and
+> `stiva` do verified moves better than a reimplementation here would, and a
+> program that copies and deletes on the same run is one bug away from doing
+> only the second.
+
 ## Two machines, and the key that cannot open a shell
 
 Wiring two agent sessions together over SSH so they can collaborate turns a
