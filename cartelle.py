@@ -1,0 +1,731 @@
+#!/usr/bin/env python3
+"""Encrypted folders for the operator's GUI, with no stored keys.
+
+Only hdiutil receives a passphrase, through stdin. The registry and timer
+processes carry mount metadata only. A migration leaves its source alone until
+the image has survived a detach, a fresh attach, and a second content check.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import ctypes
+import errno
+import fcntl
+import hashlib
+import json
+import os
+import plistlib
+import select
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+from pathlib import Path
+
+CASA = Path(os.environ.get("PARATIA_HOME", Path.home() / ".paratia"))
+ARCHIVIO = CASA / "cartelle.json"
+HDIUTIL = "/usr/bin/hdiutil"
+DISKUTIL = "/usr/sbin/diskutil"
+DITTO = "/usr/bin/ditto"
+DIR_SISTEMA = {".fseventsd", ".Spotlight-V100", ".Trashes", ".DocumentRevisions-V100", ".TemporaryItems"}
+
+
+class Rifiuto(Exception):
+    """The operation did not meet a condition needed to keep its bytes safe."""
+
+
+def annota(evento: str, **metadati) -> None:
+    """Replace this callable to integrate another metadata-only audit sink."""
+    CASA.mkdir(parents=True, exist_ok=True)
+    with (CASA / "diario.jsonl").open("a") as f:
+        f.write(json.dumps({"quando": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                            "evento": evento, **metadati}, ensure_ascii=False) + "\n")
+
+
+def _audit(evento: str, **metadati) -> None:
+    try:
+        annota(evento, **metadati)
+    except OSError:
+        pass  # A failed audit write must not change a completed disk operation.
+
+
+def _corri(argv: list[str], passphrase: bytes | None = None):
+    try:
+        return subprocess.run(argv, input=None if passphrase is None else passphrase + b"\0",
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    except OSError as e:
+        raise Rifiuto("Il comando di sistema richiesto non è disponibile.") from e
+
+
+def _comando(argv: list[str], passphrase: bytes | None = None):
+    r = _corri(argv, passphrase)
+    if r.returncode:
+        # Never forward a subprocess stream: even an error must not echo a key.
+        raise Rifiuto(f"Operazione disco non riuscita ({Path(argv[0]).name} {argv[1]}, codice {r.returncode}).")
+    return r
+
+
+def _chiave(passphrase: bytes) -> None:
+    if not isinstance(passphrase, bytes) or len(passphrase) < 12:
+        raise Rifiuto("La passphrase deve contenere almeno 12 byte.")
+    if any(c in passphrase for c in (b"\n", b"\r", b"\0")):
+        raise Rifiuto("La passphrase non può contenere terminatori di riga o byte nulli.")
+
+
+def _minuti(minutes: int) -> int:
+    if isinstance(minutes, bool) or not isinstance(minutes, int) or not 1 <= minutes <= 1440:
+        raise Rifiuto("Il timer deve durare da 1 a 1440 minuti.")
+    return minutes
+
+
+def _percorso(p: str | Path) -> Path:
+    q = Path(p).expanduser()
+    if not q.is_absolute():
+        raise Rifiuto("Scegli un percorso assoluto.")
+    # Reject aliases before resolving, including a symlink in an ancestor.
+    q = Path(os.path.abspath(q))
+    for antenato in [*reversed(q.parents), q]:
+        if antenato.is_symlink():
+            raise Rifiuto("I percorsi con collegamenti simbolici non sono ammessi.")
+    return q
+
+
+def _dentro(p: Path, base: Path) -> bool:
+    return p == base or base in p.parents
+
+
+def _cloud(p: Path) -> bool:
+    s = str(p)
+    return any(x in s for x in (
+        "/Library/CloudStorage/", "/Library/Mobile Documents/", "/Dropbox",
+        "/OneDrive", "/Google Drive", "/iCloud Drive",
+    ))
+
+
+def _esterno(dove: Path) -> None:
+    r = _comando([DISKUTIL, "info", "-plist", str(dove)])
+    try:
+        dati = plistlib.loads(r.stdout)
+    except (ValueError, plistlib.InvalidFileException) as e:
+        raise Rifiuto("Impossibile verificare il disco scelto.") from e
+    if dati.get("Internal") is not False or dati.get("VirtualOrPhysical") == "Virtual":
+        raise Rifiuto("Scegli una cartella su un disco esterno fisico.")
+
+
+def _carica() -> dict:
+    if ARCHIVIO.is_symlink():
+        raise Rifiuto("Il registro delle cartelle non può essere un collegamento.")
+    if not ARCHIVIO.exists():
+        return {"versione": 1, "cartelle": {}}
+    try:
+        r = json.loads(ARCHIVIO.read_text())
+    except (OSError, ValueError) as e:
+        raise Rifiuto("Il registro delle cartelle è illeggibile.") from e
+    if (not isinstance(r, dict) or r.get("versione") != 1
+            or not isinstance(r.get("cartelle"), dict)):
+        raise Rifiuto("Il registro delle cartelle non è valido.")
+    for identificatore, voce in r["cartelle"].items():
+        if (not isinstance(identificatore, str) or not isinstance(voce, dict)
+                or voce.get("id") != identificatore
+                or not all(isinstance(voce.get(k), str)
+                           for k in ("nome", "origine", "bundle", "montaggio", "stato", "generation"))):
+            raise Rifiuto("Una voce del registro delle cartelle non è valida.")
+    return r
+
+
+def _salva(r: dict) -> None:
+    CASA.mkdir(parents=True, exist_ok=True)
+    nome = None
+    try:
+        with tempfile.NamedTemporaryFile("w", dir=CASA, prefix=".cartelle-", delete=False) as f:
+            nome = f.name
+            json.dump(r, f, ensure_ascii=False, indent=1, sort_keys=True)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(nome, ARCHIVIO)
+    finally:
+        if nome and os.path.exists(nome):
+            os.unlink(nome)
+
+
+@contextlib.contextmanager
+def _registro():
+    CASA.mkdir(parents=True, exist_ok=True)
+    fd = os.open(CASA / "cartelle.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield _carica()
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def _voce(r: dict, identificatore: str) -> dict:
+    try:
+        return r["cartelle"][identificatore]
+    except (KeyError, TypeError) as e:
+        raise Rifiuto("Cartella sconosciuta.") from e
+
+
+def _montato(p: Path) -> bool:
+    return p.is_mount()
+
+
+def _pubblica(voce: dict) -> dict:
+    v = dict(voce)
+    if v["stato"] not in ("migrazione", "migrazione-incompleta"):
+        v["stato"] = "aperta" if _montato(Path(v["montaggio"])) else "chiusa"
+    return v
+
+
+def elenco() -> list[dict]:
+    with _registro() as r:
+        return sorted((_pubblica(v) for v in r["cartelle"].values()), key=lambda v: v["nome"])
+
+
+def _firma(s) -> tuple:
+    return s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns
+
+
+def _libc():
+    lib = ctypes.CDLL(None, use_errno=True)
+    lib.listxattr.argtypes = [ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
+    lib.listxattr.restype = ctypes.c_ssize_t
+    lib.getxattr.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p,
+                             ctypes.c_size_t, ctypes.c_uint32, ctypes.c_int]
+    lib.getxattr.restype = ctypes.c_ssize_t
+    lib.setxattr.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p,
+                             ctypes.c_size_t, ctypes.c_uint32, ctypes.c_int]
+    lib.setxattr.restype = ctypes.c_int
+    lib.acl_get_file.argtypes = [ctypes.c_char_p, ctypes.c_int]
+    lib.acl_get_file.restype = ctypes.c_void_p
+    lib.acl_to_text.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ssize_t)]
+    lib.acl_to_text.restype = ctypes.c_void_p
+    lib.acl_set_file.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_void_p]
+    lib.acl_set_file.restype = ctypes.c_int
+    lib.acl_init.argtypes = [ctypes.c_int]
+    lib.acl_init.restype = ctypes.c_void_p
+    lib.acl_free.argtypes = [ctypes.c_void_p]
+    return lib
+
+
+def _nomi_xattr(p: Path) -> list[str]:
+    if sys.platform != "darwin":
+        return os.listxattr(p, follow_symlinks=False) if hasattr(os, "listxattr") else []
+    lib = _libc()
+    n = lib.listxattr(os.fsencode(p), None, 0, 1)
+    if n < 0:
+        raise Rifiuto("Impossibile leggere gli attributi estesi di un elemento.")
+    b = ctypes.create_string_buffer(n)
+    if lib.listxattr(os.fsencode(p), b, n, 1) != n:
+        raise Rifiuto("Gli attributi estesi sono cambiati durante la verifica.")
+    return [os.fsdecode(x) for x in b.raw[:n].split(b"\0") if x]
+
+
+def _xattr(p: Path, nome: str) -> bytes:
+    if sys.platform != "darwin":
+        return os.getxattr(p, nome, follow_symlinks=False)
+    lib = _libc()
+    n = lib.getxattr(os.fsencode(p), os.fsencode(nome), None, 0, 0, 1)
+    if n < 0:
+        raise Rifiuto("Impossibile leggere un attributo esteso.")
+    b = ctypes.create_string_buffer(n)
+    if lib.getxattr(os.fsencode(p), os.fsencode(nome), b, n, 0, 1) != n:
+        raise Rifiuto("Un attributo esteso è cambiato durante la verifica.")
+    return b.raw[:n]
+
+
+def _acl(p: Path) -> str:
+    if sys.platform != "darwin":
+        return ""
+    lib = _libc()
+    acl = lib.acl_get_file(os.fsencode(p), 0x100)  # ACL_TYPE_EXTENDED on macOS.
+    if not acl:
+        if ctypes.get_errno() == errno.ENOENT and p.exists():
+            return ""  # macOS uses ENOENT when an existing file has no ACL.
+        raise Rifiuto("Impossibile leggere le autorizzazioni ACL.")
+    testo = None
+    try:
+        lunghezza = ctypes.c_ssize_t()
+        testo = lib.acl_to_text(acl, ctypes.byref(lunghezza))
+        if not testo:
+            raise Rifiuto("Impossibile verificare le autorizzazioni ACL.")
+        return hashlib.sha256(ctypes.string_at(testo, lunghezza.value)).hexdigest()
+    finally:
+        if testo:
+            lib.acl_free(testo)
+        lib.acl_free(acl)
+
+
+def _metadati(p: Path) -> dict:
+    attributi = {}
+    for nome in _nomi_xattr(p):
+        if nome == "com.apple.ResourceFork" and p.is_file() and sys.platform == "darwin":
+            h = hashlib.sha256()
+            with (p / "..namedfork" / "rsrc").open("rb") as f:
+                for b in iter(lambda: f.read(1024 * 1024), b""):
+                    h.update(b)
+            attributi[nome] = h.hexdigest()
+        else:
+            attributi[nome] = hashlib.sha256(_xattr(p, nome)).hexdigest()
+    return {"xattr": attributi, "acl": _acl(p)}
+
+
+def _copia_metadati(origine: Path, destinazione: Path) -> None:
+    shutil.copystat(origine, destinazione, follow_symlinks=False)
+    for nome in _nomi_xattr(origine):
+        valore = _xattr(origine, nome)
+        if sys.platform == "darwin":
+            if _libc().setxattr(os.fsencode(destinazione), os.fsencode(nome), valore, len(valore), 0, 1):
+                raise Rifiuto("Impossibile ripristinare un attributo della cartella.")
+        else:
+            os.setxattr(destinazione, nome, valore, follow_symlinks=False)
+    if sys.platform == "darwin":
+        lib = _libc()
+        acl = lib.acl_get_file(os.fsencode(origine), 0x100)
+        if not acl and ctypes.get_errno() == errno.ENOENT and origine.exists():
+            acl = lib.acl_init(0)
+        if not acl:
+            raise Rifiuto("Impossibile ripristinare le autorizzazioni della cartella.")
+        try:
+            if lib.acl_set_file(os.fsencode(destinazione), 0x100, acl):
+                raise Rifiuto("Impossibile ripristinare le autorizzazioni della cartella.")
+        finally:
+            lib.acl_free(acl)
+
+
+def _leggi(p: Path, attesa=None) -> tuple[int, str]:
+    fd = os.open(p, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as f:
+        prima = os.fstat(f.fileno())
+        if not stat.S_ISREG(prima.st_mode) or prima.st_nlink != 1:
+            raise Rifiuto("La fonte contiene file speciali o hard link.")
+        if attesa is not None and _firma(prima) != attesa:
+            raise Rifiuto("La fonte è cambiata durante la migrazione.")
+        h, n = hashlib.sha256(), 0
+        for b in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(b)
+            n += len(b)
+        if _firma(prima) != _firma(os.fstat(f.fileno())) or n != prima.st_size:
+            raise Rifiuto("Un file è cambiato durante la lettura.")
+        return n, h.hexdigest()
+
+
+def _scansiona(radice: Path, esclusi_root=()) -> dict:
+    manifest = {}
+
+    def visita(p: Path):
+        s = p.lstat()
+        relativo = str(p.relative_to(radice))
+        if stat.S_ISDIR(s.st_mode):
+            if p != radice and _montato(p):
+                raise Rifiuto("La fonte contiene un altro volume montato.")
+            manifest[relativo] = {"tipo": "cartella", "modo": stat.S_IMODE(s.st_mode),
+                                  "mtime": s.st_mtime_ns, **_metadati(p)}
+            for figlio in sorted(p.iterdir(), key=lambda x: x.name):
+                if (p == radice and figlio.name in esclusi_root and figlio.is_dir()
+                        and not figlio.is_symlink()):
+                    continue
+                visita(figlio)
+        elif stat.S_ISREG(s.st_mode) and s.st_nlink == 1:
+            n, h = _leggi(p, _firma(s))
+            manifest[relativo] = {"tipo": "file", "byte": n, "hash": h,
+                                  "firma": _firma(s), "modo": stat.S_IMODE(s.st_mode),
+                                  "mtime": s.st_mtime_ns, **_metadati(p)}
+        else:
+            raise Rifiuto("La fonte contiene collegamenti, hard link o file speciali.")
+
+    visita(radice)
+    return manifest
+
+
+def _contenuto(manifest: dict) -> dict:
+    return {k: {campo: v[campo] for campo in ("tipo", "byte", "hash", "modo", "xattr", "acl") if campo in v}
+            for k, v in manifest.items()}
+
+
+def _totali(manifest: dict) -> tuple[int, int]:
+    file = [v for v in manifest.values() if v["tipo"] == "file"]
+    return len(file), sum(v["byte"] for v in file)
+
+
+def _copia(origine: Path, monte: Path, manifest: dict) -> None:
+    _comando([DITTO, "--rsrc", "--extattr", "--acl", str(origine), str(monte)])
+    # ditto merges into the existing volume root; that root needs an explicit
+    # metadata copy even though the children already retain their attributes.
+    _copia_metadati(origine, monte)
+
+
+def _verifica(radice: Path, atteso: dict, metadir: str | None = None) -> None:
+    ignorati = {x for x in DIR_SISTEMA if x not in atteso} if metadir else set()
+    if metadir:
+        ignorati.add(metadir)
+    trovato = _scansiona(radice, ignorati)
+    if _totali(trovato) != _totali(atteso) or _contenuto(trovato) != _contenuto(atteso):
+        raise Rifiuto("La verifica di numero, dimensioni e hash dei file non è riuscita.")
+
+
+def _impronta(manifest: dict) -> str:
+    return hashlib.sha256(json.dumps(_contenuto(manifest), sort_keys=True).encode()).hexdigest()
+
+
+def _scrivi_manifest(monte: Path, voce: dict, manifest: dict) -> None:
+    directory = monte / voce["metadir"]
+    directory.mkdir(mode=0o700)
+    with (directory / "manifest.json").open("x") as f:
+        json.dump({"versione": 1, "id": voce["id"], "manifest": manifest}, f, sort_keys=True)
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def _leggi_manifest(monte: Path, voce: dict) -> dict:
+    p = monte / voce["metadir"] / "manifest.json"
+    if p.is_symlink():
+        raise Rifiuto("Il riferimento di recupero non è valido.")
+    try:
+        d = json.loads(p.read_text())
+        manifest = d["manifest"]
+        if d["versione"] != 1 or d["id"] != voce["id"] or _impronta(manifest) != voce["impronta"]:
+            raise ValueError()
+        for nome in manifest:
+            if Path(nome).is_absolute() or ".." in Path(nome).parts:
+                raise ValueError()
+    except (OSError, KeyError, TypeError, ValueError) as e:
+        raise Rifiuto("Il riferimento cifrato di recupero è illeggibile o non corrisponde.") from e
+    return manifest
+
+
+def _attacca(bundle: Path, monte: Path, passphrase: bytes) -> None:
+    if _montato(monte) or any(monte.iterdir()):
+        raise Rifiuto("Il punto di montaggio deve essere vuoto e non montato.")
+    _comando([HDIUTIL, "attach", str(bundle), "-stdinpass", "-nobrowse", "-noautoopen",
+              "-owners", "on", "-mountpoint", str(monte)], passphrase)
+    if not _montato(monte):
+        raise Rifiuto("Il montaggio del volume non è stato confermato.")
+
+
+def _stacca(monte: Path) -> None:
+    if _montato(monte):
+        _comando([HDIUTIL, "detach", str(monte)])
+    if _montato(monte):
+        raise Rifiuto("Il volume è ancora montato. Nessuna chiusura forzata eseguita.")
+
+
+def _origine_libera(origine: Path, r: dict) -> None:
+    riservati = [CASA, Path(os.environ.get("PARATIA_MOUNT", "/Volumes/paratia"))]
+    riservati += [Path(v[k]) for v in r["cartelle"].values() for k in ("montaggio", "bundle")]
+    zona = CASA / "zone" / "registro.json"
+    if zona.exists():
+        try:
+            zone = json.loads(zona.read_text())
+            riservati += [Path("/Volumes") / ("zona-" + nome) for nome in zone]
+        except (OSError, ValueError, TypeError) as e:
+            raise Rifiuto("Il registro delle zone non è leggibile.") from e
+    for p in riservati:
+        if _dentro(origine, p) or _dentro(p, origine):
+            raise Rifiuto("La fonte si sovrappone a una cartella o un compartimento già registrato.")
+    if _montato(origine):
+        raise Rifiuto("La fonte è già un punto di montaggio.")
+
+
+def proteggi(origine: str | Path, dove: str | Path, passphrase: bytes, minutes: int = 15) -> dict:
+    _chiave(passphrase)
+    minutes = _minuti(minutes)
+    fonte, disco = _percorso(origine), _percorso(dove)
+    if not fonte.is_dir() or not disco.is_dir():
+        raise Rifiuto("Scegli due cartelle esistenti: fonte e destinazione sul disco esterno.")
+    if _cloud(fonte) or _cloud(disco):
+        raise Rifiuto("Le cartelle sincronizzate con il cloud non sono ammesse.")
+    if _dentro(disco, fonte) or _dentro(fonte, disco):
+        raise Rifiuto("Fonte e destinazione non possono essere annidate.")
+    _esterno(disco)
+
+    with _registro() as r:
+        _origine_libera(fonte, r)
+        manifest = _scansiona(fonte)
+        conta, byte = _totali(manifest)
+        identificatore = uuid.uuid4().hex
+        bundle = disco / f"{fonte.name}-{identificatore}.sparsebundle"
+        if bundle.exists() or bundle.is_symlink():
+            raise Rifiuto("Il bundle scelto esiste già; non sarà sovrascritto.")
+        area = CASA / "montaggi"
+        area.mkdir(mode=0o700, parents=True, exist_ok=True)
+        monte = Path(tempfile.mkdtemp(prefix=identificatore + "-", dir=area))
+        voce = {"id": identificatore, "nome": fonte.name, "origine": str(fonte),
+                "bundle": str(bundle), "montaggio": str(fonte), "stato": "migrazione",
+                "minutes": minutes, "generation": uuid.uuid4().hex,
+                "file": conta, "byte": byte, "montaggio_temporaneo": str(monte),
+                "plaintext_residuo": str(fonte), "verificato": False,
+                "metadir": ".paratia-" + identificatore, "impronta": _impronta(manifest),
+                "backup": str(fonte.with_name("." + fonte.name + ".paratia-" + identificatore))}
+        r["cartelle"][identificatore] = voce
+        _salva(r)
+        try:
+            dimensione = max(256 * 1024**2, byte + byte // 2 + 128 * 1024**2)
+            _comando([HDIUTIL, "create", "-size", str((dimensione + 1024**2 - 1) // 1024**2) + "m", "-type", "SPARSEBUNDLE",
+                      "-fs", "APFS", "-encryption", "AES-256", "-stdinpass", "-volname",
+                      "paratia-" + identificatore, str(bundle)], passphrase)
+            _attacca(bundle, monte, passphrase)
+            _copia(fonte, monte, manifest)
+            _scrivi_manifest(monte, voce, manifest)
+            _verifica(monte, manifest, voce["metadir"])
+            _verifica(fonte, manifest)
+            _stacca(monte)
+            _attacca(bundle, monte, passphrase)
+            _leggi_manifest(monte, voce)
+            _verifica(monte, manifest, voce["metadir"])
+            _stacca(monte)
+            _verifica(fonte, manifest)
+            voce["verificato"] = True
+            _salva(r)
+            # The registry is already durable before any source deletion.
+            backup = Path(voce["backup"])
+            if backup.exists() or backup.is_symlink():
+                raise Rifiuto("La cartella temporanea di recupero esiste già.")
+            fonte.rename(backup)
+            voce["plaintext_residuo"] = str(backup)
+            _salva(r)
+            fonte.mkdir(mode=0o700)
+            _verifica(backup, manifest)
+            # No encrypted success is reported while a plaintext tree remains.
+            shutil.rmtree(backup)
+            voce.update(stato="chiusa", plaintext_residuo=None)
+            voce.pop("montaggio_temporaneo", None)
+            _salva(r)
+            _audit("cartella-protetta", id=identificatore, origine=str(fonte),
+                   bundle=str(bundle), file=conta, byte=byte)
+            return _pubblica(voce)
+        except Exception as e:
+            try:
+                _stacca(monte)
+            except Rifiuto:
+                pass
+            voce["stato"] = "migrazione-incompleta"
+            # Keep the original/backup and the encrypted copy for recovery.
+            _salva(r)
+            _audit("cartella-migrazione-incompleta", id=identificatore)
+            if isinstance(e, Rifiuto):
+                raise
+            raise Rifiuto("Migrazione incompleta: la fonte residua e il bundle sono conservati per il recupero.") from e
+        finally:
+            if not _montato(monte):
+                try:
+                    monte.rmdir()
+                except OSError:
+                    pass
+
+
+def _avvia_timer(identificatore: str, generation: str, secondi: int) -> None:
+    processo = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "timer", identificatore,
+                                generation, str(secondi)], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, close_fds=True, start_new_session=True)
+    try:
+        pronto, _, _ = select.select([processo.stdout], [], [], 5)
+        if not pronto or processo.stdout.readline(16) != b"ready\n":
+            raise Rifiuto("Il processo timer non ha confermato l'avvio.")
+    except Exception:
+        processo.terminate()
+        try:
+            processo.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            processo.kill()
+            processo.wait()
+        raise
+    finally:
+        processo.stdout.close()
+
+
+def apri(identificatore: str, passphrase: bytes, minutes: int = 15) -> dict:
+    _chiave(passphrase)
+    minutes = _minuti(minutes)
+    with _registro() as r:
+        v = _voce(r, identificatore)
+        if v["stato"] in ("migrazione", "migrazione-incompleta") or v.get("plaintext_residuo"):
+            raise Rifiuto("La migrazione richiede recupero prima dell'apertura.")
+        monte, bundle = _percorso(v["montaggio"]), _percorso(v["bundle"])
+        if not monte.is_dir() or not bundle.is_dir():
+            raise Rifiuto("Il disco esterno o il punto di montaggio non sono disponibili.")
+        if _montato(monte):
+            raise Rifiuto("La cartella è già aperta.")
+        _attacca(bundle, monte, passphrase)
+        v.update(stato="aperta", minutes=minutes, generation=uuid.uuid4().hex,
+                 scadenza=time.time() + minutes * 60)
+        try:
+            _salva(r)
+            _avvia_timer(identificatore, v["generation"], minutes * 60)
+        except Exception as e:
+            try:
+                _stacca(monte)
+                v.update(stato="chiusa", generation=uuid.uuid4().hex, scadenza=None)
+                _salva(r)
+            except Rifiuto:
+                pass
+            raise Rifiuto("Il timer non è stato avviato; controlla lo stato della cartella.") from e
+        _audit("cartella-aperta", id=identificatore, minutes=minutes)
+        return _pubblica(v)
+
+
+def _chiudi(r: dict, v: dict) -> dict:
+    _stacca(Path(v["montaggio"]))
+    # A migration's temporary mount must also close at session start.
+    if v.get("montaggio_temporaneo"):
+        _stacca(Path(v["montaggio_temporaneo"]))
+    if v["stato"] not in ("migrazione", "migrazione-incompleta"):
+        v["stato"] = "chiusa"
+    v.update(generation=uuid.uuid4().hex, scadenza=None)
+    _salva(r)
+    _audit("cartella-chiusa", id=v["id"])
+    return _pubblica(v)
+
+
+def chiudi(identificatore: str) -> dict:
+    with _registro() as r:
+        return _chiudi(r, _voce(r, identificatore))
+
+
+def chiudi_tutte() -> list[dict]:
+    fuori = []
+    with _registro() as r:
+        for v in r["cartelle"].values():
+            try:
+                fuori.append(_chiudi(r, v))
+            except Rifiuto as e:
+                fuori.append({**_pubblica(v), "errore": str(e)})
+    return fuori
+
+
+def annulla_migrazione(identificatore: str) -> dict:
+    """Forget an incomplete attempt only if the complete source still exists."""
+    with _registro() as r:
+        v = _voce(r, identificatore)
+        if v["stato"] not in ("migrazione", "migrazione-incompleta"):
+            raise Rifiuto("Questa cartella non ha una migrazione da annullare.")
+        if v.get("recupero_temporaneo"):
+            residuo = _percorso(v["recupero_temporaneo"])
+            if residuo.exists() and (not residuo.is_dir() or any(residuo.iterdir())):
+                raise Rifiuto(f"Una copia plaintext di recupero è ancora presente: {residuo}")
+        fonte = _percorso(v["origine"])
+        if _montato(fonte) or not fonte.is_dir() or _impronta(_scansiona(fonte)) != v["impronta"]:
+            raise Rifiuto("La fonte è cambiata o incompleta: non è sicuro annullare la migrazione.")
+        if v.get("montaggio_temporaneo"):
+            _stacca(Path(v["montaggio_temporaneo"]))
+        del r["cartelle"][identificatore]
+        _salva(r)
+        _audit("cartella-migrazione-annullata", id=identificatore)
+        return {**v, "stato": "annullata", "bundle_conservato": True}
+
+
+def recupera(identificatore: str, passphrase: bytes) -> dict:
+    """Restore plaintext from a verified image, without replacing user edits."""
+    _chiave(passphrase)
+    with _registro() as r:
+        v = _voce(r, identificatore)
+        if v["stato"] not in ("migrazione", "migrazione-incompleta") or not v.get("verificato"):
+            raise Rifiuto("Il bundle non è stato verificato: conserva la fonte e annulla il tentativo.")
+        if v.get("recupero_temporaneo"):
+            residuo = _percorso(v["recupero_temporaneo"])
+            if residuo.exists() and (not residuo.is_dir() or any(residuo.iterdir())):
+                raise Rifiuto(f"Il recupero precedente conserva una copia plaintext: {residuo}")
+        fonte, bundle = _percorso(v["origine"]), _percorso(v["bundle"])
+        if _montato(fonte) or (fonte.exists() and (not fonte.is_dir() or any(fonte.iterdir()))):
+            raise Rifiuto("L'origine contiene dati: il recupero non li sovrascriverà.")
+        if v.get("montaggio_temporaneo"):
+            _stacca(Path(v["montaggio_temporaneo"]))
+        area = CASA / "montaggi"
+        area.mkdir(mode=0o700, parents=True, exist_ok=True)
+        monte = Path(tempfile.mkdtemp(prefix="recupero-", dir=area))
+        staging = Path(tempfile.mkdtemp(prefix="." + fonte.name + ".recupero-", dir=fonte.parent))
+        v["montaggio_temporaneo"] = str(monte)
+        v["recupero_temporaneo"] = str(staging)
+        _salva(r)
+        try:
+            _attacca(bundle, monte, passphrase)
+            manifest = _leggi_manifest(monte, v)
+            _verifica(monte, manifest, v["metadir"])
+            backup = _percorso(v["backup"])
+            if backup.exists():
+                rimasto = _contenuto(_scansiona(backup))
+                atteso = _contenuto(manifest)
+                if any(k not in atteso or atteso[k] != dati for k, dati in rimasto.items()):
+                    raise Rifiuto("La fonte residua è stata modificata: il recupero non la sovrascriverà.")
+            for nome in manifest:
+                if nome != "." and len(Path(nome).parts) == 1:
+                    _comando([DITTO, "--rsrc", "--extattr", "--acl", str(monte / nome), str(staging / nome)])
+            _copia_metadati(monte, staging)
+            _verifica(staging, manifest)
+            _stacca(monte)
+            if fonte.exists():
+                if any(fonte.iterdir()):
+                    raise Rifiuto("L'origine è cambiata durante il recupero.")
+                fonte.rmdir()
+            staging.rename(fonte)
+            v["plaintext_residuo"] = str(fonte)
+            _salva(r)
+            if backup.exists():
+                shutil.rmtree(backup)
+            del r["cartelle"][identificatore]
+            _salva(r)
+            _audit("cartella-recuperata", id=identificatore)
+            return {**v, "stato": "recuperata", "bundle_conservato": True}
+        except Exception as e:
+            try:
+                _stacca(monte)
+            except Rifiuto:
+                pass
+            v["stato"] = "migrazione-incompleta"
+            _salva(r)
+            if isinstance(e, Rifiuto):
+                raise
+            raise Rifiuto("Recupero incompleto: tutte le copie residue sono conservate.") from e
+        finally:
+            if not _montato(monte):
+                try:
+                    monte.rmdir()
+                except OSError:
+                    pass
+            try:
+                staging.rmdir()  # Never delete an uninstalled recovered tree.
+            except OSError:
+                pass
+
+
+def _timer(identificatore: str, generation: str, secondi: int) -> int:
+    if secondi < 0 or secondi > 86400:
+        return 2
+    # The opening process holds the flock while it waits for readiness. The
+    # registry uses atomic replacement, so this initial read needs no lock.
+    iniziale = _carica()["cartelle"].get(identificatore)
+    if not iniziale or iniziale["generation"] != generation or not _montato(Path(iniziale["montaggio"])):
+        return 0
+    sys.stdout.write("ready\n")
+    sys.stdout.flush()
+    time.sleep(secondi)
+    while True:
+        with _registro() as r:
+            v = r["cartelle"].get(identificatore)
+            if not v or v["generation"] != generation or not _montato(Path(v["montaggio"])):
+                return 0
+            try:
+                _chiudi(r, v)
+                return 0
+            except Rifiuto:
+                pass  # A busy image stays open; retry without force-detach.
+        time.sleep(5)
+
+
+def main(argv: list[str] | None = None) -> int:
+    a = sys.argv[1:] if argv is None else argv
+    if len(a) != 4 or a[0] != "timer":
+        return 2
+    try:
+        return _timer(a[1], a[2], int(a[3]))
+    except (Rifiuto, ValueError, OSError):
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

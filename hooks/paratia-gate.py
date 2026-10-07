@@ -39,6 +39,7 @@ import fnmatch
 import json
 import os
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 
@@ -73,6 +74,8 @@ PERMESSI_APERTO = (
     ["paratia", "lock"],
     ["paratia", "status"],
     ["paratia", "status", "--json"],
+    ["paratia", "cartella", "chiudi-tutte"],
+    ["paratia", "cartella", "elenco"],
 )
 
 
@@ -89,13 +92,62 @@ def nega(motivo: str) -> None:
     )
 
 
+def montaggi_protetti() -> list[Path]:
+    montaggi = [MONTAGGIO]
+    registro = CASA / "cartelle.json"
+    if registro.exists():
+        dati = json.loads(registro.read_text())
+        if not isinstance(dati, dict) or dati.get("versione") != 1 or not isinstance(dati.get("cartelle"), dict):
+            raise ValueError("registro cartelle non valido")
+        for voce in dati["cartelle"].values():
+            if not isinstance(voce, dict):
+                raise ValueError("voce cartella non valida")
+            if voce.get("stato") in ("migrazione", "migrazione-incompleta") or voce.get("plaintext_residuo"):
+                raise ValueError("migrazione da completare prima della sessione")
+            monte = Path(voce["montaggio"])
+            if not monte.is_absolute():
+                raise ValueError("mountpoint non assoluto")
+            montaggi.append(monte)
+            if voce.get("montaggio_temporaneo"):
+                montaggi.append(Path(voce["montaggio_temporaneo"]))
+    return montaggi
+
+
 def compartimento_aperto() -> bool:
     try:
-        return MONTAGGIO.is_mount()
-    except OSError:
+        return any(p.is_mount() for p in montaggi_protetti())
+    except (OSError, ValueError, KeyError, TypeError):
         # Cannot tell. The whole point of this file is that "cannot tell" is a
         # refusal, so report open and let the caller deny.
         return True
+
+
+def chiudi_inizio_sessione() -> int:
+    """SessionStart closes compartments; ordinary tool calls keep denying open ones."""
+    try:
+        import importlib.util
+        modulo = Path(__file__).resolve().parent.parent / "cartelle.py"
+        if (CASA / "cartelle.json").exists():
+            spec = importlib.util.spec_from_file_location("cartelle_session_start", modulo)
+            cartelle = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = cartelle
+            spec.loader.exec_module(cartelle)
+            risultati = cartelle.chiudi_tutte()
+            if any(r.get("errore") for r in risultati):
+                raise RuntimeError("una cartella è occupata")
+        if MONTAGGIO.is_mount():
+            esito = subprocess.run(["/usr/bin/hdiutil", "detach", str(MONTAGGIO)],
+                                   capture_output=True)
+            if esito.returncode:
+                raise RuntimeError("il forziere è occupato")
+        if compartimento_aperto():
+            raise RuntimeError("un compartimento risulta ancora aperto")
+    except Exception:
+        print("Paratia: chiusura incompleta. Chiudi i documenti aperti e premi "
+              "Chiudi tutte in Paratia; se una migrazione è incompleta, usa "
+              "Recupera nell'app prima di avviare l'agente.", file=sys.stderr)
+        return 2
+    return 0
 
 
 def solo_umano() -> tuple[str, ...]:
@@ -191,6 +243,9 @@ def main() -> int:
         nega(f"paratia could not read the tool call ({type(e).__name__}), so it does not run")
         return 0
 
+    if dati.get("hook_event_name") == "SessionStart":
+        return chiudi_inizio_sessione()
+
     strumento = dati.get("tool_name", "")
 
     # ---- first refusal: the compartment is open
@@ -199,7 +254,7 @@ def main() -> int:
         if strumento == "Bash" and argv is not None and list(argv) in [list(x) for x in PERMESSI_APERTO]:
             return 0
         nega(
-            f"The paratia compartment is mounted at {MONTAGGIO}, so its plaintext is "
+            "A paratia compartment is mounted, so its plaintext is "
             f"readable by anything running as this user, including this session. Every "
             f"tool call is refused until it is closed. Run `paratia lock` — that one is "
             f"allowed — or close it from your own terminal, then carry on."

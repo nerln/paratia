@@ -1,6 +1,18 @@
 {
   "description": "One hook, two refusals, both decided before the model sees a result. First: while the paratia compartment is mounted its plaintext is readable by anything running as this user, so every tool call is denied until it closes — the check is on mount state, not on paths, which is why base64, quoting and shell indirection do not get around it. Second: when the turn was opened by another agent over AgentBridge rather than by Eugenio, the human-only capabilities come off the table, because under delegation a capability is the intersection of the principals in the chain and not their union. Silent in every other case, which is almost every case: two syscalls and a tail of the transcript.",
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/paratia-gate.py\"",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "*",

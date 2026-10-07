@@ -1067,6 +1067,39 @@ def cmd_finder(args) -> int:
     return mod.servi(args.porta, args.apri, args.forza)
 
 
+def cmd_cartella(args) -> int:
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "cartelle", Path(__file__).resolve().parent / "cartelle.py")
+    C = importlib.util.module_from_spec(spec)
+    sys.modules["cartelle"] = C
+    spec.loader.exec_module(C)
+    try:
+        if args.operazione == "elenco":
+            risultato = C.elenco()
+        elif args.operazione == "chiudi-tutte":
+            risultato = C.chiudi_tutte()
+        elif args.operazione == "chiudi":
+            risultato = C.chiudi(args.id)
+        else:
+            if dentro_un_agente():
+                raise Rifiuto("Apri Paratia dal Finder: la chiave va inserita "
+                              "nel campo sicuro dell'app, fuori dalla sessione agente.")
+            chiave = chiedi_passphrase("Chiave del compartimento: ")
+            if args.operazione == "proteggi":
+                conferma = chiedi_passphrase("Ripeti la chiave: ")
+                if chiave != conferma:
+                    raise Rifiuto("Le chiavi non coincidono. Ripeti l'operazione.")
+                risultato = C.proteggi(args.origine, args.dove, chiave, args.minutes)
+            else:
+                risultato = C.apri(args.id, chiave, args.minutes)
+        print(json.dumps(risultato, ensure_ascii=False, indent=1))
+        return 1 if isinstance(risultato, list) and any(
+            isinstance(r, dict) and r.get("errore") for r in risultato) else 0
+    except C.Rifiuto as exc:
+        raise Rifiuto(str(exc)) from exc
+
+
 def costruisci() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="paratia",
@@ -1211,6 +1244,23 @@ def costruisci() -> argparse.ArgumentParser:
     fi.add_argument("--non-aprire", dest="apri", action="store_false")
     fi.add_argument("--forza", action="store_true", help="start even inside an agent session")
     fi.set_defaults(fn=cmd_finder)
+
+    ca = s.add_parser("cartella", help="compartimenti per cartelle esistenti")
+    cas = ca.add_subparsers(dest="operazione", required=True)
+    for nome in ("elenco", "chiudi-tutte"):
+        cas.add_parser(nome).set_defaults(fn=cmd_cartella)
+    cc = cas.add_parser("chiudi")
+    cc.add_argument("id")
+    cc.set_defaults(fn=cmd_cartella)
+    cap = cas.add_parser("apri")
+    cap.add_argument("id")
+    cap.add_argument("--minutes", type=int, default=15)
+    cap.set_defaults(fn=cmd_cartella)
+    cp = cas.add_parser("proteggi")
+    cp.add_argument("origine")
+    cp.add_argument("--dove", required=True)
+    cp.add_argument("--minutes", type=int, default=15)
+    cp.set_defaults(fn=cmd_cartella)
 
     return p
 
