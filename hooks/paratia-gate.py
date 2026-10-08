@@ -31,6 +31,11 @@ it takes the human-only tools off the table for that turn.
 Both refusals fail closed: if this file cannot make up its mind, it says no.
 
 Input is the PreToolUse payload on stdin. Output is a deny decision, or silence.
+
+With --codex this also handles SessionStart closure and uses Codex's documented
+continue=false decision on failure. Its disk guard applies to every tool that
+Codex actually sends through PreToolUse. Delegation classification still needs
+the Claude transcript provider and is not claimed for the Codex adapter.
 """
 
 from __future__ import annotations
@@ -234,7 +239,7 @@ def argv_di(dati: dict) -> list[str] | None:
         return None
 
 
-def main() -> int:
+def main(*, codex: bool = False) -> int:
     try:
         dati = json.load(sys.stdin)
         if not isinstance(dati, dict):
@@ -244,7 +249,16 @@ def main() -> int:
         return 0
 
     if dati.get("hook_event_name") == "SessionStart":
-        return chiudi_inizio_sessione()
+        esito = chiudi_inizio_sessione()
+        if esito and codex:
+            # Codex documents this SessionStart decision explicitly. The mount
+            # guard remains a second check on every supported tool invocation.
+            json.dump({"continue": False,
+                       "stopReason": "Paratia non ha confermato la chiusura dei compartimenti.",
+                       "systemMessage": "Chiudi i documenti e usa Chiudi tutte o Recupera in Paratia."},
+                      sys.stdout)
+            return 0
+        return esito
 
     strumento = dati.get("tool_name", "")
 
@@ -259,6 +273,11 @@ def main() -> int:
             f"tool call is refused until it is closed. Run `paratia lock` — that one is "
             f"allowed — or close it from your own terminal, then carry on."
         )
+        return 0
+
+    # Codex's transcript is not the Claude provider below. Its adapter retains
+    # both disk guards and makes no claim about delegation classification.
+    if codex:
         return 0
 
     # ---- second refusal: this turn was opened by another agent
@@ -295,7 +314,10 @@ def main() -> int:
 
 if __name__ == "__main__":
     try:
-        sys.exit(main())
+        if sys.argv[1:] not in ([], ["--codex"]):
+            print("Paratia: opzione hook non valida.", file=sys.stderr)
+            sys.exit(2)
+        sys.exit(main(codex=sys.argv[1:] == ["--codex"]))
     except Exception as e:  # noqa: BLE001
         nega(f"the paratia gate itself failed ({type(e).__name__}), so nothing runs")
         sys.exit(0)
