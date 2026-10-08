@@ -1,0 +1,43 @@
+{
+  "versione": 1,
+  "stato": "non-eseguito",
+  "messaggio": "La sequenza reale attende le autorizzazioni e la chiave nella GUI. Nessun risultato live è disponibile.",
+  "percorso": "~/Desktop/folder-test",
+  "destinazione_prevista": "SSD AppsAndFiles, cartella da scegliere nella GUI",
+  "iniziata": null,
+  "conclusa": null,
+  "cartella_id": null,
+  "bundle": null,
+  "stato_finale": null,
+  "file": null,
+  "byte": null,
+  "inventario": null,
+  "verifica_migrazione": null,
+  "fasi": [],
+  "prove": [],
+  "autorizzazioni_live_verificate": false,
+  "prerequisiti": [
+    "Installazione del registro autorizzata nel dialogo amministratore macOS",
+    "Accesso completo al disco per /usr/bin/eslogger e registro attivo e sano",
+    "Accesso al Desktop se richiesto da macOS",
+    "Cartella vuota o file sintetici riconosciuti dallo storico del banco",
+    "Destinazione sulla SSD AppsAndFiles scelta nella GUI",
+    "Chiave del compartimento inserita nella GUI",
+    "Consenso esplicito alle CLI reali per misurare Codex e Claude Code"
+  ],
+  "fasi_previste": ["prima", "chiusa", "riaperta", "richiusa"],
+  "attori_previsti": ["shell", "mdls", "codex", "claude"],
+  "modelli_invocati_dal_banco": false,
+  "storico_privato": "~/.paratia/banco/storico.json",
+  "limiti": [
+    "Questo file pubblico non è l'export di una prova eseguita.",
+    "L'inventario e i probe usano metadati; il banco rifiuta la migrazione di file personali non riconosciuti.",
+    "La migrazione copia e verifica soltanto i file sintetici accettati per la prova.",
+    "I figli CLI e la loro classificazione kernel restano da verificare sulla macchina.",
+    "mdls può rispondere da cache: la copertura kernel non è garantita.",
+    "Un'apertura per lettura non prova che i byte siano stati letti.",
+    "Un tentativo fallito non ha sempre una notifica kernel; errno viene conservato soltanto se misurato.",
+    "Riscontri assenti o probe non misurati mantengono la prova incompleta.",
+    "La chiave e i contenuti dei file non vengono inclusi nello storico, nel registro o negli export."
+  ]
+}

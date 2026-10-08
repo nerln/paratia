@@ -37,6 +37,10 @@ DIR_SISTEMA = {".fseventsd", ".Spotlight-V100", ".Trashes", ".DocumentRevisions-
 class Rifiuto(Exception):
     """The operation did not meet a condition needed to keep its bytes safe."""
 
+    def __init__(self, message: str, cartella_id: str | None = None):
+        super().__init__(message)
+        self.cartella_id = cartella_id
+
 
 def annota(evento: str, **metadati) -> None:
     """Append operator operations to the same hash-chain format as kernel events."""
@@ -522,8 +526,10 @@ def proteggi(origine: str | Path, dove: str | Path, passphrase: bytes, minutes: 
             _salva(r)
             _audit("cartella-migrazione-incompleta", id=identificatore)
             if isinstance(e, Rifiuto):
+                e.cartella_id = identificatore
                 raise
-            raise Rifiuto("Migrazione incompleta: la fonte residua e il bundle sono conservati per il recupero.") from e
+            raise Rifiuto("Migrazione incompleta: la fonte residua e il bundle sono conservati per il recupero.",
+                          cartella_id=identificatore) from e
         finally:
             if not _montato(monte):
                 try:

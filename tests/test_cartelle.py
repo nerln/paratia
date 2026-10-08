@@ -153,6 +153,7 @@ def test_errori_migrazione_conservano_fonte_e_non_espongono_chiave(C, D, albero,
     assert (fonte / ".invisibile" / "a.txt").read_text() == "anche questo"
     v = C.elenco()[0]
     assert v["stato"] == "migrazione-incompleta"
+    assert errore.value.cartella_id == v["id"]
     assert v["plaintext_residuo"] == str(fonte)
     assert C.annulla_migrazione(v["id"])["stato"] == "annullata"
     assert C.elenco() == []
