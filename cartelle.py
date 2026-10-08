@@ -39,18 +39,32 @@ class Rifiuto(Exception):
 
 
 def annota(evento: str, **metadati) -> None:
-    """Replace this callable to integrate another metadata-only audit sink."""
-    CASA.mkdir(parents=True, exist_ok=True)
-    with (CASA / "diario.jsonl").open("a") as f:
-        f.write(json.dumps({"quando": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                            "evento": evento, **metadati}, ensure_ascii=False) + "\n")
+    """Append operator operations to the same hash-chain format as kernel events."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "registro_cartelle", Path(__file__).resolve().parent / "registro.py")
+    registro = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = registro
+    spec.loader.exec_module(registro)
+    registro.annota(evento, **metadati)
 
 
-def _audit(evento: str, **metadati) -> None:
+def _audit(evento: str, **metadati) -> str | None:
     try:
         annota(evento, **metadati)
-    except OSError:
-        pass  # A failed audit write must not change a completed disk operation.
+    except Exception:
+        # The disk operation already happened. Report the missing record without
+        # turning an audit failure into a misleading migration or mount failure.
+        return "L'operazione disco è conclusa, ma non è stata scritta nel registro. Verifica il registro e lo spazio libero."
+    return None
+
+
+def _esito_registrato(voce: dict, evento: str, **metadati) -> dict:
+    risultato = _pubblica(voce)
+    avviso = _audit(evento, **metadati)
+    if avviso:
+        risultato["avviso_registro"] = avviso
+    return risultato
 
 
 def _corri(argv: list[str], passphrase: bytes | None = None):
@@ -177,7 +191,7 @@ def _montato(p: Path) -> bool:
 
 def _pubblica(voce: dict) -> dict:
     v = dict(voce)
-    if v["stato"] not in ("migrazione", "migrazione-incompleta"):
+    if v["stato"] not in ("migrazione", "migrazione-incompleta", "annullata", "recuperata"):
         v["stato"] = "aperta" if _montato(Path(v["montaggio"])) else "chiusa"
     return v
 
@@ -496,9 +510,8 @@ def proteggi(origine: str | Path, dove: str | Path, passphrase: bytes, minutes: 
             voce.update(stato="chiusa", plaintext_residuo=None)
             voce.pop("montaggio_temporaneo", None)
             _salva(r)
-            _audit("cartella-protetta", id=identificatore, origine=str(fonte),
-                   bundle=str(bundle), file=conta, byte=byte)
-            return _pubblica(voce)
+            return _esito_registrato(voce, "cartella-protetta", id=identificatore,
+                                    origine=str(fonte), bundle=str(bundle), file=conta, byte=byte)
         except Exception as e:
             try:
                 _stacca(monte)
@@ -551,7 +564,12 @@ def apri(identificatore: str, passphrase: bytes, minutes: int = 15) -> dict:
             raise Rifiuto("Il disco esterno o il punto di montaggio non sono disponibili.")
         if _montato(monte):
             raise Rifiuto("La cartella è già aperta.")
-        _attacca(bundle, monte, passphrase)
+        try:
+            _attacca(bundle, monte, passphrase)
+        except Rifiuto:
+            _audit("tentativo-fallito", azione="apertura", cartella=identificatore,
+                   percorso=str(monte))
+            raise
         v.update(stato="aperta", minutes=minutes, generation=uuid.uuid4().hex,
                  scadenza=time.time() + minutes * 60)
         try:
@@ -565,12 +583,16 @@ def apri(identificatore: str, passphrase: bytes, minutes: int = 15) -> dict:
             except Rifiuto:
                 pass
             raise Rifiuto("Il timer non è stato avviato; controlla lo stato della cartella.") from e
-        _audit("cartella-aperta", id=identificatore, minutes=minutes)
-        return _pubblica(v)
+        return _esito_registrato(v, "cartella-aperta", id=identificatore, minutes=minutes)
 
 
 def _chiudi(r: dict, v: dict) -> dict:
-    _stacca(Path(v["montaggio"]))
+    try:
+        _stacca(Path(v["montaggio"]))
+    except Rifiuto:
+        _audit("tentativo-fallito", azione="chiusura", cartella=v["id"],
+               percorso=v["montaggio"])
+        raise
     # A migration's temporary mount must also close at session start.
     if v.get("montaggio_temporaneo"):
         _stacca(Path(v["montaggio_temporaneo"]))
@@ -578,8 +600,7 @@ def _chiudi(r: dict, v: dict) -> dict:
         v["stato"] = "chiusa"
     v.update(generation=uuid.uuid4().hex, scadenza=None)
     _salva(r)
-    _audit("cartella-chiusa", id=v["id"])
-    return _pubblica(v)
+    return _esito_registrato(v, "cartella-chiusa", id=v["id"])
 
 
 def chiudi(identificatore: str) -> dict:
@@ -615,8 +636,8 @@ def annulla_migrazione(identificatore: str) -> dict:
             _stacca(Path(v["montaggio_temporaneo"]))
         del r["cartelle"][identificatore]
         _salva(r)
-        _audit("cartella-migrazione-annullata", id=identificatore)
-        return {**v, "stato": "annullata", "bundle_conservato": True}
+        return _esito_registrato({**v, "stato": "annullata", "bundle_conservato": True},
+                                "cartella-migrazione-annullata", id=identificatore, origine=str(fonte))
 
 
 def recupera(identificatore: str, passphrase: bytes) -> dict:
@@ -669,8 +690,8 @@ def recupera(identificatore: str, passphrase: bytes) -> dict:
                 shutil.rmtree(backup)
             del r["cartelle"][identificatore]
             _salva(r)
-            _audit("cartella-recuperata", id=identificatore)
-            return {**v, "stato": "recuperata", "bundle_conservato": True}
+            return _esito_registrato({**v, "stato": "recuperata", "bundle_conservato": True},
+                                    "cartella-recuperata", id=identificatore, origine=str(fonte))
         except Exception as e:
             try:
                 _stacca(monte)

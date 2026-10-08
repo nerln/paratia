@@ -120,13 +120,26 @@ def test_proteggi_verifica_rimontaggio_e_lascia_mountpoint_vuoto(C, D, albero):
     registry = C.ARCHIVIO.read_bytes()
     assert KEY not in registry and b"fixture-private-marker" not in registry
     assert b"segreto.txt" not in registry  # Manifest filenames stay in ciphertext.
-    assert KEY not in (C.CASA / "diario.jsonl").read_bytes()
+    assert KEY not in (C.CASA / "registro" / "catena.jsonl").read_bytes()
     for argv, key in D.chiamate:
         assert KEY.decode() not in " ".join(argv)
         if key is not None:
             assert argv[0] == "/usr/bin/hdiutil" and "-stdinpass" in argv
             assert "-encryption" in argv or argv[1] == "attach"
     assert all("-force" not in argv for argv, _ in D.chiamate)
+
+
+def test_errore_registro_non_invalida_migrazione_conclusa(C, D, albero, monkeypatch):
+    def registro_non_scrivibile(*args, **kwargs):
+        raise OSError("fixture audit unavailable")
+    monkeypatch.setattr(C, "annota", registro_non_scrivibile)
+    fonte, disco = albero
+    v = C.proteggi(fonte, disco, KEY)
+    assert v["stato"] == "chiusa" and v["verificato"]
+    assert "avviso_registro" in v
+    assert C.elenco()[0]["stato"] == "chiusa"
+    assert list(fonte.iterdir()) == []
+    assert not D.montati
 
 
 @pytest.mark.parametrize("fase, numero", [("create", 1), ("attach", 1), ("ditto", 1), ("detach", 1), ("attach", 2), ("detach", 2)])

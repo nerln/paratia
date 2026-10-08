@@ -25,4 +25,4 @@ build-backend = "hatchling.build"
 # web/ ships too: `paratia finder` serves finder.html from it and a wheel without
 # it installs a command that 500s on its first request. The hooks are deliberately
 # absent: they are wired into ~/.claude, not installed by pip.
-only-include = ["paratia.py", "specchio.py", "fanale.py", "etichette.py", "finder.py", "cartelle.py", "web"]
+only-include = ["paratia.py", "specchio.py", "fanale.py", "catena.py", "etichette.py", "finder.py", "cartelle.py", "registro.py", "registro_daemon.py", "registro_installa.py", "web"]

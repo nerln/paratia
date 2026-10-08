@@ -1067,6 +1067,30 @@ def cmd_finder(args) -> int:
     return mod.servi(args.porta, args.apri, args.forza)
 
 
+def cmd_registro(args) -> int:
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "registro_cli", Path(__file__).resolve().parent / "registro.py")
+    registro = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = registro
+    spec.loader.exec_module(registro)
+    if args.operazione == "stato":
+        risultato = registro.stato()
+    elif args.operazione == "verifica":
+        risultato = registro.verifica()
+    else:
+        filtri = {k: v for k, v in {
+            "folder": args.cartella, "file": args.file, "process": args.processo,
+            "agent": args.agente, "since": args.da, "until": args.a,
+        }.items() if v is not None}
+        if args.operazione == "esporta":
+            print(registro.export_csv(filtri), end="")
+            return 0
+        risultato = registro.query(filtri)
+    print(json.dumps(risultato, ensure_ascii=False, indent=1))
+    return 0
+
+
 def cmd_cartella(args) -> int:
     import importlib.util
     spec = importlib.util.spec_from_file_location(
@@ -1261,6 +1285,20 @@ def costruisci() -> argparse.ArgumentParser:
     cp.add_argument("--dove", required=True)
     cp.add_argument("--minutes", type=int, default=15)
     cp.set_defaults(fn=cmd_cartella)
+
+    re = s.add_parser("registro", help="eventi osservati e stato delle autorizzazioni")
+    res = re.add_subparsers(dest="operazione", required=True)
+    for nome in ("stato", "verifica"):
+        res.add_parser(nome).set_defaults(fn=cmd_registro)
+    for nome in ("elenco", "esporta"):
+        r = res.add_parser(nome)
+        r.add_argument("--cartella")
+        r.add_argument("--file")
+        r.add_argument("--processo")
+        r.add_argument("--agente", choices=("true", "false", "unknown"))
+        r.add_argument("--da")
+        r.add_argument("--a")
+        r.set_defaults(fn=cmd_registro)
 
     return p
 

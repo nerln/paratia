@@ -60,6 +60,13 @@ import sys
 import time
 from pathlib import Path
 
+import importlib.util
+
+_spec_catena = importlib.util.spec_from_file_location("fanale_catena", Path(__file__).resolve().with_name("catena.py"))
+_modulo_catena = importlib.util.module_from_spec(_spec_catena)
+_spec_catena.loader.exec_module(_modulo_catena)
+appendi = _modulo_catena.appendi
+
 CASA = Path(os.environ.get("FANALE_HOME", Path.home() / ".paratia" / "fanale"))
 CATENA = CASA / "catena.jsonl"
 CODA = CASA / "coda.jsonl"
@@ -165,10 +172,7 @@ def annota(voce: dict) -> dict:
     """Append to the hash chain. Each entry names its predecessor's digest, so
     removing or editing one breaks every entry after it, detectably."""
     casa()
-    voce = {**voce, "precedente": _ultimo_digest(), "quando": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
-    with CATENA.open("a") as f:
-        f.write(json.dumps(voce, ensure_ascii=False, sort_keys=True) + "\n")
-    return voce
+    return appendi(CATENA, voce)
 
 
 def _quota_superata(direzione: str) -> bool:
