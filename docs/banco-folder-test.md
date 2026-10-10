@@ -10,8 +10,9 @@ e `prove` vuoti e gli orari a `null`.
 La destinazione prevista è una cartella scelta sulla SSD **AppsAndFiles**.
 Il nome del volume descrive la destinazione; il banco verifica il disco scelto
 prima del campo della chiave e di nuovo al momento dell'avvio. Sono ammesse
-le sottocartelle del volume esterno fisico; immagini disco e volumi interni
-vengono rifiutati. La verifica temporanea separata è descritta nello
+le sottocartelle del volume esterno fisico: APFS viene verificato risalendo dagli
+store al disco intero, exFAT dal volume al disco padre. Immagini disco e volumi
+interni vengono rifiutati. La verifica temporanea separata è descritta nello
 [stato di ottobre 2026](stato-2026-10.md).
 
 ## Avvio dalla GUI
@@ -117,11 +118,17 @@ dopo un errore o un'interruzione. Se la chiusura fallisce o resta una migrazione
 incompleta, lo storico lo segnala: controlla **Cartelle** e usa **Chiudi tutte**,
 **Recupera** o **Annulla migrazione**, secondo lo stato mostrato. Un secondo
 banco concorrente viene rifiutato senza chiudere il compartimento dell'altro.
+Se un montaggio è occupato, chiudi l'app o il terminale aperto dentro e riprova.
+La GUI offre **Forza chiusura…** con conferma del rischio sulle modifiche non
+salvate, anche per un montaggio temporaneo. Una migrazione incompleta richiede
+ancora recupero o annullamento dopo aver chiuso il montaggio.
 
 I test automatici attraversano l'IPC del worker e il banco usando una cartella
 temporanea e una chiave di prova ricevuta da stdin. Il test portabile simula il
 disco; `strumenti/prova-banco-temporaneo.py` usa invece hdiutil AES-256/APFS e
-ditto su macOS. Entrambi dichiarano simulata la salute del registro, lasciano
+ditto su macOS. Le fixture usano `TMPDIR` (o la directory temporanea di sistema),
+una HOME sintetica e puliscono soltanto la propria area riconosciuta.
+Entrambi dichiarano simulata la salute del registro, lasciano
 vuoti i riscontri kernel e disabilitano le CLI vendor. La shell misura davvero
 `open`/`fstat`. Verificano il contratto, la privacy e la gestione degli errori;
 non attestano i permessi TCC o il registro sul Desktop.

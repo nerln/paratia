@@ -106,13 +106,22 @@ The native app for macOS 13+ has **Cartelle**, **Registro**, **Etichette**,
 disk, choose its passphrase in the GUI, and open or close it there. Migration
 copies and verifies data before removing the source; an interrupted migration
 keeps recovery actions visible. Timed closure retries a busy mount without force.
+APFS destinations are checked through their physical stores to the whole disk;
+exFAT uses its parent whole disk. The destination must resolve to an external
+physical disk; internal disks and disk images are refused. Key verification
+checks an encrypted image without mounting it, independently of localized
+authentication messages. If the folder is busy, close apps using it and
+terminals whose current directory is inside it. **Forza chiusura…** requires
+explicit confirmation and can lose unsaved changes.
 
 In **Registro**, use **Sorveglia una cartella…** to choose any supported folder
 you own, including an unencrypted one. Remove watches, filter events by folder,
 file, process, agent and time, and export CSV. Configured watches and daemon
 acknowledgements are shown separately: saving a watch does not mean collection
 is active. Repeating a path keeps its ID and name; nonexistent folders and unknown
-removals are refused. The CLI offers the same operations:
+removals are refused. Even with `--nome X`, reuse returns the accepted `nome`
+and a message that the existing ID and name were preserved. The CLI offers the
+same operations:
 
 ```sh
 paratia registro sorveglia ~/Documenti/progetto
@@ -123,8 +132,10 @@ paratia registro smetti ~/Documenti/progetto
 ```
 
 `elenco` and `esporta` warn on stderr when collection is stopped or unhealthy,
-including empty results. An absolute `--file /a/b` matches that path and its
-descendants, excluding `/a/bc`; paths normalize slashes and NFC/NFD Unicode.
+including empty results. The CLI and worker query/CSV accept a folder ID or an
+exact configured absolute path, with slash, alias and NFC/NFD normalization.
+Unknown or ambiguous paths are errors. An absolute `--file /a/b` matches that
+path and its descendants, excluding `/a/bc`; paths normalize slashes and NFC/NFD Unicode.
 Relative text uses case-insensitive `casefold` matching. New log timestamps use
 colon-separated offsets; legacy offsets remain readable with Python 3.9.
 
@@ -141,6 +152,9 @@ Build locally with Apple Command Line Tools:
 python3 strumenti/build-app.py --render-fixtures
 open -n build/Paratia.app --args --launch-check
 ```
+
+The build bundles the CLI with the other nine Python modules and records its
+fixed source path in the manifest used by installed hooks.
 
 The app signs ad hoc and is not notarized. Keep the normal app in `/Applications`.
 Close all copies of Paratia and run this yourself in Terminal to prepare a
@@ -201,9 +215,14 @@ paratia lock
 ```
 
 `paratia status` also lists open protected folders and unresolved migrations.
-The gate directs you to `paratia cartella chiudi-tutte` for those folders and
-`paratia lock` for the main compartment; locking the latter leaves folder
-compartments open.
+While a compartment is open, the gate permits `paratia cartella chiudi <id>`,
+`paratia cartella chiudi-tutte`, `paratia cartella elenco`, `paratia lock`,
+`paratia status` and `paratia status --json`. Equivalent absolute invocations,
+including the absolute path to the `~/.local/bin/paratia` symlink and
+`python3 /absolute/path/paratia.py cartella chiudi-tutte`, must resolve to the
+genuine CLI bundled with the hook or the fixed source path in its manifest.
+A different file named `paratia.py` does not qualify. `paratia lock` closes the
+main compartment; use `cartella chiudi` or `chiudi-tutte` for folder compartments.
 
 Declaring a verb, so an agent can use a key it cannot read. Edit `verbi.json`
 inside the compartment while it is open:
@@ -355,7 +374,8 @@ shell metadata probes with simulated registry health; it asserts that keys do
 not enter JSON, logs, process arguments or environment. The Python 3.9 smoke
 uses actual worker queries and CSV exports in a temporary home, with simulated
 kernel health and disk images. A separate native macOS script uses hdiutil with
-temporary fixtures. These tests do not certify live
+temporary fixtures. Both scripts respect `TMPDIR` and keep their synthetic
+Desktop inside a temporary home. These tests do not certify live
 TCC permissions or kernel coverage. Counts and commands are recorded in the
 [verification report](docs/stato-2026-10.md).
 

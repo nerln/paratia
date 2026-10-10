@@ -175,7 +175,9 @@ paratia registro smetti ~/Documenti/progetto
 ```
 
 `--cartella` accetta un ID oppure il percorso assoluto esatto di una cartella
-configurata. Un percorso ambiguo richiede la scelta dell'ID. Sono disponibili
+configurata, con normalizzazione di slash, alias e Unicode NFC/NFD. Un percorso
+sconosciuto o associato a più ID produce un errore; nel secondo caso scegli
+l'ID dall'elenco. Sono disponibili
 anche `--file`, `--agente true|false|unknown` oppure il nome dell'agente
 (per esempio `--agente Codex`), `--da` e `--a`.
 
@@ -183,8 +185,10 @@ anche `--file`, `--agente true|false|unknown` oppure il nome dell'agente
 `~/.paratia/registro/sorveglianza.json`; non la spaccia per un compartimento.
 La cartella deve esistere ed essere di proprietà dell'utente. Ripetere la
 richiesta per lo stesso percorso normalizzato conserva l'ID e il nome esistenti e
-restituisce `riutilizzata: true`. `rimuovi_sorveglianza(id)` elimina la richiesta;
-un ID sconosciuto produce un errore.
+restituisce `riutilizzata: true`, anche se viene passato `--nome X`. La risposta
+include `nome` con il valore effettivo e il messaggio «Sorveglianza esistente
+riutilizzata: ID e nome conservati.». `rimuovi_sorveglianza(id)` elimina la
+richiesta; un ID sconosciuto produce un errore.
 
 `configurata: true` indica una richiesta salvata. `sorvegliata` e
 `raccolta_attiva` diventano vere soltanto con raccoglitore attivo e sano e ID
@@ -197,6 +201,14 @@ formato JSON o CSV e gli eventi già presenti restano consultabili.
 
 `query(filters)` restituisce le due sorgenti con filtri `folder`, `file`,
 `process`, `agent`, `since`, `until`; ogni riga mantiene i dettagli e la sorgente.
+Il filtro `folder` accetta un ID o un percorso assoluto esatto configurato in
+sorveglianza o fra le cartelle protette. `risolvi_cartella()` converte quel
+percorso nell'ID con gli stessi controlli usati dalla CLI; il worker applica
+questa risoluzione sia a `registro.query` sia a `registro.export_csv`.
+Percorsi sconosciuti o ambigui producono `ValueError`, anziché un risultato
+vuoto; la GUI riceve un errore e non crea il CSV. Gli ID consentono di consultare
+eventi storici anche dopo la rimozione della configurazione.
+
 Un filtro `file` assoluto seleziona quel percorso o i suoi discendenti:
 `/a/b` comprende `/a/b/x`, ma esclude `/a/bc/x`. Vengono normalizzati slash,
 alias di percorso e Unicode NFC/NFD. Un filtro non assoluto cerca liberamente
@@ -231,3 +243,6 @@ sorveglianza plaintext separata. La preparazione dell'installer viene controllat
 senza invocare il percorso privilegiato. La prova di fumo Python 3.9 usa eventi
 locali veri, query/CSV del worker e il banco in una home temporanea; salute kernel
 e immagini disco sono simulate, senza CLI degli agenti o Desktop personale.
+Questa prova e `strumenti/prova-banco-temporaneo.py` rispettano `TMPDIR` e
+accettano soltanto la propria fixture al suo interno; anche il Desktop sintetico
+rimane nella home temporanea.

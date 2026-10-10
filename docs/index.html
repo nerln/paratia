@@ -217,16 +217,23 @@ paratia finder</code></pre>
 <p>The native app for macOS 13+ brings protected folders, access history,
 labels, a four-phase test bank and settings into one window. Protect an existing
 folder on a physical external disk, choose its key in the app, and open or close it
-there. The app verifies a destination subfolder's actual volume before asking
-for the key; internal disks and disk images are refused. Migration verifies
+there. Before asking for the key, the app follows an APFS volume's physical
+stores or an exFAT volume's parent to the physical whole disk; internal disks
+and disk images are refused. A disconnected disk is reported before key entry,
+and reopening an open folder reports that its timer remains unchanged.
+Migration verifies
 the copy before removing the source and keeps recovery
-actions available after an interruption.</p>
+actions available after an interruption. A busy volume asks you to close the app
+or terminal using it. <strong>Forza chiusura…</strong> requires confirmation
+about unsaved changes; closing a temporary migration mount still requires recovery.</p>
 
 <p>Use <strong>Sorveglia una cartella…</strong> to watch a folder you own,
 including an unencrypted one. Review or remove watches, filter events by folder,
 file, process, agent and time, and export CSV. A saved watch is shown separately
 from its acknowledgement by an active daemon. Repeated requests reuse the ID
-and label; inactive collection produces a warning in CLI queries and exports.
+and label and report the retained name. CLI and worker queries and exports accept
+the same folder ID or exact configured path; an unknown path produces an error.
+Inactive collection produces a warning in CLI queries and exports.
 Absolute file filters match the exact path or its descendants, so
 <code>/a/b</code> excludes <code>/a/bc</code>.</p>
 
@@ -254,7 +261,13 @@ binary in a signed, root-protected app copy, keeping Python and eslogger as
 children. Enable <strong>/Applications/Paratia.app</strong> in Full Disk Access;
 remove and re-add that entry after every new ad hoc build and reinstall the
 registry after refreshing the bootstrap copy. Do not enable Python 3.9.
-The Giro 2 changes still require a new build and live TCC verification.</p>
+The supervisor built Giro 2; Giro 3 requires a new build and live TCC verification.</p>
+
+<p>While a compartment is open, the gate allows <code>paratia cartella chiudi &lt;id&gt;</code>,
+<code>paratia cartella chiudi-tutte</code>, <code>paratia cartella elenco</code>,
+<code>paratia lock</code>, <code>paratia status</code> and <code>paratia status --json</code>.
+Equivalent absolute paths and Python invocations must resolve to the trusted CLI;
+a different file named <code>paratia.py</code> is refused.</p>
 
 <p>Read the <a href="https://github.com/nerln/paratia/blob/master/docs/gui-mac.md">GUI guide</a>,
 <a href="https://github.com/nerln/paratia/blob/master/docs/registro-accessi.md">registry limits</a>

@@ -6,8 +6,11 @@ Da chiuso, il percorso originale è un punto di montaggio vuoto: i file stanno
 solo nell'immagine cifrata. Da aperto, sono leggibili dai processi dell'utente.
 
 La destinazione va scelta su un disco esterno fisico, anche in una sua
-sottocartella. Prima di chiedere la chiave, GUI e CLI verificano il volume
-effettivo del percorso; dischi interni e immagini disco, incluso un volume
+sottocartella. Prima di chiedere la chiave, GUI e CLI risalgono dal volume
+al disco intero: per APFS seguono gli store fisici e il loro disco padre;
+per exFAT e altri filesystem seguono direttamente il disco padre. Un volume
+senza `VirtualOrPhysical` o un contenitore APFS virtuale non causano un rifiuto
+se gli store appartengono a dischi esterni fisici. Dischi interni e immagini disco, incluso un volume
 con protocollo `Disk Image`, vengono rifiutati. Non sono ammessi percorsi
 sincronizzati con il cloud, destinazioni annidate nella fonte, collegamenti
 simbolici, hard link, file speciali o volumi montati dentro la fonte.
@@ -24,7 +27,12 @@ possono modificarla.
 
 Un errore lascia uno stato di migrazione incompleta con le informazioni per
 il recupero. Il gate rifiuta le sessioni anche quando resta una copia in chiaro
-da sistemare. Un volume occupato non viene smontato con la forza.
+da sistemare. Migrazione, timer e chiusura di sessione non smontano un volume
+occupato con la forza. La GUI offre **Forza chiusura…** per una cartella aperta
+o un montaggio temporaneo di una migrazione incompleta, soltanto dopo conferma
+esplicita del rischio di perdere modifiche non salvate. Chiudere il montaggio
+temporaneo non completa la migrazione e non elimina le copie in chiaro:
+restano necessari **Recupera la fonte** o **Annulla migrazione**.
 
 `annulla_migrazione` conserva l'immagine e toglie la registrazione soltanto
 quando la fonte è ancora integra. `recupera` richiede la chiave e un'immagine
@@ -46,7 +54,9 @@ non legge la chiave del disco per confrontarle.
 
 Una chiave sbagliata è distinta dagli altri errori disco: la GUI invita a
 reinserirla, il worker restituisce `wrong_key` e la CLI restituisce un errore
-JSON con `errore: "chiave_errata"`. Gli errori non riportano gli stream del
+JSON con `errore: "chiave_errata"`. Una verifica senza montaggio distingue la
+chiave prima dell'apertura; i testi italiano/inglese/spagnolo sono un ripiego.
+Gli errori non riportano gli stream del
 comando di sistema né la chiave.
 
 Ogni apertura avvia un timer da 1 a 1440 minuti. Il timer identifica quella
@@ -54,11 +64,14 @@ specifica apertura, quindi un timer vecchio non chiude una successiva
 riapertura. Una chiusura manuale riuscita invalida il token del timer, che
 controlla il registro ogni 0,25 secondi e termina senza segnali a PID.
 Se il volume è occupato, il timer resta attivo e ritenta la chiusura senza
-forzarla: il tempo impostato non è una garanzia di chiusura al secondo in presenza di documenti
+forzarla: chiudi l'app o il terminale aperto dentro e riprova. Il tempo impostato
+non è una garanzia di chiusura al secondo in presenza di documenti
 ancora aperti.
 
 Aprire una cartella già aperta lo segnala prima della richiesta della chiave e
-non avvia un secondo timer. Chiudere una cartella già chiusa restituisce il suo
+non avvia un secondo timer: anche `apri --minutes` precisa che i minuti e la
+scadenza già impostati restano invariati. Un disco scollegato viene segnalato
+prima di chiedere la chiave. Chiudere una cartella già chiusa restituisce il suo
 stato senza scrivere un evento duplicato.
 
 L'hook esistente continua a rifiutare ogni chiamata mentre un compartimento è

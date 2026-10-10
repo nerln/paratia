@@ -10,7 +10,9 @@ Lo stato delle verifiche è in [stato di ottobre 2026](stato-2026-10.md).
 
 Premi **Proteggi una cartella**, scegli la fonte e una destinazione sul disco
 esterno fisico, anche una sua sottocartella. Prima di mostrare il campo della
-chiave, Paratia individua il volume effettivo e verifica la destinazione;
+chiave, Paratia individua il volume effettivo e risale al disco fisico intero.
+Per APFS segue gli store fisici, anche se il contenitore è virtuale; per altri
+filesystem segue il disco padre. SSD APFS ed exFAT esterni sono accettati;
 dischi interni e immagini disco vengono rifiutati. Paratia copia e verifica i
 dati, prova la chiusura e la riapertura, poi rimuove l'originale. Chiudi prima
 i documenti che possono modificare la fonte.
@@ -19,11 +21,20 @@ Usa **Apri…**, **Mostra nel Finder**, **Chiudi** o **Chiudi tutte**; per una
 migrazione incompleta sono disponibili **Recupera la fonte** e **Annulla migrazione**.
 
 **Chiusura dopo N min** imposta da 1 a 1440 minuti. Se il montaggio è occupato,
-la chiusura ritenta senza forzarla. **Apri…** segnala una cartella già aperta
-prima di chiedere la chiave; **Chiudi** su una cartella già chiusa non aggiunge
+chiudi l'app o il terminale aperto dentro e riprova. **Forza chiusura…** apre
+una conferma con **Annulla** come prima scelta: forzare può perdere modifiche
+non salvate. Timer, hook e **Chiudi tutte** continuano senza forzare.
+Nelle migrazioni incomplete con montaggio temporaneo sono disponibili anche
+**Chiudi montaggi** e **Forza chiusura…**. Chiudere il montaggio lascia la
+migrazione da recuperare o annullare e può lasciare una copia in chiaro.
+**Apri…** segnala una cartella già aperta
+prima di chiedere la chiave e precisa che il timer e i minuti esistenti non
+cambiano. Un disco scollegato chiede di ricollegarlo, prima del campo chiave.
+**Chiudi** su una cartella già chiusa non aggiunge
 un evento al registro. Una chiusura manuale riuscita annulla anche il timer,
 che riconosce la cancellazione entro il successivo controllo, ogni 0,25 secondi.
-Una chiave sbagliata produce un messaggio specifico per reinserirla.
+Una chiave sbagliata produce un messaggio specifico per reinserirla, anche con
+messaggi hdiutil in italiano o spagnolo. La verifica della chiave non monta il volume.
 Nei campi protetti **Chiave del compartimento** e **Ripeti la chiave** servono
 almeno 12 byte UTF-8. La chiave passa al worker
 tramite stdin; non viene salvata in file, registro o portachiavi, né inserita

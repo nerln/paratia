@@ -21,7 +21,9 @@ and `registro esporta` accept --cartella (ID or exact configured path), --file,
 --processo, --agente true|false|unknown or an agent name, --da and --a. Configuration is not proof
 of collection: healthy daemon state and watched_ids acknowledgement are separate.
 The directory must exist; requesting the same normalized path reuses its ID
-and label. Removing an unknown ID fails. Query/CSV warn on stderr when collection
+and label and reports the retained name, including with --nome. Worker query/CSV
+folder filters use the same ID-or-exact-configured-path resolver as the CLI;
+unknown or ambiguous paths fail explicitly. Removing an unknown ID fails. Query/CSV warn on stderr when collection
 is inactive, including with empty results. Absolute --file filters match exactly
 or below a slash boundary with NFC/NFD normalization; relative filters are
 case-insensitive free searches. Local timestamps and legacy +0200 offsets work
@@ -43,8 +45,20 @@ Full Disk Access must name /Applications/Paratia.app, never Python 3.9.
 After every new ad hoc build, the human removes/re-adds that app entry and
 refreshes the bootstrap copy, then reinstalls the registry. Ownership changes
 preserve CDHash; signature identity and TCC propagation still need live checks.
-Do not alter TCC or supply administrator credentials. The Giro 2 native changes
-still await the supervisor's build and live verification.
+Do not alter TCC or supply administrator credentials. The supervisor built
+Giro 2; Giro 3 still awaits a build and live verification.
+
+Destination checks follow APFSPhysicalStores and ParentWholeDisk to the physical
+whole disk; exFAT follows ParentWholeDisk directly. Missing VirtualOrPhysical on
+the volume and a virtual APFS container are normal. Only external physical disks
+are accepted; disk images and internal disks are refused before key entry.
+An unavailable external disk is reported before asking for a key. Reopening an
+already open folder reports that its timer stays unchanged, even with --minutes.
+Wrong keys are checked without mounting using hdiutil isencrypted/imageinfo and
+reported independently of the diagnostic language. Busy volumes ask the human
+to close the app or terminal inside; the GUI's Forza chiusura… requires explicit
+confirmation about unsaved changes. Timers, hooks and close-all never force.
+Closing a temporary migration mount still leaves recovery necessary.
 
 Registry records contain metadata only. Paratia annotations and eslogger events
 retain separate sources. An open event does not prove bytes were read; failed
@@ -56,6 +70,7 @@ registry, acknowledged watches, a chosen external destination and a GUI key.
 CLI vendor probes require separate explicit consent and invoke no models.
 Temporary automated bank tests simulate registry health, disable vendor CLI
 probes and keep kernel matches empty; never present those results as live data.
+Their fixtures honor TMPDIR, use a synthetic home and clean only their own area.
 mdls is advisory because Spotlight may cache metadata or leave images unindexed;
 shell and both agent probes retain their required checks and open-phase kernel
 matches. The bank preserves an existing user watch.
@@ -80,10 +95,17 @@ user, including you. EVERY tool call is denied until it closes — an unrelated
 read of /etc/hosts is denied too, because the check is on mount state, not on
 paths.
 
-Do: run `paratia cartella chiudi-tutte` for protected folders and `paratia lock`
-for the core compartment. Both exact commands are allowed through, as is
-`paratia status --json`. Status lists protected folders that remain open even
-when the core compartment is closed; it reports uncertainty for unreadable state.
+Do: run `paratia cartella chiudi <id>` or `paratia cartella chiudi-tutte` for
+protected folders and `paratia lock` for the core compartment. The complete
+allowlist also includes `paratia cartella elenco`, `paratia status` and
+`paratia status --json`.
+Equivalent absolute paths, including the real ~/.local/bin/paratia symlink,
+and `python3 <absolute-path>/paratia.py` work only when they resolve to the
+trusted Paratia CLI. A namesake in another directory, a fake earlier in PATH,
+shell chaining or redirection is refused. The app bundles the CLI and seals its
+source identity in hooks/paratia-cli.json at build time. Status lists protected
+folders that remain open even when the core compartment is closed; it reports
+uncertainty for unreadable state.
 
 Do not: look for another way to proceed. There isn't one. Hunting for one is the
 behaviour this exists to stop, and the hook is deterministic — it is not a
@@ -248,7 +270,9 @@ Yours, inside a session:
 
     paratia status              core state and all open protected folders
     paratia lock                close the core compartment
+    paratia cartella chiudi <id> close one protected folder
     paratia cartella chiudi-tutte close protected folders
+    paratia cartella elenco      list protected folders
     paratia broker <verb>       use a secret without seeing it
     paratia attest              check the sealed policy files still match
     paratia esposizione         what a second account would and would not protect
