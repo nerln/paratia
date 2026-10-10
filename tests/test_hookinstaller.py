@@ -259,6 +259,42 @@ class InstallerTests(unittest.TestCase):
             with self.assertRaises(H.Rifiuto):
                 H._runtime("/usr/bin/python3")
 
+    def test_homebrew_runtime_and_plan_keep_stable_alias_across_updates(self):
+        brew = self.base / "brew"
+        version = brew / "Cellar" / "python@3.14" / "3.14.6" / "bin" / "python3.14"
+        version.parent.mkdir(parents=True)
+        version.write_text("synthetic interpreter; never executed")
+        version.chmod(0o700)
+        alias = brew / "bin" / "python3"
+        alias.parent.mkdir()
+        alias.symlink_to(version)
+        result = SimpleNamespace(returncode=0, stdout=b"3.14\n")
+        with mock.patch.object(H.subprocess, "run", return_value=result):
+            runtime = H._runtime(str(version))
+            self.assertEqual(runtime, alias)
+            commands = H._parameters(resource_root=self.resources, python_executable=str(version))
+        for harness in H.TARGETS:
+            argv = shlex.split(commands[harness]["PreToolUse"]["hooks"][0]["command"])
+            self.assertEqual(argv[0], str(alias))
+            self.assertNotIn("Cellar", argv[0])
+        next_version = brew / "Cellar" / "python@3.14" / "3.14.7" / "bin" / "python3.14"
+        next_version.parent.mkdir(parents=True)
+        next_version.write_text("updated synthetic interpreter; never executed")
+        next_version.chmod(0o700)
+        alias.unlink()
+        alias.symlink_to(next_version)
+        with mock.patch.object(H.subprocess, "run", return_value=result):
+            self.assertEqual(H._runtime(str(alias)), runtime)
+
+    def test_cellar_runtime_without_matching_stable_alias_is_refused(self):
+        version = self.base / "Cellar" / "python@3.14" / "3.14.6" / "bin" / "python3.14"
+        version.parent.mkdir(parents=True)
+        version.write_text("synthetic interpreter; never executed")
+        version.chmod(0o700)
+        with mock.patch.object(H.subprocess, "run", side_effect=AssertionError("Versioned Python was executed")):
+            with self.assertRaises(H.Rifiuto):
+                H._runtime(str(version))
+
 
 class CodexGateTests(unittest.TestCase):
     def setUp(self):

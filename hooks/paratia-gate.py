@@ -272,8 +272,9 @@ def main(*, codex: bool = False) -> int:
         nega(
             "A paratia compartment is mounted, so its plaintext is "
             f"readable by anything running as this user, including this session. Every "
-            f"tool call is refused until it is closed. Run `paratia lock` — that one is "
-            f"allowed — or close it from your own terminal, then carry on."
+            "tool call is refused until it is closed. Run `paratia cartella chiudi-tutte` "
+            "to close protected folders and `paratia lock` to close the main store. "
+            "Both commands are allowed; use `paratia status --json` to check, then carry on."
         )
         return 0
 

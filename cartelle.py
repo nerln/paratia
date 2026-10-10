@@ -45,6 +45,10 @@ class Rifiuto(Exception):
         self.cartella_id = cartella_id
 
 
+class ChiaveErrata(Rifiuto):
+    """hdiutil explicitly rejected the supplied passphrase."""
+
+
 def annota(evento: str, **metadati) -> None:
     """Append operator operations to the same hash-chain format as kernel events."""
     import importlib.util
@@ -85,6 +89,11 @@ def _corri(argv: list[str], passphrase: bytes | None = None):
 def _comando(argv: list[str], passphrase: bytes | None = None):
     r = _corri(argv, passphrase)
     if r.returncode:
+        if (argv[:2] == [HDIUTIL, "attach"] and passphrase is not None
+                and any(messaggio in r.stderr.lower() for messaggio in (
+                    b"authentication error", b"incorrect password", b"wrong password",
+                    b"password incorrect"))):
+            raise ChiaveErrata("La chiave del compartimento non è corretta. Reinseriscila.")
         # Never forward a subprocess stream: even an error must not echo a key.
         raise Rifiuto(f"Operazione disco non riuscita ({Path(argv[0]).name} {argv[1]}, codice {r.returncode}).")
     return r
@@ -127,14 +136,61 @@ def _cloud(p: Path) -> bool:
     ))
 
 
+def _monte_statfs(dove: Path) -> Path:
+    """Get the kernel's mount name, including APFS Data-volume firmlinks."""
+    class Statfs(ctypes.Structure):
+        # struct statfs from the macOS SDK's 64-bit sys/mount.h.
+        _fields_ = [("f_bsize", ctypes.c_uint32), ("f_iosize", ctypes.c_int32),
+                    *[(nome, ctypes.c_uint64) for nome in (
+                        "f_blocks", "f_bfree", "f_bavail", "f_files", "f_ffree")],
+                    ("f_fsid", ctypes.c_int32 * 2), ("f_owner", ctypes.c_uint32),
+                    ("f_type", ctypes.c_uint32), ("f_flags", ctypes.c_uint32),
+                    ("f_fssubtype", ctypes.c_uint32), ("f_fstypename", ctypes.c_char * 16),
+                    ("f_mntonname", ctypes.c_char * 1024),
+                    ("f_mntfromname", ctypes.c_char * 1024),
+                    ("f_flags_ext", ctypes.c_uint32), ("f_reserved", ctypes.c_uint32 * 7)]
+    try:
+        # arm64 has only the 64-bit inode ABI under the unsuffixed symbol;
+        # Intel also exports an older struct layout, so select its INODE64 ABI.
+        simbolo = "statfs" if os.uname().machine.startswith("arm64") else "statfs$INODE64"
+        funzione = getattr(ctypes.CDLL(None, use_errno=True), simbolo)
+        funzione.argtypes = [ctypes.c_char_p, ctypes.POINTER(Statfs)]
+        funzione.restype = ctypes.c_int
+        dati = Statfs()
+        if funzione(os.fsencode(dove), ctypes.byref(dati)):
+            raise OSError(ctypes.get_errno(), "statfs")
+        return _percorso(os.fsdecode(dati.f_mntonname))
+    except (AttributeError, OSError, ValueError) as e:
+        raise Rifiuto("Impossibile individuare il volume della destinazione.") from e
+
+
+def _punto_montaggio(dove: Path) -> Path:
+    try:
+        dispositivo = dove.stat().st_dev
+        monte = dove
+        while monte.parent != monte and monte.parent.stat().st_dev == dispositivo:
+            monte = monte.parent
+        if sys.platform == "darwin":
+            # st_dev alone stops at /Users on a firmlink, although diskutil
+            # needs the actual /System/Volumes/Data mount name.
+            monte = _monte_statfs(dove)
+            if not monte.is_dir() or monte.stat().st_dev != dispositivo:
+                raise Rifiuto("Il volume della destinazione non è stato confermato.")
+        return monte
+    except OSError as e:
+        raise Rifiuto("Impossibile individuare il volume della destinazione.") from e
+
+
 def _esterno(dove: Path) -> None:
-    r = _comando([DISKUTIL, "info", "-plist", str(dove)])
+    r = _comando([DISKUTIL, "info", "-plist", str(_punto_montaggio(dove))])
     try:
         dati = plistlib.loads(r.stdout)
     except (ValueError, plistlib.InvalidFileException) as e:
         raise Rifiuto("Impossibile verificare il disco scelto.") from e
-    if dati.get("Internal") is not False or dati.get("VirtualOrPhysical") == "Virtual":
-        raise Rifiuto("Scegli una cartella su un disco esterno fisico.")
+    if (not isinstance(dati, dict) or dati.get("Internal") is not False
+            or dati.get("VirtualOrPhysical") != "Physical"
+            or str(dati.get("BusProtocol", "")).lower().replace(" ", "") == "diskimage"):
+        raise Rifiuto("Scegli una cartella su un disco esterno fisico; le immagini disco non sono ammesse.")
 
 
 def _carica() -> dict:
@@ -198,6 +254,7 @@ def _montato(p: Path) -> bool:
 
 def _pubblica(voce: dict) -> dict:
     v = dict(voce)
+    v.pop("timer", None)
     if v["stato"] not in ("migrazione", "migrazione-incompleta", "annullata", "recuperata"):
         v["stato"] = "aperta" if _montato(Path(v["montaggio"])) else "chiusa"
     return v
@@ -453,8 +510,8 @@ def _origine_libera(origine: Path, r: dict) -> None:
         raise Rifiuto("La fonte è già un punto di montaggio.")
 
 
-def proteggi(origine: str | Path, dove: str | Path, passphrase: bytes, minutes: int = 15) -> dict:
-    _chiave(passphrase)
+def prepara_protezione(origine: str | Path, dove: str | Path, minutes: int = 15) -> dict:
+    """Check the operator's choices before any passphrase is requested."""
     minutes = _minuti(minutes)
     fonte, disco = _percorso(origine), _percorso(dove)
     if not fonte.is_dir() or not disco.is_dir():
@@ -464,6 +521,15 @@ def proteggi(origine: str | Path, dove: str | Path, passphrase: bytes, minutes: 
     if _dentro(disco, fonte) or _dentro(fonte, disco):
         raise Rifiuto("Fonte e destinazione non possono essere annidate.")
     _esterno(disco)
+    _origine_libera(fonte, _carica())
+    return {"pronto": True, "origine": str(fonte), "dove": str(disco), "minutes": minutes}
+
+
+def proteggi(origine: str | Path, dove: str | Path, passphrase: bytes, minutes: int = 15) -> dict:
+    preparazione = prepara_protezione(origine, dove, minutes)
+    _chiave(passphrase)
+    minutes = preparazione["minutes"]
+    fonte, disco = Path(preparazione["origine"]), Path(preparazione["dove"])
 
     with _registro() as r:
         _origine_libera(fonte, r)
@@ -561,18 +627,39 @@ def _avvia_timer(identificatore: str, generation: str, secondi: int) -> None:
         processo.stdout.close()
 
 
+def _prepara_apertura(v: dict, minutes: int) -> dict:
+    if v["stato"] in ("migrazione", "migrazione-incompleta") or v.get("plaintext_residuo"):
+        raise Rifiuto("La migrazione richiede recupero prima dell'apertura.")
+    monte = _percorso(v["montaggio"])
+    aperta = _montato(monte)
+    if not aperta:
+        bundle = _percorso(v["bundle"])
+        if not monte.is_dir() or not bundle.is_dir():
+            raise Rifiuto("Il disco esterno o il punto di montaggio non sono disponibili.")
+        if any(monte.iterdir()):
+            raise Rifiuto("Il punto di montaggio deve essere vuoto e non montato.")
+    risultato = {"pronto": not aperta, "gia_aperta": aperta,
+                 "cartella": _pubblica(v), "minutes": minutes}
+    if aperta:
+        risultato["messaggio"] = "La cartella è già aperta."
+    return risultato
+
+
+def prepara_apertura(identificatore: str, minutes: int = 15) -> dict:
+    """Read mount metadata before the UI or CLI asks for a passphrase."""
+    return _prepara_apertura(_voce(_carica(), identificatore), _minuti(minutes))
+
+
 def apri(identificatore: str, passphrase: bytes, minutes: int = 15) -> dict:
-    _chiave(passphrase)
     minutes = _minuti(minutes)
     with _registro() as r:
         v = _voce(r, identificatore)
-        if v["stato"] in ("migrazione", "migrazione-incompleta") or v.get("plaintext_residuo"):
-            raise Rifiuto("La migrazione richiede recupero prima dell'apertura.")
+        preparazione = _prepara_apertura(v, minutes)
+        if preparazione["gia_aperta"]:
+            return {**preparazione["cartella"], "gia_aperta": True,
+                    "messaggio": preparazione["messaggio"]}
+        _chiave(passphrase)
         monte, bundle = _percorso(v["montaggio"]), _percorso(v["bundle"])
-        if not monte.is_dir() or not bundle.is_dir():
-            raise Rifiuto("Il disco esterno o il punto di montaggio non sono disponibili.")
-        if _montato(monte):
-            raise Rifiuto("La cartella è già aperta.")
         try:
             _attacca(bundle, monte, passphrase)
         except Rifiuto:
@@ -580,7 +667,8 @@ def apri(identificatore: str, passphrase: bytes, minutes: int = 15) -> dict:
                    percorso=str(monte))
             raise
         v.update(stato="aperta", minutes=minutes, generation=uuid.uuid4().hex,
-                 scadenza=time.time() + minutes * 60)
+                 scadenza=time.time() + minutes * 60,
+                 timer={"owner": os.getuid(), "id": uuid.uuid4().hex})
         try:
             _salva(r)
             _avvia_timer(identificatore, v["generation"], minutes * 60)
@@ -588,6 +676,7 @@ def apri(identificatore: str, passphrase: bytes, minutes: int = 15) -> dict:
             try:
                 _stacca(monte)
                 v.update(stato="chiusa", generation=uuid.uuid4().hex, scadenza=None)
+                v.pop("timer", None)
                 _salva(r)
             except Rifiuto:
                 pass
@@ -596,6 +685,11 @@ def apri(identificatore: str, passphrase: bytes, minutes: int = 15) -> dict:
 
 
 def _chiudi(r: dict, v: dict) -> dict:
+    stato_precedente = v["stato"]
+    montaggi = [Path(v["montaggio"])]
+    if v.get("montaggio_temporaneo"):
+        montaggi.append(Path(v["montaggio_temporaneo"]))
+    era_aperta = any(_montato(p) for p in montaggi)
     try:
         _stacca(Path(v["montaggio"]))
     except Rifiuto:
@@ -607,9 +701,16 @@ def _chiudi(r: dict, v: dict) -> dict:
         _stacca(Path(v["montaggio_temporaneo"]))
     if v["stato"] not in ("migrazione", "migrazione-incompleta"):
         v["stato"] = "chiusa"
-    v.update(generation=uuid.uuid4().hex, scadenza=None)
-    _salva(r)
-    return _esito_registrato(v, "cartella-chiusa", id=v["id"])
+    # A successful detach invalidates the sleeping child without signals or
+    # PIDs. A busy detach returns earlier and retains its retrying timer.
+    if (era_aperta or v.get("timer") or v.get("scadenza") is not None
+            or v["stato"] != stato_precedente):
+        v.update(generation=uuid.uuid4().hex, scadenza=None)
+        v.pop("timer", None)
+        _salva(r)
+    if era_aperta:
+        return _esito_registrato(v, "cartella-chiusa", id=v["id"])
+    return {**_pubblica(v), "gia_chiusa": True, "messaggio": "La cartella è già chiusa."}
 
 
 def chiudi(identificatore: str) -> dict:
@@ -723,28 +824,57 @@ def recupera(identificatore: str, passphrase: bytes) -> dict:
                 pass
 
 
+def _identita_timer(v: dict) -> tuple[int, str] | None:
+    timer = v.get("timer")
+    if (not isinstance(timer, dict) or type(timer.get("owner")) is not int
+            or timer["owner"] != os.getuid() or not isinstance(timer.get("id"), str)
+            or len(timer["id"]) != 32 or any(c not in "0123456789abcdef" for c in timer["id"])):
+        return None
+    return timer["owner"], timer["id"]
+
+
+def _timer_corrente(v: dict | None, generation: str, identita: tuple[int, str]) -> bool:
+    return bool(v and v["generation"] == generation and _identita_timer(v) == identita
+                and _montato(Path(v["montaggio"])))
+
+
+def _attendi_timer(identificatore: str, generation: str, identita: tuple[int, str], secondi: int) -> bool:
+    """Return false as soon as a manual close invalidates this timer's token."""
+    scadenza = time.monotonic() + secondi
+    while True:
+        if not _timer_corrente(_carica()["cartelle"].get(identificatore), generation, identita):
+            return False
+        residuo = scadenza - time.monotonic()
+        if residuo <= 0:
+            return True
+        time.sleep(min(0.25, residuo))
+
+
 def _timer(identificatore: str, generation: str, secondi: int) -> int:
     if secondi < 0 or secondi > 86400:
         return 2
     # The opening process holds the flock while it waits for readiness. The
     # registry uses atomic replacement, so this initial read needs no lock.
     iniziale = _carica()["cartelle"].get(identificatore)
-    if not iniziale or iniziale["generation"] != generation or not _montato(Path(iniziale["montaggio"])):
+    identita = _identita_timer(iniziale) if iniziale else None
+    if identita is None or not _timer_corrente(iniziale, generation, identita):
         return 0
     sys.stdout.write("ready\n")
     sys.stdout.flush()
-    time.sleep(secondi)
+    if not _attendi_timer(identificatore, generation, identita, secondi):
+        return 0
     while True:
         with _registro() as r:
             v = r["cartelle"].get(identificatore)
-            if not v or v["generation"] != generation or not _montato(Path(v["montaggio"])):
+            if not _timer_corrente(v, generation, identita):
                 return 0
             try:
                 _chiudi(r, v)
                 return 0
             except Rifiuto:
                 pass  # A busy image stays open; retry without force-detach.
-        time.sleep(5)
+        if not _attendi_timer(identificatore, generation, identita, 5):
+            return 0
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -98,6 +98,9 @@ def fixture(base, key, configure_disks=None, mock_mdls=None):
         worker = _load("banco_e2e_worker", ROOT / "gui_worker.py")
         bank = _load("banco_e2e_backend", ROOT / "banco.py")
         folders, registry = bank.C, bank.R
+        # Both local rows and the kernel source stay inside the fixture. Query
+        # is the real implementation, so Python 3.9 date parsing is exercised.
+        registry.SYSTEM = base / "kernel-fixture"
 
         def only_fixture_external(path):
             if Path(path) != disk:
@@ -130,7 +133,8 @@ def fixture(base, key, configure_disks=None, mock_mdls=None):
             return {"running": True, "healthy": True, "local_chain_ok": True, "watched_ids": identifiers,
                     "fixture": "Registro simulato; nessuna raccolta kernel"}
 
-        bank.R = SimpleNamespace(stato=simulated_status, query=lambda filters: [],
+        registry.stato = simulated_status
+        bank.R = SimpleNamespace(stato=simulated_status, query=registry.query,
                                  sorveglia=registry.sorveglia, rimuovi_sorveglianza=registry.rimuovi_sorveglianza,
                                  annota=registry.annota)
         if mock_mdls is not None:

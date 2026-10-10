@@ -114,16 +114,34 @@ final class AppModel: ObservableObject {
     }
 
     func protectFolder() {
+        guard !fixtures, busy == nil else { return }
         guard let source = chooseDirectory(title: "Scegli la cartella da proteggere"),
               let destination = chooseDirectory(title: "Scegli la destinazione sul disco esterno") else { return }
-        keyRequest = KeyRequest(action: "cartelle.proteggi", title: "Proteggi \(URL(fileURLWithPath: source).lastPathComponent)",
-                                parameters: ["origine": source, "dove": destination, "minutes": minutes], confirm: true)
+        perform("Controllo della cartella e del disco…") {
+            _ = try await self.worker.request("cartelle.prepara_protezione", parameters: ["origine": source, "dove": destination, "minutes": self.minutes])
+            self.keyRequest = KeyRequest(action: "cartelle.proteggi", title: "Proteggi \(URL(fileURLWithPath: source).lastPathComponent)",
+                                        parameters: ["origine": source, "dove": destination, "minutes": self.minutes], confirm: true)
+        }
     }
 
     func askKey(_ folder: FolderItem, recovery: Bool = false) {
-        keyRequest = KeyRequest(action: recovery ? "cartelle.recupera" : "cartelle.apri",
-                                title: recovery ? "Recupera \(folder.name)" : "Apri \(folder.name)",
-                                parameters: recovery ? ["id": folder.id] : ["id": folder.id, "minutes": minutes], confirm: false)
+        guard !fixtures, busy == nil else { return }
+        if recovery {
+            keyRequest = KeyRequest(action: "cartelle.recupera", title: "Recupera \(folder.name)",
+                                    parameters: ["id": folder.id], confirm: false)
+            return
+        }
+        perform("Controllo dello stato della cartella…") {
+            let ready = try await self.worker.request("cartelle.prepara_apertura", parameters: ["id": folder.id, "minutes": self.minutes]) as? Record ?? [:]
+            if ready.flag("gia_aperta") {
+                self.notice = "La cartella è già aperta. Nessuna chiave necessaria."
+                try await self.refresh()
+                return
+            }
+            guard ready.flag("pronto") else { throw AppError(message: "La cartella non è pronta per l'apertura. Aggiorna lo stato e riprova.") }
+            self.keyRequest = KeyRequest(action: "cartelle.apri", title: "Apri \(folder.name)",
+                                        parameters: ["id": folder.id, "minutes": self.minutes], confirm: false)
+        }
     }
 
     func submitKey(_ request: KeyRequest, key: Data) {
@@ -254,12 +272,19 @@ final class AppModel: ObservableObject {
     }
 
     func runBank() {
+        guard !fixtures, busy == nil else { return }
         guard registry.flag("running"), registry.flag("healthy") else {
             error = "Il banco richiede un registro kernel attivo e sano. Completa prima le autorizzazioni nelle Impostazioni."; return
         }
         guard !bankDestination.isEmpty else { error = "Scegli una destinazione sul disco esterno."; return }
-        keyRequest = KeyRequest(action: "banco.run", title: "Avvia il banco di prova",
-                                parameters: ["dove": bankDestination, "minutes": minutes, "agenti_reali": realAgents], confirm: true)
+        perform("Controllo del disco e delle condizioni del banco…") {
+            self.bankPreview = try await self.worker.request("banco.anteprima", parameters: ["dove": self.bankDestination]) as? Record ?? [:]
+            guard !self.bankPreview.flag("richiede_autorizzazione") else {
+                throw AppError(message: "Completa le autorizzazioni del registro e del Desktop prima di inserire la chiave.")
+            }
+            self.keyRequest = KeyRequest(action: "banco.run", title: "Avvia il banco di prova",
+                                        parameters: ["dove": self.bankDestination, "minutes": self.minutes, "agenti_reali": self.realAgents], confirm: true)
+        }
     }
 
     func installHooks() {
@@ -302,15 +327,16 @@ final class AppModel: ObservableObject {
 
     func installRegistry() {
         perform("Preparazione dell'installazione…") {
+            try NativeInstall.validateBootstrap(bundle: URL(fileURLWithPath: Bundle.main.bundlePath, isDirectory: true))
             let plan = try await self.worker.request("registro.install_plan") as? Record ?? [:]
             let alert = NSAlert()
             alert.messageText = "Installare il registro degli accessi?"
-            alert.informativeText = "macOS chiederà l'autorizzazione amministratore per installare una copia firmata e protetta del servizio Paratia. La password viene gestita da macOS. Dopo l'installazione concedi Accesso completo al disco a /Applications/Paratia.app; con firma ad hoc rimuovi e aggiungi di nuovo l'app dopo ogni nuova build. Python non va autorizzato."
+            alert.informativeText = "L'installazione parte da questa copia di bootstrap protetta e crea una copia separata per il servizio Paratia. macOS gestisce la password amministratore. Dopo l'installazione chiudi questa copia e riapri /Applications/Paratia.app. Abilita quell'app in Accesso completo al disco; dopo ogni nuova build ad hoc rimuovi e aggiungi di nuovo la voce. Python non va autorizzato."
             alert.addButton(withTitle: "Autorizza con macOS"); alert.addButton(withTitle: "Annulla")
             guard alert.runModal() == .alertFirstButtonReturn else { return }
             let result = try await NativeInstall.execute(plan: plan)
             guard result.flag("installed") else { throw AppError(message: "L'installazione non è stata confermata. Riprova dalle Impostazioni.") }
-            self.warning = "Registro installato. In Accesso completo al disco abilita /Applications/Paratia.app; dopo questa nuova build rimuovi e aggiungi di nuovo l'app. Python non va autorizzato. Premi Aggiorna per verificare il servizio."
+            self.warning = "Registro installato. Chiudi la copia di bootstrap e riapri /Applications/Paratia.app. In Accesso completo al disco abilita quell'app; dopo questa nuova build rimuovi e aggiungi di nuovo la voce. Python non va autorizzato. Premi Aggiorna nell'app normale per verificare il servizio."
             try await self.refresh()
         }
     }

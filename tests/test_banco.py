@@ -197,6 +197,26 @@ def test_fresh_ack_precedes_files_and_all_phases_close_with_private_key(bank, mo
     assert all(r["errno"] == errno.ENOENT for r in rows if r["fase"] in ("chiusa", "richiusa"))
 
 
+def test_reused_user_watch_is_acknowledged_and_survives_bank_cleanup(bank, monkeypatch):
+    b = bank.b
+    existing = "user-owned-watch"
+    bank.real_r.sorveglia(existing, bank.source, "Sorveglianza scelta dalla persona")
+    bank.watches[existing] = str(bank.source)
+
+    def watch(identifier, path, name):
+        result = bank.real_r.sorveglia(identifier, path, name)
+        bank.watches[result["id"]] = str(path)
+        return result
+
+    monkeypatch.setattr(b.R, "sorveglia", watch)
+    result = b.esegui(bank.disk, KEY)
+    assert result["stato"] == "completo" and result["stato_finale"] == "chiusa"
+    assert bank.watches == {existing: str(bank.source)}
+    assert [row["id"] for row in bank.real_r.elenco_sorveglianza()] == [existing]
+    assert bank.real_r.elenco_sorveglianza()[0]["nome"] == "Sorveglianza scelta dalla persona"
+    assert ("unwatch", existing) not in bank.events
+
+
 def test_handshake_failure_precedes_fixture_creation_and_cleans_watch(bank, monkeypatch):
     b = bank.b
     monkeypatch.setattr(b, "_attendi_sorveglianza", lambda _: (_ for _ in ()).throw(b.Rifiuto("nessun ack")))
@@ -311,6 +331,31 @@ def test_failed_measured_probe_keeps_kernel_evidence_when_available(bank, monkey
     assert all(r["riscontri_kernel"][0]["evento"] == "lookup" for r in closed)
     # ES metadata does not acquire an errno merely because our probe failed.
     assert all("errno" not in r["riscontri_kernel"][0] for r in closed)
+
+
+def test_unindexed_mdls_is_visible_but_does_not_fail_other_confirmed_probes(bank, monkeypatch):
+    b = bank.b
+    original = b._probe
+
+    def probe(*args):
+        row = original(*args)
+        if row["attore"] == "mdls":
+            row.update(riuscito=False, rc=1, errno=None)
+            bank.kernel[:] = []
+        return row
+
+    monkeypatch.setattr(b, "_probe", probe)
+    result = b.esegui(bank.disk, KEY)
+    assert result["stato"] == "completo" and all(p["ok"] for p in result["fasi"])
+    for phase in result["fasi"]:
+        row = next(r for r in phase["prove"] if r["attore"] == "mdls")
+        assert row["riuscito"] is False and row["rc"] == 1 and row["errno"] is None
+        assert row["obbligatoria"] is False and row["riscontri_kernel"] == []
+        assert "informativa" in row["nota"]
+        required = [r for r in phase["prove"] if r["obbligatoria"]]
+        assert len(required) == 3 and all(r["esito_atteso"] and r["copertura_verificata"] for r in required)
+    exported = list(csv.DictReader(io.StringIO(b.export_csv())))
+    assert all(row["obbligatoria"] == "False" for row in exported if row["attore"] == "mdls")
 
 
 def test_unmeasured_agent_never_becomes_a_successful_bank_phase(bank, monkeypatch):

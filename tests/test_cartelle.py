@@ -11,6 +11,7 @@ import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -55,7 +56,7 @@ class Dischi:
         elif verbo == "attach":
             bundle, monte = Path(argv[2]), Path(argv[argv.index("-mountpoint") + 1])
             if self.chiavi.get(str(bundle)) != passphrase:
-                return subprocess.CompletedProcess(argv, 1, KEY, KEY)
+                return subprocess.CompletedProcess(argv, 1, KEY, b"Authentication error: " + KEY)
             storage = bundle / "storage"
             self.C._copia_metadati(storage, monte)
             for figlio in storage.iterdir():
@@ -220,8 +221,9 @@ def test_nomedir_di_sistema_presente_nella_fonte_viene_verificato(C, D, albero):
 def test_apertura_chiave_errata_e_busy_non_forza(C, D, albero):
     fonte, disco = albero
     v = C.proteggi(fonte, disco, KEY)
-    with pytest.raises(C.Rifiuto):
+    with pytest.raises(C.ChiaveErrata) as errore:
         C.apri(v["id"], b"wrong-fixture-key")
+    assert KEY.decode() not in str(errore.value) and "wrong-fixture-key" not in str(errore.value)
     assert not D.montati and list(fonte.iterdir()) == []
     aperta = C.apri(v["id"], KEY, minutes=7)
     assert aperta["stato"] == "aperta" and D.timer[-1][2] == 420
@@ -253,7 +255,7 @@ def test_timer_chiude_e_retry_busy(C, D, albero, monkeypatch, capsys):
     aperta = C.apri(v["id"], KEY)
     D.fallisce = ("detach", D.conta["detach"] + 1)
     pause = []
-    monkeypatch.setattr(C.time, "sleep", lambda secondi: pause.append(secondi))
+    monkeypatch.setattr(C, "_attendi_timer", lambda _id, _gen, _token, secondi: pause.append(secondi) or True)
     assert C._timer(v["id"], aperta["generation"], 0) == 0
     assert pause == [0, 5]
     assert capsys.readouterr().out == "ready\n"
@@ -428,3 +430,230 @@ def test_migrazione_nativa_fixture_temporanea(C, albero, monkeypatch):
         pytest.fail("Native migration failed: " + type(e).__name__, pytrace=False)
     finally:
         C.chiudi_tutte()
+
+
+@pytest.mark.parametrize("caso", ["sottocartella", "radice", "interno", "immagine"])
+def test_diskutil_interroga_il_mount_e_rifiuta_interno_e_immagine(C, tmp_path, monkeypatch, caso):
+    radice = tmp_path / "SSD"
+    figlia = radice / "backup" / "paratia"
+    figlia.mkdir(parents=True)
+    dove = radice if caso == "radice" else figlia
+    chiamate = []
+    vero_stat = Path.stat
+
+    def volume_stat(p, *args, **kwargs):
+        s = vero_stat(p, *args, **kwargs)
+        return SimpleNamespace(st_dev=101 if p == radice or radice in p.parents else 202,
+                               st_mode=s.st_mode)
+
+    def diskutil(argv, passphrase=None):
+        chiamate.append(argv)
+        assert argv == [C.DISKUTIL, "info", "-plist", str(radice)]
+        assert passphrase is None
+        return subprocess.CompletedProcess(argv, 0, plistlib.dumps({
+            "Internal": caso == "interno", "VirtualOrPhysical": "Physical",
+            "BusProtocol": "Disk Image" if caso == "immagine" else "USB",
+        }), b"")
+
+    with monkeypatch.context() as m:
+        m.setattr(Path, "stat", volume_stat)
+        m.setattr(C.sys, "platform", "fixture")
+        m.setattr(C, "_corri", diskutil)
+        if caso in ("interno", "immagine"):
+            with pytest.raises(C.Rifiuto, match="immagini disco"):
+                C._esterno(dove)
+        else:
+            C._esterno(dove)
+    assert len(chiamate) == 1
+
+
+def test_firmlink_usa_il_mount_statfs_anziche_users(C, tmp_path, monkeypatch):
+    alias = tmp_path / "Users"
+    dove = alias / "operatore" / "cartella"
+    monte = tmp_path / "System" / "Volumes" / "Data"
+    dove.mkdir(parents=True)
+    monte.mkdir(parents=True)
+    vero_stat = Path.stat
+
+    def volume_stat(p, *args, **kwargs):
+        s = vero_stat(p, *args, **kwargs)
+        stesso_volume = any(p == base or base in p.parents for base in (alias, monte))
+        return SimpleNamespace(st_dev=101 if stesso_volume else 202, st_mode=s.st_mode)
+
+    with monkeypatch.context() as m:
+        m.setattr(Path, "stat", volume_stat)
+        m.setattr(C.sys, "platform", "darwin")
+        m.setattr(C, "_monte_statfs", lambda p: monte if p == dove else pytest.fail("unexpected path"))
+        assert C._punto_montaggio(dove) == monte
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="native read-only statfs")
+def test_statfs_nativo_restituisce_il_volume_effettivo(C, tmp_path):
+    monte = C._monte_statfs(tmp_path)
+    assert monte.is_dir() and monte.stat().st_dev == tmp_path.stat().st_dev
+
+
+def test_preflight_protezione_non_chiede_chiave_ne_crea_registro(C, D, albero):
+    preparazione = C.prepara_protezione(*albero, minutes=7)
+    assert preparazione == {"pronto": True, "origine": str(albero[0]),
+                             "dove": str(albero[1]), "minutes": 7}
+    assert not C.CASA.exists() and D.conta["create"] == 0
+    assert all(key is None for _, key in D.chiamate)
+    D.interno = True
+    with pytest.raises(C.Rifiuto, match="esterno"):
+        C.proteggi(*albero, b"")
+    assert not C.CASA.exists() and D.conta["create"] == 0
+
+
+def test_gia_aperta_precede_chiave_e_non_duplica_timer_o_eventi(C, D, albero):
+    v = C.proteggi(*albero, KEY)
+    aperta = C.apri(v["id"], KEY)
+    registry = C.ARCHIVIO.read_bytes()
+    log = (C.CASA / "registro" / "catena.jsonl").read_bytes()
+    assert C.prepara_apertura(v["id"])["gia_aperta"] is True
+    assert C.apri(v["id"], None)["gia_aperta"] is True
+    assert len(D.timer) == 1 and C.ARCHIVIO.read_bytes() == registry
+    assert (C.CASA / "registro" / "catena.jsonl").read_bytes() == log
+    assert C.elenco()[0]["generation"] == aperta["generation"]
+    C.chiudi(v["id"])
+
+
+def test_gia_chiusa_non_duplica_eventi_ne_riscrive_registro(C, D, albero):
+    v = C.proteggi(*albero, KEY)
+    C.apri(v["id"], KEY)
+    assert C.chiudi(v["id"])["stato"] == "chiusa"
+    registry = C.ARCHIVIO.read_bytes()
+    log = (C.CASA / "registro" / "catena.jsonl").read_bytes()
+    assert C.chiudi(v["id"])["gia_chiusa"] is True
+    assert C.chiudi_tutte()[0]["gia_chiusa"] is True
+    assert C.ARCHIVIO.read_bytes() == registry
+    assert (C.CASA / "registro" / "catena.jsonl").read_bytes() == log
+
+
+def test_errore_disco_diverso_da_chiave_errata(C, D, albero):
+    v = C.proteggi(*albero, KEY)
+    D.fallisce = ("attach", D.conta["attach"] + 1)
+    with pytest.raises(C.Rifiuto) as errore:
+        C.apri(v["id"], KEY)
+    assert not isinstance(errore.value, C.ChiaveErrata)
+    assert KEY.decode() not in str(errore.value)
+
+
+def test_attesa_timer_ricontrolla_token_dopo_025_secondi(C, D, albero, monkeypatch):
+    v = C.proteggi(*albero, KEY)
+    aperta = C.apri(v["id"], KEY)
+    identita = C._identita_timer(C._carica()["cartelle"][v["id"]])
+    pause = []
+    clock = [0.0]
+
+    def sleep(secondi):
+        pause.append(secondi)
+        clock[0] += secondi
+        C.chiudi(v["id"])
+
+    monkeypatch.setattr(C.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(C.time, "sleep", sleep)
+    assert not C._attendi_timer(v["id"], aperta["generation"], identita, 3600)
+    assert pause == [0.25]
+    assert "timer" not in C._carica()["cartelle"][v["id"]]
+
+
+@pytest.mark.parametrize("modifica", ["owner", "id"])
+def test_timer_non_agisce_con_identita_diversa(C, D, albero, monkeypatch, modifica):
+    v = C.proteggi(*albero, KEY)
+    aperta = C.apri(v["id"], KEY)
+    identita = C._identita_timer(C._carica()["cartelle"][v["id"]])
+    with C._registro() as r:
+        timer = r["cartelle"][v["id"]]["timer"]
+        timer[modifica] = os.getuid() + 1 if modifica == "owner" else "0" * 32
+        C._salva(r)
+    monkeypatch.setattr(C.time, "sleep", lambda _: pytest.fail("invalidated timer should not sleep"))
+    assert not C._attendi_timer(v["id"], aperta["generation"], identita, 3600)
+    assert C.elenco()[0]["stato"] == "aperta"
+    C.chiudi(v["id"])
+
+
+def test_chiusura_manuale_termina_figlio_timer_senza_segnali(C, D, albero, tmp_path, monkeypatch):
+    v = C.proteggi(*albero, KEY)
+    aperta = C.apri(v["id"], KEY)
+    driver = tmp_path / "timer_fixture.py"
+    driver.write_text("import importlib.util, pathlib, sys\n"
+                      "spec = importlib.util.spec_from_file_location('fixture', sys.argv[1])\n"
+                      "C = importlib.util.module_from_spec(spec); spec.loader.exec_module(C)\n"
+                      "C.CASA = pathlib.Path(sys.argv[2]); C.ARCHIVIO = C.CASA / 'cartelle.json'\n"
+                      "C._montato = lambda path: True\n"
+                      "sys.exit(C._timer(sys.argv[3], sys.argv[4], 3600))\n")
+    figlio = subprocess.Popen([sys.executable, "-I", "-S", "-B", str(driver),
+                               str(ROOT / "cartelle.py"), str(C.CASA), v["id"], aperta["generation"]],
+                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        assert C.select.select([figlio.stdout], [], [], 3)[0]
+        assert figlio.stdout.readline() == b"ready\n"
+        token = C._carica()["cartelle"][v["id"]]["timer"]
+        D.fallisce = ("detach", D.conta["detach"] + 1)
+        with pytest.raises(C.Rifiuto):
+            C.chiudi(v["id"])
+        assert figlio.poll() is None and C._carica()["cartelle"][v["id"]]["timer"] == token
+        with monkeypatch.context() as m:
+            m.setattr(C.os, "kill", lambda *_: pytest.fail("manual closure must not signal a PID"))
+            C.chiudi(v["id"])
+        stdout, stderr = figlio.communicate(timeout=3)
+        assert figlio.returncode == 0 and stdout == stderr == b""
+    finally:
+        if figlio.poll() is None:
+            figlio.kill()
+            figlio.wait()
+        figlio.stdout.close()
+        figlio.stderr.close()
+
+
+@pytest.fixture()
+def CLI(C, monkeypatch):
+    originale = importlib.util.spec_from_file_location
+    spec = originale("paratia_cartelle_cli", ROOT / "paratia.py")
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+
+    class Loader:
+        def create_module(self, spec):
+            return None
+
+        def exec_module(self, module):
+            module.__dict__.update(C.__dict__)
+
+    def carica(nome, percorso, *args, **kwargs):
+        if nome == "cartelle":
+            return importlib.util.spec_from_loader(nome, Loader())
+        return originale(nome, percorso, *args, **kwargs)
+
+    monkeypatch.setattr(importlib.util, "spec_from_file_location", carica)
+    monkeypatch.setattr(cli, "chiedi_passphrase", lambda _: pytest.fail("unexpected passphrase prompt"))
+    return cli
+
+
+def test_cli_valida_il_disco_prima_del_prompt(CLI, D, albero):
+    D.interno = True
+    args = CLI.costruisci().parse_args(["cartella", "proteggi", str(albero[0]), "--dove", str(albero[1])])
+    with pytest.raises(CLI.Rifiuto, match="esterno"):
+        CLI.cmd_cartella(args)
+
+
+def test_cli_gia_aperta_non_chiede_chiave_anche_in_agente(C, D, CLI, albero, monkeypatch, capsys):
+    v = C.proteggi(*albero, KEY)
+    C.apri(v["id"], KEY)
+    monkeypatch.setattr(CLI, "dentro_un_agente", lambda: "fixture-agent")
+    args = CLI.costruisci().parse_args(["cartella", "apri", v["id"]])
+    assert CLI.cmd_cartella(args) == 0
+    assert json.loads(capsys.readouterr().out)["gia_aperta"] is True
+    C.chiudi(v["id"])
+
+
+def test_cli_chiave_errata_ha_codice_json_distinguibile(C, D, CLI, albero, monkeypatch, capsys):
+    v = C.proteggi(*albero, KEY)
+    monkeypatch.setattr(CLI, "dentro_un_agente", lambda: None)
+    monkeypatch.setattr(CLI, "chiedi_passphrase", lambda _: b"wrong-fixture-passphrase")
+    args = CLI.costruisci().parse_args(["cartella", "apri", v["id"]])
+    assert CLI.cmd_cartella(args) == 2
+    output = capsys.readouterr()
+    assert output.out == "" and json.loads(output.err)["errore"] == "chiave_errata"
+    assert KEY.decode() not in output.err and "wrong-fixture-passphrase" not in output.err

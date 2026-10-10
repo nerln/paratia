@@ -40,7 +40,7 @@ PROBE = Path(__file__).resolve().parent / "strumenti" / "banco-probe.py"
 LIMITI = [
     "I file della prova sono sintetici. Il banco non legge i contenuti dei file personali.",
     "La sorgente paratia misura gli esiti dei probe; la sorgente eslogger contiene i riscontri kernel.",
-    "mdls può usare metadati in cache. L'assenza di un riscontro kernel non diventa una prova di raccolta.",
+    "mdls è una sonda informativa: Spotlight può usare cache o non indicizzare i volumi montati; non determina l'esito della fase.",
     "Le CLI degli agenti usano le loro configurazioni e autorizzazioni. Hook, login o errori possono impedire una prova.",
     "Il banco non concede TCC, non sblocca né modifica il portachiavi e non disattiva hook.",
 ]
@@ -152,6 +152,8 @@ def _directory_fd(p):
 
 
 def anteprima(path=None, dove=None):
+    if dove is not None:
+        C._esterno(Path(dove).absolute())
     p = Path(path or Path.home() / "Desktop" / "folder-test").absolute()
     cartella = next((v for v in C.elenco() if v["origine"] == str(p)), None)
     if cartella:
@@ -205,7 +207,7 @@ def _sintetici(p):
 def _pronto():
     stato = R.stato()
     if not (stato["running"] and stato["healthy"] and stato.get("local_chain_ok", False)):
-        raise Rifiuto("Il registro non è pronto. In Registro premi Installa il registro, autorizza /usr/bin/eslogger in Accesso completo al disco e attendi lo stato attivo.")
+        raise Rifiuto("Il registro non è pronto. In Impostazioni premi Installa il registro, abilita /Applications/Paratia.app in Accesso completo al disco e attendi lo stato attivo. Python non va autorizzato.")
     return stato
 
 
@@ -409,6 +411,9 @@ def _fase(prova, nome, target, cartella_id, chiusa, directory, agenti_reali):
     _salva(prova)
     for attore in ("shell", "mdls", "codex", "claude"):
         r = _probe(attore, target, nome, directory, agenti_reali)
+        r["obbligatoria"] = attore != "mdls"
+        if not r["obbligatoria"]:
+            r["nota"] = "Sonda Spotlight informativa: cache e volumi non indicizzati non determinano l'esito della fase."
         r["riscontri_kernel"] = _riscontri(r) if r["misurato"] else []
         if r["riscontri_kernel"]:
             r["agente"] = r["riscontri_kernel"][0].get("agente")
@@ -424,7 +429,8 @@ def _fase(prova, nome, target, cartella_id, chiusa, directory, agenti_reali):
         fase["prove"].append(r)
         _salva(prova)
     fase["conclusa"] = _ora()
-    fase["ok"] = all(r["esito_atteso"] and r["copertura_verificata"] for r in fase["prove"])
+    fase["ok"] = all(r["esito_atteso"] and r["copertura_verificata"]
+                     for r in fase["prove"] if r["obbligatoria"])
     _salva(prova)
 
 
@@ -458,11 +464,17 @@ def esegui(dove, passphrase: bytes, minutes=15, agenti_reali=True):
         os.close(fd)
         raise Rifiuto("Un banco è già in corso. Attendi la fine prima di riprovare.")
     watch = None
+    watch_id = None
     try:
-        # A fresh ID prevents a previous run from acknowledging stale paths.
-        watch = "banco-" + prova["id"]
-        R.sorveglia(watch, fonte, "Banco sintetico prima/dopo")
-        _attendi_sorveglianza(watch)
+        requested = "banco-" + prova["id"]
+        configured = R.sorveglia(requested, fonte, "Banco sintetico prima/dopo")
+        configured = configured if isinstance(configured, dict) else {}
+        watch_id = configured.get("id", requested)
+        # Reuse an acknowledged watch of this exact path without owning its
+        # lifecycle. A user-created watch must survive the bank's cleanup.
+        if watch_id == requested and not configured.get("riutilizzata", False):
+            watch = requested
+        _attendi_sorveglianza(watch_id)
         if identificatore:
             if esistenti[0]["stato"] == "chiusa":
                 _operazione(prova, C.apri(identificatore, passphrase, minutes))
@@ -485,7 +497,7 @@ def esegui(dove, passphrase: bytes, minutes=15, agenti_reali=True):
         with tempfile.TemporaryDirectory(prefix="paratia-banco-") as area:
             directory = Path(area).resolve()
             target = fonte / "LEGGIMI-SINTETICO.txt"
-            _fase(prova, "prima", target, identificatore or watch, False, directory, agenti_reali)
+            _fase(prova, "prima", target, identificatore or watch_id, False, directory, agenti_reali)
             if not identificatore:
                 if _inventario(fonte) != prova["inventario"]:
                     raise Rifiuto("folder-test è cambiata durante la prova: nessun nuovo dato verrà migrato. Chiudi le app che la modificano e riprova.")
@@ -545,7 +557,7 @@ def esegui(dove, passphrase: bytes, minutes=15, agenti_reali=True):
 
 def export_csv():
     out = io.StringIO(newline="")
-    campi = ["prova", "fase", "quando", "attore", "percorso", "pid", "processo", "riuscito", "errno", "agente", "esito_atteso", "copertura_verificata"]
+    campi = ["prova", "fase", "quando", "attore", "percorso", "pid", "processo", "riuscito", "errno", "agente", "obbligatoria", "esito_atteso", "copertura_verificata", "nota"]
     writer = csv.DictWriter(out, fieldnames=campi, extrasaction="ignore")
     writer.writeheader()
     for prova in _leggi_storico()["prove"]:

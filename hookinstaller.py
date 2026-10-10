@@ -156,30 +156,56 @@ def _directories(home, create=False):
                     os.close(lock)
 
 
+def _stable_runtime_path(candidate):
+    """Retain stable launch aliases instead of freezing Homebrew Cellar versions."""
+    path = Path(candidate)
+    if "Cellar" not in path.parts:
+        return path
+    index = path.parts.index("Cellar")
+    if len(path.parts) <= index + 2:
+        return None
+    prefix = Path(*path.parts[:index])
+    formula = path.parts[index + 1]
+    target = path.resolve(strict=True)
+    aliases = [prefix / "bin" / "python3", prefix / "bin" / path.name,
+               prefix / "opt" / formula / "bin" / path.name,
+               prefix / "opt" / formula / "libexec" / "bin" / "python3"]
+    for alias in aliases:
+        try:
+            if alias.resolve(strict=True) == target:
+                return alias
+        except OSError:
+            continue
+    return None
+
+
 def _runtime(executable=None):
     candidates = [executable] if executable is not None else [
-        sys.executable, "/opt/homebrew/bin/python3", "/usr/local/bin/python3",
+        "/opt/homebrew/bin/python3", "/usr/local/bin/python3", sys.executable,
         *(shutil.which("python3.%d" % minor) for minor in range(14, 10, -1)),
     ]
     for candidate in candidates:
         if not candidate or not Path(candidate).is_absolute():
             continue
         try:
-            p = Path(candidate).resolve(strict=True)
+            alias = _stable_runtime_path(candidate)
+            if alias is None:
+                continue
+            p = alias.resolve(strict=True)
             if not p.is_file() or not os.access(p, os.X_OK):
                 continue
             if p == Path(sys.executable).resolve() and sys.version_info[:2] >= (3, 11):
-                return p
-            check = subprocess.run([str(p), "-I", "-S", "-c",
+                return alias
+            check = subprocess.run([str(alias), "-I", "-S", "-c",
                                     "import sys; print('%d.%d' % sys.version_info[:2])"],
                                    capture_output=True, timeout=5, check=False)
             if check.returncode == 0 and len(check.stdout) < 64:
                 version = tuple(int(v) for v in check.stdout.decode("ascii").strip().split("."))
                 if len(version) == 2 and version >= (3, 11):
-                    return p
+                    return alias
         except (OSError, ValueError, subprocess.SubprocessError):
             continue
-    raise Rifiuto("Gli hook richiedono un eseguibile Python 3.11 o successivo, con percorso assoluto.")
+    raise Rifiuto("Gli hook richiedono Python 3.11 o successivo con percorso assoluto e stabile, per esempio /opt/homebrew/bin/python3; non usare una versione sotto Cellar.")
 
 
 def _parameters(resource_root=None, python_executable=None):

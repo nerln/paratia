@@ -32,6 +32,8 @@ RESOURCE_ROOT = Path(__file__).resolve().parent
 # Required fields, optional fields. No user input selects a module or callable.
 SCHEMAS = {
     "cartelle.elenco": (set(), set()),
+    "cartelle.prepara_protezione": ({"origine", "dove"}, {"minutes"}),
+    "cartelle.prepara_apertura": ({"id"}, {"minutes"}),
     "cartelle.proteggi": ({"origine", "dove"}, {"minutes"}),
     "cartelle.apri": ({"id"}, {"minutes"}),
     "cartelle.chiudi": ({"id"}, set()),
@@ -201,7 +203,10 @@ def _validate(action, params, key):
             _text(value, empty=True)
             if name in ("since", "until") and value:
                 try:
-                    datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+                    timestamp = value.replace("Z", "+00:00")
+                    if len(timestamp) >= 5 and timestamp[-5] in "+-" and timestamp[-4:].isdigit():
+                        timestamp = timestamp[:-2] + ":" + timestamp[-2:]
+                    datetime.datetime.fromisoformat(timestamp)
                 except ValueError:
                     raise RequestError("invalid_params", "Controlla l'intervallo di tempo: usa date e ore valide.") from None
 
@@ -312,6 +317,10 @@ def dispatch(action, params, key=b""):
     group, verb = action.split(".", 1)
     if group == "cartelle":
         module = _load("cartelle")
+        if verb == "prepara_protezione":
+            return module.prepara_protezione(params["origine"], params["dove"], minutes=params.get("minutes", 15))
+        if verb == "prepara_apertura":
+            return module.prepara_apertura(params["id"], minutes=params.get("minutes", 15))
         if verb == "proteggi":
             return module.proteggi(params["origine"], params["dove"], key, minutes=params.get("minutes", 15))
         if verb == "apri":
@@ -400,6 +409,8 @@ def _muted_output():
 def _failure(exc, action):
     if isinstance(exc, RequestError):
         code, message = exc.code, exc.message
+    elif type(exc).__name__ == "ChiaveErrata":
+        code, message = "wrong_key", "La chiave non apre questa cartella. Inseriscila di nuovo nel campo sicuro; nessun dato è stato modificato."
     elif isinstance(exc, PermissionError):
         code, message = "permission_required", "macOS ha negato l'accesso. Controlla i permessi della cartella e le autorizzazioni in Privacy e sicurezza, poi riprova."
     elif isinstance(exc, FileNotFoundError):
@@ -408,8 +419,14 @@ def _failure(exc, action):
         code, message = "io_error", "Non è stato possibile completare l'operazione sul disco. Controlla lo spazio libero e i permessi, poi riprova."
     elif type(exc).__name__ == "Rifiuto":
         code = "refused"
-        if action.startswith("cartelle."):
+        if action == "cartelle.prepara_protezione":
+            message = "La cartella o la destinazione non è pronta. Scegli una fonte valida e una cartella su un disco esterno fisico: i dischi interni e le immagini disco non sono accettati."
+        elif action == "cartelle.prepara_apertura":
+            message = "La cartella non è pronta per l'apertura. Aggiorna lo stato; se la migrazione è incompleta usa Recupera o Annulla migrazione."
+        elif action.startswith("cartelle."):
             message = "L'operazione è stata rifiutata per proteggere i dati. Controlla la chiave, lo stato della cartella e il disco scelto; chiudi i file in uso e riprova."
+        elif action == "banco.anteprima":
+            message = "La destinazione o il banco non è pronto. Scegli una cartella su un disco esterno fisico: i dischi interni e le immagini disco non sono accettati."
         elif action.startswith("banco."):
             message = "Il banco non può procedere. Verifica il registro, Accesso completo al disco e il disco esterno prima di riprovare."
         elif action.startswith("hooks."):

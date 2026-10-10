@@ -465,19 +465,21 @@ struct BankPhaseCard: View {
                 Text("Esito atteso: " + (phase.text("atteso") == "rifiuto" ? "accesso rifiutato" : "accesso consentito") + " · \(phase.number("file_visibili")) file visibili · \(byteCount(phase.number("byte_visibili")))").font(.caption)
                 Text("Avvio: " + phase.text("iniziata") + " · Fine: " + phase.text("conclusa", fallback: "in attesa")).font(.caption).foregroundStyle(.secondary)
                 ForEach(Array(probes.enumerated()), id: \.offset) { _, probe in
+                    let informational = probe["obbligatoria"] as? Bool == false
                     VStack(alignment: .leading, spacing: 5) {
                         HStack {
                             Text(actorName(probe.text("attore"))).font(.callout.weight(.semibold)).frame(width: 105, alignment: .leading)
                             Text(outcome(probe)).font(.callout)
                             Spacer()
-                            Text(probe.flag("esito_atteso") ? "Atteso confermato" : "Atteso non confermato").font(.caption).foregroundStyle(probe.flag("esito_atteso") ? Color.green : .orange)
+                            Text(informational ? "Informativa" : probe.flag("esito_atteso") ? "Atteso confermato" : "Atteso non confermato").font(.caption).foregroundStyle(informational ? Color.gray : probe.flag("esito_atteso") ? Color.green : Color.orange)
                         }
                         HStack(spacing: 16) {
                             Text("errno: " + probe.text("errno", fallback: "—") + " · codice uscita: " + probe.text("rc", fallback: "—"))
                             let matches = (probe["riscontri_kernel"] as? [Record])?.count ?? 0
-                            Text("\(matches) riscontri kernel · " + (probe.flag("copertura_verificata") ? (matches > 0 ? "riscontro kernel confermato" : "misura locale confermata") : "evidenza richiesta mancante"))
+                            Text("\(matches) riscontri kernel · " + (informational ? "sonda informativa" : probe.flag("copertura_verificata") ? (matches > 0 ? "riscontro kernel confermato" : "misura locale confermata") : "evidenza richiesta mancante"))
                         }.font(.caption).foregroundStyle(.secondary)
                         if let message = probe["messaggio"] as? String { Text(message).font(.caption).foregroundStyle(.orange) }
+                        if let note = probe["nota"] as? String { Text(note).font(.caption).foregroundStyle(.secondary) }
                     }.padding(.vertical, 5)
                 }
             }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
@@ -500,6 +502,14 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Label(model.registry.flag("running") && model.registry.flag("healthy") ? "Registro attivo" : "Autorizzazione o verifica necessaria", systemImage: model.registry.flag("healthy") ? "checkmark.circle" : "exclamationmark.circle")
                         Text(model.registry.text("message", fallback: "Installa il servizio del registro e autorizza /Applications/Paratia.app."))
+                        DisclosureGroup("Prepara la copia per installare il registro") {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Chiudi Paratia. Esegui tu questo singolo comando nel Terminale; quando termina senza errori, apri la copia indicata sotto dal Finder e premi Installa il registro. L'app quotidiana e la voce Accesso completo al disco restano /Applications/Paratia.app.")
+                                Text(NativeInstall.preparationCommand).font(.caption.monospaced()).textSelection(.enabled)
+                                Text(NativeInstall.bootstrapBundlePath).font(.caption.monospaced()).textSelection(.enabled)
+                                Text("Dopo una nuova build, prepara di nuovo la copia. Le copie precedenti vengono conservate in una cartella .prepara protetta. Dopo l'installazione chiudi il bootstrap e riapri l'app normale.").font(.caption).foregroundStyle(.secondary)
+                            }.padding(.top, 8)
+                        }
                         HStack {
                             Button("Installa il registro…") { model.installRegistry() }.buttonStyle(.borderedProminent)
                             Button("Apri Accesso completo al disco") {
