@@ -19,6 +19,21 @@ from pathlib import Path
 SUPPORT = Path("/Library/Application Support/Paratia")
 LOGS = Path("/Library/Logs/Paratia")
 MAX_RIGA = 1048576
+FDA_APP = "/Applications/Paratia.app"
+sys.dont_write_bytecode = True
+
+
+def contesto_launcher():
+    return {"launch_mode": "app" if os.environ.get("PARATIA_REGISTRY_LAUNCHER") == "app" else "legacy-python",
+            "fda_entry": FDA_APP, "fda_regrant_after_build": True}
+
+
+def messaggio_fda(contesto):
+    if contesto["launch_mode"] != "app":
+        return ("Il servizio usa il launcher Python precedente. Reinstalla il registro da Paratia; "
+                "la voce Accesso completo al disco da verificare è /Applications/Paratia.app.")
+    return ("Verifica /Applications/Paratia.app in Accesso completo al disco. "
+            "Dopo ogni nuova build con firma ad hoc, rimuovi e aggiungi di nuovo quella voce.")
 
 
 def codice_affidabile(directory):
@@ -58,7 +73,7 @@ def main(argv=None):
     if Path(__file__).resolve().parent != SUPPORT:
         raise ValueError("Il demone deve partire dalla copia installata e protetta.")
     codice_affidabile(SUPPORT)
-    # launchd uses the installer-verified canonical CLT executable, never the
+    # The native app parent spawns the installer-verified canonical CLT executable, never the
     # /usr/bin launcher that may resolve through an admin-writable Xcode parent.
     codice_affidabile_runtime = [Path(sys.executable).resolve(), Path(sys.prefix).resolve()]
     for p in codice_affidabile_runtime:
@@ -92,7 +107,8 @@ def main(argv=None):
     sink = R.ScrittoreDiagnostici(lambda record: R.appendi(catena, record))
     osservatore = R.Osservatore(protetti(), sink, R.snapshot_processi())
     sink(R._diagnostico("osservatore-avviato", uid=args.uid))
-    informazioni = {"running": False, "healthy": False, "needs_fda": False,
+    contesto = contesto_launcher()
+    informazioni = {**contesto, "running": False, "healthy": False, "needs_fda": None,
                     "message": "Avvio del registro kernel in corso.", "dropped_events": 0,
                     "drop_detection_available": False, "watched_ids": [v["id"] for v in osservatore.protetti],
                     "schema_supported": None, "diagnostic_counts": {}}
@@ -178,7 +194,7 @@ def main(argv=None):
                              schema_supported=not osservatore.schema_fatale if visto else None,
                              diagnostic_counts={k: max(sink.contatori.get(k, 0), osservatore.diagnostici.get(k, 0))
                                                 for k in set(sink.contatori) | set(osservatore.diagnostici)},
-                             message="Autorizza /usr/bin/eslogger in Accesso completo al disco." if bisogno else (
+                             message=messaggio_fda(contesto) if bisogno else (
                                  "Il formato di eslogger non è compatibile: aggiorna Paratia." if osservatore.schema_fatale else "Il registro kernel è fermo."))
         scrivi_stato(stato, informazioni)
         sink(R._diagnostico("osservatore-fermato", rc=processo.returncode, needs_fda=bisogno))

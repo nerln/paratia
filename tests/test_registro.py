@@ -254,12 +254,18 @@ class RegistroTests(unittest.TestCase):
         self.assertFalse(catena.acl_scrivibile(p))
 
     def test_installer_preparation_does_not_install(self):
-        with mock.patch.object(I, "runtime", return_value="/protected/python"), mock.patch.object(I, "installa") as install:
+        with mock.patch.object(I, "runtime", return_value="/protected/python"), \
+                mock.patch.object(I, "_app_sorgente", return_value=(Path("/synthetic/Paratia.app"), "a" * 40)), \
+                mock.patch.object(I, "installa") as install:
             piano = I.piano(Path(__file__).resolve().parent.parent)
             install.assert_not_called()
         self.assertEqual(piano["argv"][:3], ["/protected/python", "-I", "-S"])
         self.assertEqual(piano["plist"]["UserName"], "root")
-        self.assertEqual(piano["plist"]["ProgramArguments"][:3], ["/protected/python", "-I", "-S"])
+        self.assertEqual(piano["plist"]["ProgramArguments"], [
+            str(I.SUPPORT / "Paratia.app" / "Contents" / "MacOS" / "Paratia"),
+            "--registro", "--uid", str(os.getuid())])
+        self.assertEqual(piano["fda_entry"], "/Applications/Paratia.app")
+        self.assertTrue(piano["fda_regrant_after_build"])
         self.assertNotIn("password", json.dumps(piano))
         with mock.patch.object(I.os, "geteuid", return_value=os.getuid() or 501):
             with self.assertRaises(PermissionError):

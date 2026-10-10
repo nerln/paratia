@@ -1074,13 +1074,28 @@ def cmd_registro(args) -> int:
     registro = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = registro
     spec.loader.exec_module(registro)
+    try:
+        return _esegui_registro(registro, args)
+    except (OSError, ValueError) as e:
+        raise Rifiuto("Registro: " + str(e)) from None
+
+
+def _esegui_registro(registro, args):
     if args.operazione == "stato":
         risultato = registro.stato()
     elif args.operazione == "verifica":
         risultato = registro.verifica()
+    elif args.operazione == "sorveglianza":
+        risultato = registro.elenco_sorveglianza()
+    elif args.operazione == "sorveglia":
+        import uuid
+        risultato = registro.sorveglia(args.id or uuid.uuid4().hex, args.cartella, args.nome or "")
+    elif args.operazione == "smetti":
+        identificatore = _registro_id(registro, args.cartella, solo_sorveglianza=True)
+        risultato = registro.rimuovi_sorveglianza(identificatore)
     else:
         filtri = {k: v for k, v in {
-            "folder": args.cartella, "file": args.file, "process": args.processo,
+            "folder": _registro_id(registro, args.cartella), "file": args.file, "process": args.processo,
             "agent": args.agente, "since": args.da, "until": args.a,
         }.items() if v is not None}
         if args.operazione == "esporta":
@@ -1089,6 +1104,23 @@ def cmd_registro(args) -> int:
         risultato = registro.query(filtri)
     print(json.dumps(risultato, ensure_ascii=False, indent=1))
     return 0
+
+
+def _registro_id(registro, cartella, solo_sorveglianza=False):
+    """CLI paths name an exact configured folder; query itself uses stable IDs."""
+    if cartella is None or not os.path.isabs(cartella):
+        return cartella
+    if cartella != os.path.normpath(cartella):
+        raise Rifiuto("Usa il percorso assoluto della cartella, senza .. o separatori finali.")
+    voci = registro.elenco_sorveglianza()
+    if not solo_sorveglianza:
+        voci += registro.leggi_cartelle(registro.CASA / "cartelle.json", os.getuid())
+    ids = {voce["id"] for voce in voci if cartella in (voce.get("origine"), voce.get("montaggio"))}
+    if not ids:
+        raise Rifiuto("La cartella non è configurata nel registro. Sorvegliala prima o usa il suo ID.")
+    if len(ids) != 1:
+        raise Rifiuto("Il percorso corrisponde a più ID. Scegli un ID dall'elenco delle cartelle sorvegliate.")
+    return ids.pop()
 
 
 def cmd_cartella(args) -> int:
@@ -1288,14 +1320,23 @@ def costruisci() -> argparse.ArgumentParser:
 
     re = s.add_parser("registro", help="eventi osservati e stato delle autorizzazioni")
     res = re.add_subparsers(dest="operazione", required=True)
-    for nome in ("stato", "verifica"):
+    for nome in ("stato", "verifica", "sorveglianza"):
         res.add_parser(nome).set_defaults(fn=cmd_registro)
+    rw = res.add_parser("sorveglia", help="configura una cartella dell'utente per il registro kernel")
+    rw.add_argument("cartella")
+    rw.add_argument("--id", help="identificatore stabile; se omesso viene creato un UUID")
+    rw.add_argument("--nome")
+    rw.set_defaults(fn=cmd_registro)
+    rd = res.add_parser("smetti", help="rimuovi una sorveglianza per ID o percorso esatto")
+    rd.add_argument("cartella")
+    rd.set_defaults(fn=cmd_registro)
     for nome in ("elenco", "esporta"):
         r = res.add_parser(nome)
         r.add_argument("--cartella")
         r.add_argument("--file")
         r.add_argument("--processo")
-        r.add_argument("--agente", choices=("true", "false", "unknown"))
+        r.add_argument("--agente", metavar="true|false|unknown|NOME",
+                       help="filtra per classificazione oppure nome dell'agente, per esempio Codex")
         r.add_argument("--da")
         r.add_argument("--a")
         r.set_defaults(fn=cmd_registro)

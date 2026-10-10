@@ -13,6 +13,7 @@ import importlib.util
 import json
 import os
 import pwd
+import plistlib
 import stat
 import subprocess
 import sys
@@ -528,6 +529,13 @@ def sorveglia(identificatore, percorso, nome=""):
     return _cambia_sorveglianza(identificatore, str(percorso), nome)
 
 
+def elenco_sorveglianza():
+    """Read validated user watch configuration; never imply kernel coverage."""
+    voci = leggi_sorveglianza(CASA / "registro" / "sorveglianza.json", os.getuid())
+    return sorted(({**voce, "percorso": voce["origine"], "esiste": Path(voce["origine"]).is_dir()}
+                   for voce in voci), key=lambda voce: (voce["nome"].casefold(), voce["id"]))
+
+
 def rimuovi_sorveglianza(identificatore):
     return _cambia_sorveglianza(identificatore)
 
@@ -622,6 +630,34 @@ def verifica():
     return {"ok": all(r["ok"] for r in esiti), "catene": esiti, "limite": LIMITI[4]}
 
 
+def _servizio_installato(uid):
+    p = Path("/Library/LaunchDaemons/%s.%d.plist" % (ETICHETTA, uid))
+    installed = False
+    arguments = []
+    try:
+        s = p.lstat()
+        installed = stat.S_ISREG(s.st_mode) and s.st_uid == 0 and not s.st_mode & 0o022
+        if installed:
+            fd = os.open(p, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as stream:
+                s = os.fstat(fd)
+                if not stat.S_ISREG(s.st_mode) or s.st_uid != 0 or s.st_mode & 0o022 or s.st_size > 65536:
+                    raise ValueError("Il servizio non ha una configurazione protetta.")
+                document = plistlib.loads(stream.read(65537))
+                if isinstance(document, dict):
+                    arguments = document.get("ProgramArguments", [])
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        pass
+    launcher = str(SUPPORT / "Paratia.app" / "Contents" / "MacOS" / "Paratia")
+    if arguments == [launcher, "--registro", "--uid", str(uid)]:
+        mode = "app"
+    elif isinstance(arguments, list) and arguments and isinstance(arguments[0], str) and "python" in Path(arguments[0]).name.lower():
+        mode = "legacy-python"
+    else:
+        mode = "unrecognized" if installed else "missing"
+    return installed, mode
+
+
 def stato():
     uid = os.getuid()
     dati = {}
@@ -634,21 +670,24 @@ def stato():
                 dati = json.loads(f.read(65537))
     except (OSError, ValueError):
         pass
-    pl = Path("/Library/LaunchDaemons/%s.%d.plist" % (ETICHETTA, uid))
-    try:
-        s = pl.lstat()
-        installed = stat.S_ISREG(s.st_mode) and s.st_uid == 0 and not s.st_mode & 0o022
-    except OSError:
-        installed = False
+    if not isinstance(dati, dict):
+        dati = {}
+    installed, mode = _servizio_installato(uid)
     fresco = isinstance(dati, dict) and isinstance(dati.get("heartbeat"), (int, float)) and time.time() - dati.get("heartbeat", 0) < 20
     locale = verifica_catena(CATENA)
+    message = dati.get("message", "Installa il registro e concedi Accesso completo al disco a /Applications/Paratia.app.")
+    if installed and mode != "app":
+        message = "Il servizio installato usa un avvio precedente. Premi Installa il registro in Paratia per passare al binario dell'app; non concedere Accesso completo al disco a Python."
     return {"installed": installed, "running": bool(fresco and dati.get("running")),
             "healthy": bool(fresco and dati.get("healthy")), "needs_root": not installed,
-            "needs_fda": bool(dati.get("needs_fda")) if fresco else None,
+            "launch_mode": mode, "needs_reinstall": installed and mode != "app",
+            "fda_entry": "/Applications/Paratia.app", "fda_regrant_after_build": True,
+            "fda_message": "Dopo l'installazione abilita /Applications/Paratia.app in Accesso completo al disco. Con firma ad hoc, dopo ogni nuova build rimuovi e aggiungi di nuovo l'app. Python non va autorizzato.",
+            "needs_fda": dati.get("needs_fda") if fresco and isinstance(dati.get("needs_fda"), bool) else None,
             "dropped_events": dati.get("dropped_events"), "limits": list(LIMITI),
             "drop_detection_available": dati.get("drop_detection_available", False),
             "watched_ids": dati.get("watched_ids", []),
             "diagnostic_counts": dati.get("diagnostic_counts", {}),
             "schema_supported": dati.get("schema_supported"),
             "local_chain_ok": locale["ok"], "local_chain_error": locale["errore"],
-            "message": dati.get("message", "Installa il registro e autorizza /usr/bin/eslogger in Accesso completo al disco.")}
+            "message": message}
