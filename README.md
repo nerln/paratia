@@ -112,15 +112,24 @@ physical disk; internal disks and disk images are refused. Key verification
 checks an encrypted image without mounting it, independently of localized
 authentication messages. If the folder is busy, close apps using it and
 terminals whose current directory is inside it. **Forza chiusura…** requires
-explicit confirmation and can lose unsaved changes.
+explicit confirmation and can lose unsaved changes. In your own terminal,
+`paratia cartella chiudi <id> --force` also requires confirmation on `/dev/tty`
+and refuses to run inside an agent session. A busy-volume diagnostic lists
+process names and PIDs when available, without their command arguments.
+Before checking the key, missing image metadata or bands and unreadable or
+truncated encrypted-v2 tokens produce a damaged-image message. Keep the image
+and restore an intact copy. This structural check does not verify every band's
+cryptographic integrity.
 
 In **Registro**, use **Sorveglia una cartella…** to choose any supported folder
 you own, including an unencrypted one. Remove watches, filter events by folder,
 file, process, agent and time, and export CSV. Configured watches and daemon
 acknowledgements are shown separately: saving a watch does not mean collection
-is active. Repeating a path keeps its ID and name; nonexistent folders and unknown
-removals are refused. Even with `--nome X`, reuse returns the accepted `nome`
-and a message that the existing ID and name were preserved. The CLI offers the
+is active. Repeating a path keeps its ID; an explicit `--nome Nuovo` renames the
+watch and reports the effective name. Omitting the name preserves an existing
+label. Nonexistent folders and unknown removals are refused. A protected folder's
+mount path is already registered and cannot create a separate ambiguous watch.
+The CLI offers the
 same operations:
 
 ```sh
@@ -134,7 +143,11 @@ paratia registro smetti ~/Documenti/progetto
 `elenco` and `esporta` warn on stderr when collection is stopped or unhealthy,
 including empty results. The CLI and worker query/CSV accept a folder ID or an
 exact configured absolute path, with slash, alias and NFC/NFD normalization.
-Unknown or ambiguous paths are errors. An absolute `--file /a/b` matches that
+Unknown or ambiguous paths produce specific messages in the app. Query and
+export results include `kernel_active` and collection details; the Registry view
+shows active, inactive or unverified collection beside the event count, including
+zero events. For a selected folder, active also requires acknowledgement of its
+ID. This does not guarantee coverage of every access. An absolute `--file /a/b` matches that
 path and its descendants, excluding `/a/bc`; paths normalize slashes and NFC/NFD Unicode.
 Relative text uses case-insensitive `casefold` matching. New log timestamps use
 colon-separated offsets; legacy offsets remain readable with Python 3.9.
@@ -153,8 +166,8 @@ python3 strumenti/build-app.py --render-fixtures
 open -n build/Paratia.app --args --launch-check
 ```
 
-The build bundles the CLI with the other nine Python modules and records its
-fixed source path in the manifest used by installed hooks.
+The build bundles the CLI with the other nine Python modules. Its hook manifest
+points to the protected bootstrap copy, never the writable repository.
 
 The app signs ad hoc and is not notarized. Keep the normal app in `/Applications`.
 Close all copies of Paratia and run this yourself in Terminal to prepare a
@@ -219,10 +232,25 @@ While a compartment is open, the gate permits `paratia cartella chiudi <id>`,
 `paratia cartella chiudi-tutte`, `paratia cartella elenco`, `paratia lock`,
 `paratia status` and `paratia status --json`. Equivalent absolute invocations,
 including the absolute path to the `~/.local/bin/paratia` symlink and
-`python3 /absolute/path/paratia.py cartella chiudi-tutte`, must resolve to the
-genuine CLI bundled with the hook or the fixed source path in its manifest.
-A different file named `paratia.py` does not qualify. `paratia lock` closes the
+an isolated Python invocation, must resolve to the protected bootstrap CLI.
+The CLI, its Python resources and all ancestors must be root-owned, without
+group/other or ACL write access. The literal `~/.local/bin/paratia` form expands
+against the account's real home, then undergoes the same checks. A repository
+CLI or an unprotected app has no exemption: close the folder from Paratia or
+Finder. `paratia lock` closes the
 main compartment; use `cartella chiudi` or `chiudi-tutte` for folder compartments.
+
+Without that code check, an agent could alter a sibling module while the folder
+is closed, then import it via an exempt status/close command when the human
+opens the folder. The protected copy closes that route. User-owned hook settings
+and other harnesses remain outside the guarantee; this does not make the whole
+same-account setup tamper-proof. See [architecture](docs/architettura.md).
+
+The optional CLI alias must point to the protected copy to qualify. Until the
+human updates an alias that still points to the repository, use Paratia to close
+the folder or the protected script's absolute path. Its bundled shebang uses
+the verified Apple runtime with `-I -S -B`; explicit Python calls need those
+same flags.
 
 Declaring a verb, so an agent can use a key it cannot read. Edit `verbi.json`
 inside the compartment while it is open:
@@ -348,11 +376,12 @@ cases where it buys nothing, are in [docs/confini.md](docs/confini.md).
 
 ## Read this before you trust it
 
-[docs/architettura.md](docs/architettura.md) is a table of six mechanisms and
+[docs/architettura.md](docs/architettura.md) is a table of nine mechanisms and
 what each one actually guarantees. Two of them are tamper-**evident**, not
-tamper-proof, because on a Mac with one account there is no file an agent
-running as you cannot rewrite — including the hook that stops it. The document
-says so in those words rather than leaving it to be discovered.
+tamper-proof: an agent running as you can rewrite your policy files and harness
+settings, including which hook runs. Root-protected bootstrap resources resist
+that UID, and open-folder exemptions require those resources. This does not
+make the user-owned harness configuration immutable.
 
 [docs/ricerca/](docs/ricerca/) is the research this came out of: what the field
 already covers, what it does not, and where the unsolved half is publishable.

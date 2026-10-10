@@ -118,6 +118,10 @@ dopo un errore o un'interruzione. Se la chiusura fallisce o resta una migrazione
 incompleta, lo storico lo segnala: controlla **Cartelle** e usa **Chiudi tutte**,
 **Recupera** o **Annulla migrazione**, secondo lo stato mostrato. Un secondo
 banco concorrente viene rifiutato senza chiudere il compartimento dell'altro.
+Una prova successiva usa direttamente l'ID della cartella protetta già registrata,
+senza aggiungere una sorveglianza separata sul montaggio. Una fonte non ancora
+protetta riusa l'eventuale sorveglianza senza passare un nuovo nome, conservando
+l'etichetta dell'utente; `sorveglia --nome Nuovo` rimane la rinomina esplicita.
 Se un montaggio è occupato, chiudi l'app o il terminale aperto dentro e riprova.
 La GUI offre **Forza chiusura…** con conferma del rischio sulle modifiche non
 salvate, anche per un montaggio temporaneo. Una migrazione incompleta richiede

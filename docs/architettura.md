@@ -1,6 +1,6 @@
 # What each layer actually guarantees
 
-Six mechanisms sit between an agent and a secret on this machine. They are not
+Nine mechanisms sit between an agent and a secret on this machine. They are not
 equally strong, and a document that presents them as one wall is lying by
 omission. Read the last column first: it is the one that decides whether you
 should rely on the row.
@@ -9,7 +9,7 @@ should rely on the row.
 |---|---|---|---|---|
 | 1 | AES-256 sparsebundle, locked | every process at every privilege level, including root and including `paratia` itself | the kernel and the cipher | only while locked. Open, it is an ordinary volume |
 | 2 | Passphrase exists only in your head | any agent, unconditionally | nothing — there is simply no copy to find | you type it by hand, every time, in a terminal no agent owns |
-| 3 | Mount-state invariant: no agent tool call runs while the volume is mounted | path obfuscation, base64, `sh -c`, quoting, symlinks | the Claude Code harness, which runs the hook before the model sees a result | only sessions that installed the hook. Same-UID tampering is detectable, not preventable |
+| 3 | Mount-state invariant: no agent tool call runs while the volume is mounted | path obfuscation, base64, `sh -c`, quoting, symlinks | the Claude Code or Codex harness running the configured hook | only configured sessions. The user's policy and harness settings remain mutable |
 | 4 | Broker verbs | an agent choosing the command | the verb list living inside the compartment | only covers operations you declared in advance |
 | 5 | Delegation intersection | one agent asking a second agent for what it may not do itself | the same harness hook, reading the harness-written transcript | one-sided until the other harness runs its half |
 | 6 | Seal and attest | nothing. It reports | you, running `paratia attest` | detection after the fact, never prevention |
@@ -55,6 +55,17 @@ written down. The cost is that it is coarse — while the compartment is open,
 is the reason it holds. A precise rule about paths would have to understand
 shell semantics. This one does not have to understand anything.
 
+The small close/status exception must also check the code it would execute.
+While a folder is closed, an agent could modify `paratia.py` or a sibling module
+in the writable repository, then invoke an otherwise exempt command after the
+human opens the folder. Importing that modified module would expose plaintext.
+Exceptions now require the resolved CLI, its Python resources and all ancestors
+to be root-owned, without group/other or ACL write access. The protected bootstrap
+copy supplies that code; a writable repository or an unprotected app gets no
+exception. In that case, the human closes the folder from Paratia or Finder.
+This removes that route through the exceptions. Same-UID changes to hook
+configuration, harnesses or an already running process remain outside this claim.
+
 The same inversion is why row 5 reads the transcript rather than a marker file.
 A marker file saying "this turn came from Codex" is written by something, and on
 a one-account machine that something can be overwritten. The transcript is
@@ -66,10 +77,11 @@ louder kind of attack than deleting a marker.
 
 ## Why row 6 is honest about doing nothing
 
-On a Mac with one user account there is no file an agent running as you cannot
-rewrite. That includes `paratia-gate.py`. Any claim that the gate cannot be
-disabled by the thing it gates is false, and stating it plainly is better than
-burying it.
+An agent running as you can rewrite your user-owned policy files, including
+the repository's `paratia-gate.py` and harness settings. Root-protected app
+resources prevent the exemption attack described above, but do not make those
+settings immutable. A claim that the whole gate cannot be disabled by the
+thing it gates would still be false.
 
 What there is, is a place the agent can neither read nor write: inside the
 locked compartment. So the hashes go there. `paratia seal` records what the
@@ -78,11 +90,11 @@ agent running. `paratia attest` compares. If the gate was edited, you find out �
 the next time you look. That is the whole guarantee. It is worth having and it
 is not a wall.
 
-The upgrade that turns row 6 into prevention is a second macOS account owning
-the policy files, so the agent's UID has no write bit on them. That is the only
-real POSIX boundary available without writing an Endpoint Security client, and
-it costs an admin password and a more annoying setup. It is a deliberate open
-choice, not an oversight.
+Preventing changes to policy files requires another principal, such as root or
+a second macOS account, to own them without granting the agent's UID write
+access. The same protection must cover their ancestors and ACLs. Protecting
+the CLI resources alone does not protect the harness's hook configuration;
+that wider setup remains a separate choice.
 
 ## The composition rule, stated once
 

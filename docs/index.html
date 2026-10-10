@@ -223,7 +223,8 @@ and disk images are refused. A disconnected disk is reported before key entry,
 and reopening an open folder reports that its timer remains unchanged.
 Migration verifies
 the copy before removing the source and keeps recovery
-actions available after an interruption. A busy volume asks you to close the app
+actions available after an interruption. A damaged bundle is reported before
+checking the key; keep it and restore an intact copy. A busy volume asks you to close the app
 or terminal using it. <strong>Forza chiusura…</strong> requires confirmation
 about unsaved changes; closing a temporary migration mount still requires recovery.</p>
 
@@ -231,9 +232,13 @@ about unsaved changes; closing a temporary migration mount still requires recove
 including an unencrypted one. Review or remove watches, filter events by folder,
 file, process, agent and time, and export CSV. A saved watch is shown separately
 from its acknowledgement by an active daemon. Repeated requests reuse the ID
-and label and report the retained name. CLI and worker queries and exports accept
+and report the effective name; an explicit <code>--nome Nuovo</code> renames the
+watch without changing its ID. A protected folder's mount uses its existing ID.
+CLI and worker queries and exports accept
 the same folder ID or exact configured path; an unknown path produces an error.
-Inactive collection produces a warning in CLI queries and exports.
+Inactive collection produces a warning in CLI queries and exports. The app
+shows kernel collection status beside the event count, including zero events;
+active status does not guarantee coverage of every access.
 Absolute file filters match the exact path or its descendants, so
 <code>/a/b</code> excludes <code>/a/bc</code>.</p>
 
@@ -261,13 +266,17 @@ binary in a signed, root-protected app copy, keeping Python and eslogger as
 children. Enable <strong>/Applications/Paratia.app</strong> in Full Disk Access;
 remove and re-add that entry after every new ad hoc build and reinstall the
 registry after refreshing the bootstrap copy. Do not enable Python 3.9.
-The supervisor built Giro 2; Giro 3 requires a new build and live TCC verification.</p>
+The supervisor built Giro 3; Giro 4 requires a new build and live TCC verification.</p>
 
 <p>While a compartment is open, the gate allows <code>paratia cartella chiudi &lt;id&gt;</code>,
 <code>paratia cartella chiudi-tutte</code>, <code>paratia cartella elenco</code>,
 <code>paratia lock</code>, <code>paratia status</code> and <code>paratia status --json</code>.
-Equivalent absolute paths and Python invocations must resolve to the trusted CLI;
-a different file named <code>paratia.py</code> is refused.</p>
+These exceptions require the root-protected bootstrap CLI, all its Python
+resources and ancestors, and an isolated protected Apple runtime. Equivalent
+absolute paths and <code>~/.local/bin/paratia</code> must resolve to that copy.
+The writable repository has no exception: close from Paratia or Finder.
+This blocks importing a module altered while the folder was closed through a
+later exempt status/close call; user-owned harness settings remain mutable.</p>
 
 <p>Read the <a href="https://github.com/nerln/paratia/blob/master/docs/gui-mac.md">GUI guide</a>,
 <a href="https://github.com/nerln/paratia/blob/master/docs/registro-accessi.md">registry limits</a>
@@ -319,10 +328,10 @@ has only ever been pointed inward.</p>
 </table>
 </div>
 
-<p>Two of those are tamper-<em>evident</em> rather than tamper-proof, because on a
-Mac with one account there is no file an agent running as you cannot rewrite
-&mdash; including the hook that stops it. That is written down in the docs in
-those words rather than left to be discovered.</p>
+<p>Two of those are tamper-<em>evident</em> rather than tamper-proof: an agent
+running as you can rewrite your policy and harness settings, including which
+hook runs. Root-protected bootstrap resources resist that UID and are required
+for open-folder exemptions. Your harness configuration remains mutable.</p>
 
 <h2>Install</h2>
 
@@ -336,14 +345,14 @@ paratia init
 <span class="c"># what a second account would and would not protect here</span>
 paratia esposizione</code></pre>
 
-<p>macOS, Python 3.11+, no third-party packages. The hooks stay hand-wired on
-purpose: a hook that denies every tool call while a volume is mounted is one you
-should switch on yourself, while looking at it.</p>
+<p>macOS, Python 3.11+, no third-party packages. The app can review and connect
+the hooks using root-protected Apple Command Line Tools Python 3.9+.
+Activation and harness trust remain your choice after reviewing the plan.</p>
 
 <h2>Read before trusting it</h2>
 
 <ul>
-<li><a href="https://github.com/nerln/paratia/blob/master/docs/architettura.md">architettura.md</a> &mdash; eight mechanisms and what each one actually guarantees</li>
+<li><a href="https://github.com/nerln/paratia/blob/master/docs/architettura.md">architettura.md</a> &mdash; nine mechanisms and what each one actually guarantees</li>
 <li><a href="https://github.com/nerln/paratia/blob/master/docs/confini.md">confini.md</a> &mdash; where a second account buys nothing, and why <code>noowners</code> voids it silently</li>
 <li><a href="https://github.com/nerln/paratia/blob/master/docs/ponte-ssh.md">ponte-ssh.md</a> &mdash; two machines, and the key that cannot open a shell</li>
 <li><a href="llms.txt">llms.txt</a> &mdash; the operating manual for an agent using this instead of a person</li>

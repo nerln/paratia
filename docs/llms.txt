@@ -9,8 +9,9 @@ Source: https://github.com/nerln/paratia — macOS, Python 3.11+, GPL-3.0.
 
 ## Native Mac app and registry
 
-The app requires macOS 13+. Its isolated GUI worker supports Apple CLT Python
-3.9; CLI hooks require Python 3.11+. The five sections cover protected folders,
+The app requires macOS 13+. Its isolated GUI worker and protected gate use
+root-protected Apple CLT Python 3.9+; the general CLI requires Python 3.11+.
+The five sections cover protected folders,
 access history, labels, a four-phase bank and settings. Keys pass through framed
 stdin IPC, never command arguments, environment or persisted metadata.
 
@@ -20,8 +21,10 @@ folder, including an unencrypted one. `registro sorveglianza` lists requests;
 and `registro esporta` accept --cartella (ID or exact configured path), --file,
 --processo, --agente true|false|unknown or an agent name, --da and --a. Configuration is not proof
 of collection: healthy daemon state and watched_ids acknowledgement are separate.
-The directory must exist; requesting the same normalized path reuses its ID
-and label and reports the retained name, including with --nome. Worker query/CSV
+The directory must exist; requesting the same normalized path reuses its ID.
+An explicit --nome Nuovo renames the watch and returns its effective name;
+omitting the name preserves the label. A protected folder's mount cannot create
+a separate watch: select its existing folder ID. Worker query/CSV
 folder filters use the same ID-or-exact-configured-path resolver as the CLI;
 unknown or ambiguous paths fail explicitly. Removing an unknown ID fails. Query/CSV warn on stderr when collection
 is inactive, including with empty results. Absolute --file filters match exactly
@@ -46,7 +49,10 @@ After every new ad hoc build, the human removes/re-adds that app entry and
 refreshes the bootstrap copy, then reinstalls the registry. Ownership changes
 preserve CDHash; signature identity and TCC propagation still need live checks.
 Do not alter TCC or supply administrator credentials. The supervisor built
-Giro 2; Giro 3 still awaits a build and live verification.
+Giro 3; Giro 4 still awaits a build and live verification. Hook installation
+uses the protected bootstrap copy when verified and replaces old Paratia
+handlers while preserving foreign hooks and backups. An unprotected fallback
+cannot execute close/status exceptions while a folder is open.
 
 Destination checks follow APFSPhysicalStores and ParentWholeDisk to the physical
 whole disk; exFAT follows ParentWholeDisk directly. Missing VirtualOrPhysical on
@@ -55,10 +61,21 @@ are accepted; disk images and internal disks are refused before key entry.
 An unavailable external disk is reported before asking for a key. Reopening an
 already open folder reports that its timer stays unchanged, even with --minutes.
 Wrong keys are checked without mounting using hdiutil isencrypted/imageinfo and
-reported independently of the diagnostic language. Busy volumes ask the human
+reported independently of the diagnostic language. Missing Info.plist/Info.bckup,
+bands or an incomplete encrypted-v2 token is reported as a damaged image before
+the key probe. Preserve the image and restore an intact copy. Busy volumes ask the human
 to close the app or terminal inside; the GUI's Forza chiusura… requires explicit
 confirmation about unsaved changes. Timers, hooks and close-all never force.
 Closing a temporary migration mount still leaves recovery necessary.
+CLI cartella chiudi <id> --force needs explicit confirmation on /dev/tty and
+refuses agent sessions; stdin is not confirmation. Busy diagnostics may list
+process names and PIDs, never process arguments.
+
+Worker query and export include kernel_active and kernel_collection. The view
+shows collection status beside the event count, including zero. A selected
+folder also requires watched_ids acknowledgement; no active state guarantees
+complete kernel coverage. Unknown and ambiguous folders reach the app as
+specific safe errors, without raw exception diagnostics.
 
 Registry records contain metadata only. Paratia annotations and eslogger events
 retain separate sources. An open event does not prove bytes were read; failed
@@ -99,11 +116,15 @@ Do: run `paratia cartella chiudi <id>` or `paratia cartella chiudi-tutte` for
 protected folders and `paratia lock` for the core compartment. The complete
 allowlist also includes `paratia cartella elenco`, `paratia status` and
 `paratia status --json`.
-Equivalent absolute paths, including the real ~/.local/bin/paratia symlink,
-and `python3 <absolute-path>/paratia.py` work only when they resolve to the
-trusted Paratia CLI. A namesake in another directory, a fake earlier in PATH,
-shell chaining or redirection is refused. The app bundles the CLI and seals its
-source identity in hooks/paratia-cli.json at build time. Status lists protected
+Equivalent absolute paths and the literal ~/.local/bin/paratia alias work only
+when they resolve to the protected ParatiaBootstrap CLI. Tilde expansion uses
+pwd's real account home, never a payload's HOME. The CLI, all Python resources
+and ancestors require root ownership and no group/other or ACL write access;
+the Apple runtime and standard library require the same protection. An explicit
+Python invocation needs the protected runtime with -I -S -B before the script.
+A writable repository, unprotected app, namesake or fake earlier in PATH has
+no exception: the human closes the folders in Paratia or Finder. The app's
+manifest never trusts the repository CLI. Status lists protected
 folders that remain open even when the core compartment is closed; it reports
 uncertainty for unreadable state.
 
@@ -259,9 +280,10 @@ agent session, and the `--forza` override exists for screenshots, not for you.
 - The gate covers sessions that installed the hook. Another harness on the same
   machine has its own rules or none.
 - The bridge gate is one-sided until both harnesses run their half.
-- On a Mac with one account there is no file an agent running as the user cannot
-  rewrite, including the hook. Two of the layers are tamper-evident, not
-  tamper-proof, and the documentation says so in those words.
+- An agent running as the user can rewrite that user's policy and harness
+  settings, including which hook runs. The root-protected bootstrap resists
+  that UID and is required for open-folder exemptions; user-owned configuration
+  remains mutable. Two layers are tamper-evident, not tamper-proof.
 
 
 ## Commands, and who runs them

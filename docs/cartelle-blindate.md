@@ -52,6 +52,14 @@ o in un file. L'app la richiede con un campo sicuro. Non usa il portachiavi.
 Una passphrase distinta da quella del disco è una scelta dell'utente: Paratia
 non legge la chiave del disco per confrontarle.
 
+Prima del probe della chiave, Paratia controlla Info.plist o Info.bckup, la
+directory bands e il token cifrato v2: deve essere un file ordinario leggibile,
+con header, tabella e blob completi. Un componente mancante, un link o un token
+troncato produce **immagine danneggiata o incompleta** (`damaged_image` nel worker).
+Conserva l'immagine attuale, ricollega il disco e ripristina una copia integra;
+non ripetere la migrazione sulla fonte per tentare di correggere l'errore.
+Questo controllo strutturale non verifica l'integrità crittografica di tutti i band.
+
 Una chiave sbagliata è distinta dagli altri errori disco: la GUI invita a
 reinserirla, il worker restituisce `wrong_key` e la CLI restituisce un errore
 JSON con `errore: "chiave_errata"`. Una verifica senza montaggio distingue la
@@ -68,14 +76,22 @@ forzarla: chiudi l'app o il terminale aperto dentro e riprova. Il tempo impostat
 non è una garanzia di chiusura al secondo in presenza di documenti
 ancora aperti.
 
+Nella CLI puoi usare `paratia cartella chiudi <id> --force` dal tuo Terminale.
+Richiede una conferma esplicita su `/dev/tty`, con scelta iniziale negativa,
+e viene rifiutato nelle sessioni agente; stdin non vale come conferma.
+Quando disponibili, il messaggio di volume occupato elenca i nomi e i PID
+dei processi rilevati da lsof, senza argomenti o nomi dei file aperti.
+
 Aprire una cartella già aperta lo segnala prima della richiesta della chiave e
 non avvia un secondo timer: anche `apri --minutes` precisa che i minuti e la
 scadenza già impostati restano invariati. Un disco scollegato viene segnalato
 prima di chiedere la chiave. Chiudere una cartella già chiusa restituisce il suo
 stato senza scrivere un evento duplicato.
 
-L'hook esistente continua a rifiutare ogni chiamata mentre un compartimento è
-montato. Lo stesso file gestisce `SessionStart` per chiudere i compartimenti:
+L'hook del repository rifiuta ogni chiamata mentre un compartimento è montato.
+La copia bootstrap protetta ammette soltanto i comandi di chiusura e stato
+elencati dal gate, dopo aver verificato codice, antenati, ACL e runtime isolato.
+Lo stesso file gestisce `SessionStart` per chiudere i compartimenti:
 deve essere collegato a questo evento nell'harness. Un hook non installato
 non protegge quella sessione. Il registro delle cartelle e l'hook sono
 modificabili da processi con lo stesso UID; la cifratura da chiuso resta il

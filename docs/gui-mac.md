@@ -35,6 +35,9 @@ un evento al registro. Una chiusura manuale riuscita annulla anche il timer,
 che riconosce la cancellazione entro il successivo controllo, ogni 0,25 secondi.
 Una chiave sbagliata produce un messaggio specifico per reinserirla, anche con
 messaggi hdiutil in italiano o spagnolo. La verifica della chiave non monta il volume.
+Prima della chiave, un controllo strutturale distingue un'immagine danneggiata
+o incompleta: conserva la copia attuale e ripristina una copia integra; cambiare
+chiave non risolve file mancanti o un token troncato.
 Nei campi protetti **Chiave del compartimento** e **Ripeti la chiave** servono
 almeno 12 byte UTF-8. La chiave passa al worker
 tramite stdin; non viene salvata in file, registro o portachiavi, né inserita
@@ -47,6 +50,10 @@ Finder. Puoi scegliere anche una cartella senza cifrarla. **Cartelle sorvegliate
 mostra le richieste configurate; **Rimuovi** rimuove la richiesta senza modificare
 i file. Lo stato distingue una richiesta salvata dalla conferma del demone:
 soltanto un registro attivo può raccogliere gli eventi successivi.
+Scegliere di nuovo una cartella conserva il suo nome. Per rinominarla dalla CLI,
+usa `registro sorveglia <percorso> --nome Nuovo`: l'ID resta invariato.
+Il montaggio di una cartella protetta usa già il suo ID e non ammette una
+sorveglianza separata.
 
 Filtra con **Cartella**, **File o percorso**, **Processo o PID**, **Agente** e,
 attivando **Intervallo**, **Da** e **A**. **Cerca** applica i filtri; la ricerca
@@ -57,7 +64,11 @@ Seleziona una riga e premi **Apri dettaglio** per vedere tutti i metadati presen
 fonte `paratia` o `eslogger`, PID, utente, app responsabile, cartelle interessate
 e tipo di radice osservata, per esempio originale, montaggio o immagine cifrata.
 La tabella mostra al massimo 2500 eventi; **Esporta CSV…** include tutti quelli
-che corrispondono ai filtri. Un'apertura per lettura non prova una lettura dei
+che corrispondono ai filtri. Accanto al conteggio, anche a **0 eventi**, compare lo stato della raccolta
+kernel per la ricerca: attiva, inattiva o da verificare. Un filtro cartella
+richiede anche la conferma del suo ID. Un percorso sconosciuto o ambiguo mostra
+un messaggio specifico; non viene creato un CSV vuoto al suo posto. Un'apertura
+per lettura non prova una lettura dei
 byte e ogni tentativo fallito non produce necessariamente un evento kernel.
 Vedi [Registro degli accessi](registro-accessi.md).
 
@@ -90,6 +101,13 @@ e **Esporta CSV…** mantengono i dati completi. La prova live è ancora
 **non eseguita**: [workflow e stato del banco](banco-folder-test.md).
 
 ## Impostazioni
+
+Gli hook preferiscono la copia bootstrap protetta e sostituiscono i vecchi
+handler Paratia, conservando gli hook estranei e i backup. Se il codice o i suoi
+antenati sono modificabili dall'utente, le esenzioni CLI a cartella aperta sono
+negate: chiudi dalla GUI o dal Finder. Un alias CLI che punta ancora al repository
+non è esente; non viene modificato automaticamente. La configurazione degli
+harness resta modificabile dal loro proprietario e richiede la sua fiducia.
 
 Per installare il registro, apri la copia bootstrap dell'app preparata
 manualmente in `/Library/Application Support/ParatiaBootstrap/Paratia.app`.
@@ -172,8 +190,10 @@ dell'app Codex. **Ripristina un backup…** ripristina soltanto una configurazio
 ancora uguale a quella installata, preserva modifiche successive e crea un nuovo backup.
 
 Il worker GUI usa Python Apple dei Command Line Tools, compatibile con 3.9,
-in modalità isolata `-I -S`. Gli hook richiedono Python 3.11 o successivo:
-il loro stato risolve il runtime disponibile e segnala una dipendenza mancante.
+in modalità isolata `-I -S`. Gli hook richiedono il runtime Apple dei Command
+Line Tools protetto da root, Python 3.9 o successivo, con `-I -S -B`:
+il loro stato verifica runtime e libreria standard e segnala dipendenze mancanti
+o percorsi non protetti.
 
 ## Costruzione per il manutentore
 

@@ -184,10 +184,14 @@ anche `--file`, `--agente true|false|unknown` oppure il nome dell'agente
 `sorveglia(id, percorso, nome)` registra una cartella plaintext nel file separato
 `~/.paratia/registro/sorveglianza.json`; non la spaccia per un compartimento.
 La cartella deve esistere ed essere di proprietà dell'utente. Ripetere la
-richiesta per lo stesso percorso normalizzato conserva l'ID e il nome esistenti e
-restituisce `riutilizzata: true`, anche se viene passato `--nome X`. La risposta
-include `nome` con il valore effettivo e il messaggio «Sorveglianza esistente
-riutilizzata: ID e nome conservati.». `rimuovi_sorveglianza(id)` elimina la
+richiesta per lo stesso percorso normalizzato conserva l'ID e restituisce
+`riutilizzata: true`. Un nome esplicito non vuoto, per esempio `--nome Nuovo`,
+rinomina la richiesta e restituisce `rinominata: true` e `nome` effettivo.
+Senza nome esplicito, il nome precedente resta invariato: GUI e banco usano
+questa forma. Non si può aggiungere una sorveglianza separata sul percorso
+di montaggio di una cartella protetta: seleziona l'ID già presente nel Registro.
+Il banco riusa direttamente quell'ID nelle prove successive.
+`rimuovi_sorveglianza(id)` elimina la
 richiesta; un ID sconosciuto produce un errore.
 
 `configurata: true` indica una richiesta salvata. `sorvegliata` e
@@ -205,9 +209,20 @@ Il filtro `folder` accetta un ID o un percorso assoluto esatto configurato in
 sorveglianza o fra le cartelle protette. `risolvi_cartella()` converte quel
 percorso nell'ID con gli stessi controlli usati dalla CLI; il worker applica
 questa risoluzione sia a `registro.query` sia a `registro.export_csv`.
-Percorsi sconosciuti o ambigui producono `ValueError`, anziché un risultato
-vuoto; la GUI riceve un errore e non crea il CSV. Gli ID consentono di consultare
+Percorsi sconosciuti o ambigui producono `ErroreRegistro`, sottoclasse di
+`ValueError`, con codici `folder_not_configured` e `folder_ambiguous`, anziché
+un risultato vuoto. La GUI riceve il messaggio specifico e non crea il CSV;
+`protected_folder_watch` spiega il rifiuto di una sorveglianza separata di
+cartella protetta. Gli ID consentono di consultare
 eventi storici anche dopo la rimozione della configurazione.
+
+Le risposte worker di query ed export aggiungono `kernel_active` e
+`kernel_collection`. La vista Registro mostra raccolta attiva, inattiva o da
+verificare accanto al conteggio, anche a **0 eventi**. Attiva richiede processo
+e salute correnti, FDA senza necessità pendenti e schema non dichiarato
+incompatibile; con filtro cartella serve anche l'ID confermato in `watched_ids`.
+I dettagli mantengono la distinzione fra stato del servizio e ACK e dichiarano
+`coverage_guaranteed: false`: non provano la copertura di ogni accesso.
 
 Un filtro `file` assoluto seleziona quel percorso o i suoi discendenti:
 `/a/b` comprende `/a/b/x`, ma esclude `/a/bc/x`. Vengono normalizzati slash,
