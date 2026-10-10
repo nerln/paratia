@@ -7,6 +7,41 @@ not waste turns discovering them.
 
 Source: https://github.com/nerln/paratia — macOS, Python 3.11+, GPL-3.0.
 
+## Native Mac app and registry
+
+The app requires macOS 13+. Its isolated GUI worker supports Apple CLT Python
+3.9; CLI hooks require Python 3.11+. The five sections cover protected folders,
+access history, labels, a four-phase bank and settings. Keys pass through framed
+stdin IPC, never command arguments, environment or persisted metadata.
+
+`paratia registro sorveglia <absolute-folder>` configures a watch of an owned
+folder, including an unencrypted one. `registro sorveglianza` lists requests;
+`registro smetti <id-or-exact-absolute-path>` removes one. `registro elenco`
+and `registro esporta` accept --cartella (ID or exact configured path), --file,
+--processo, --agente true|false|unknown or an agent name, --da and --a. Configuration is not proof
+of collection: healthy daemon state and watched_ids acknowledgement are separate.
+
+The LaunchDaemon is prepared to run the native Paratia binary from a signed,
+root-protected app copy under /Library/Application Support/Paratia. That parent
+remains alive with Python and eslogger as children. The human installs it from
+Impostazioni > Installa il registro using the macOS administrator dialog.
+Full Disk Access must name /Applications/Paratia.app, never Python 3.9.
+After every new ad hoc build, the human removes/re-adds that app entry and
+reinstalls the registry. Do not alter TCC or supply administrator credentials.
+The new native launcher still awaits compilation and live TCC verification.
+
+Registry records contain metadata only. Paratia annotations and eslogger events
+retain separate sources. An open event does not prove bytes were read; failed
+syscalls do not always emit kernel events. Agent ancestry can remain unknown.
+Do not convert a missing match or an unknown classification into certainty.
+
+The human bank on ~/Desktop/folder-test is not executed. It requires a healthy
+registry, acknowledged watches, a chosen external destination and a GUI key.
+CLI vendor probes require separate explicit consent and invoke no models.
+Temporary automated bank tests simulate registry health, disable vendor CLI
+probes and keep kernel matches empty; never present those results as live data.
+See gui-mac.md, registro-accessi.md, banco-folder-test.md and stato-2026-10.md.
+
 
 ## The one-line model
 

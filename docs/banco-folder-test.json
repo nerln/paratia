@@ -18,7 +18,7 @@
   "autorizzazioni_live_verificate": false,
   "prerequisiti": [
     "Installazione del registro autorizzata nel dialogo amministratore macOS",
-    "Accesso completo al disco per /usr/bin/eslogger e registro attivo e sano",
+    "Accesso completo al disco per /Applications/Paratia.app, da riconcedere dopo una nuova build ad hoc, e registro attivo e sano",
     "Accesso al Desktop se richiesto da macOS",
     "Cartella vuota o file sintetici riconosciuti dallo storico del banco",
     "Destinazione sulla SSD AppsAndFiles scelta nella GUI",

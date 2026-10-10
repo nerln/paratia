@@ -9,14 +9,16 @@ e `prove` vuoti e gli orari a `null`.
 
 La destinazione prevista è una cartella scelta sulla SSD **AppsAndFiles**.
 Il nome del volume descrive la destinazione; il banco verifica il disco scelto
-al momento dell'avvio. Questo documento non contiene identificatori del disco,
-credenziali o percorsi del portachiavi.
+al momento dell'avvio. La verifica temporanea separata è descritta nello
+[stato di ottobre 2026](stato-2026-10.md).
 
 ## Avvio dalla GUI
 
 1. In **Impostazioni**, premi **Installa il registro…** e decidi nel dialogo
    amministratore di macOS. Poi premi **Apri Accesso completo al disco**,
-   aggiungi e abilita `/usr/bin/eslogger`. Il registro deve risultare attivo e
+   aggiungi e abilita `/Applications/Paratia.app`. Dopo una nuova build ad hoc,
+   rimuovi e aggiungi di nuovo la voce e reinstalla il registro. Non abilitare
+   Python 3.9. Il registro deve risultare attivo e
    sano; anche la catena locale deve essere verificabile. I dettagli sono in
    [Registro degli accessi](registro-accessi.md).
 2. In **Banco di prova**, premi **Scegli destinazione…** e seleziona una
@@ -86,7 +88,7 @@ cartella chiusa deve avere una misura reale, senza inventare un evento.
 ## Storico e conclusione
 
 Lo storico privato è in `~/.paratia/banco/storico.json`; la GUI lo mostra nel
-riquadro **Storico**. **Esporta JSON…** conserva fasi, conteggi e riscontri;
+riquadro **Ultima prova**, con le prove precedenti espandibili. **Esporta JSON…** conserva fasi, conteggi e riscontri;
 **Esporta CSV…** produce le righe dei probe, con protezione dei valori che
 potrebbero essere interpretati come formule. Nessun export contiene la chiave
 o il contenuto dei file; i metadati possono includere percorsi e processi.
@@ -99,6 +101,10 @@ incompleta, lo storico lo segnala: controlla **Cartelle** e usa **Chiudi tutte**
 **Recupera** o **Annulla migrazione**, secondo lo stato mostrato. Un secondo
 banco concorrente viene rifiutato senza chiudere il compartimento dell'altro.
 
-I test automatici usano cartelle temporanee e processi simulati. Verificano il
-contratto, la privacy e la gestione degli errori; non attestano le autorizzazioni
-di questa macchina né il comportamento delle CLI o del registro sul Desktop.
+I test automatici attraversano l'IPC del worker e il banco usando una cartella
+temporanea e una chiave di prova ricevuta da stdin. Il test portabile simula il
+disco; `strumenti/prova-banco-temporaneo.py` usa invece hdiutil AES-256/APFS e
+ditto su macOS. Entrambi dichiarano simulata la salute del registro, lasciano
+vuoti i riscontri kernel e disabilitano le CLI vendor. La shell misura davvero
+`open`/`fstat`. Verificano il contratto, la privacy e la gestione degli errori;
+non attestano i permessi TCC o il registro sul Desktop.

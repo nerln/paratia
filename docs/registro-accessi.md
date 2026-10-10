@@ -57,8 +57,12 @@ le directory degli utenti hanno modo 0700 e ACL di lettura/ricerca individuale.
 Non viene concesso accesso al gruppo staff. Le ACL preesistenti dei percorsi
 gestiti vengono rimosse prima di applicare quelle previste.
 
-Il codice installato è una copia root-owned in
-`/Library/Application Support/Paratia`. Il servizio non importa codice dal repo,
+Il bundle firmato viene copiato in
+`/Library/Application Support/Paratia/Paratia.app`, insieme ai tre moduli
+del raccoglitore in `/Library/Application Support/Paratia`. Il LaunchDaemon
+esegue `Contents/MacOS/Paratia --registro --uid <uid>`: lo stesso binario
+nativo firmato dell'app, senza avviare la GUI. Questo processo resta vivo e
+avvia Python come figlio. Il servizio non importa codice dal repo,
 dalla home dell'utente o da una venv. Il runtime viene risolto e verificato,
 comprese le ACL che potrebbero consentire modifiche:
 si preferisce il Python Apple dei Command Line Tools sotto `/Library/Developer`,
@@ -89,20 +93,48 @@ cifrato, non prova accessi al testo in chiaro.
 `registro_installa.piano()` prepara gli argv e la plist senza installare nulla.
 Il pulsante **Installa il registro** consegna quel piano al dialogo amministratore
 nativo. La password viene gestita da macOS, mai dall'app o da un modello.
-L'installer copia soltanto i tre moduli previsti, applica proprietà/ACL e registra
-il LaunchDaemon. Non modifica TCC né il portachiavi.
+L'installer verifica la firma ad hoc e il marker del launcher, copia il bundle
+senza symlink o hardlink, verifica che la copia abbia lo stesso CDHash e applica
+proprietà/ACL. Prepara i tre moduli del raccoglitore da quella copia verificata.
+Conserva bundle, moduli e plist precedenti fino al bootstrap; se questo fallisce,
+tenta il ripristino. Non modifica TCC né il portachiavi.
 
 Poi, in **Impostazioni di Sistema → Privacy e Sicurezza → Accesso completo al
-disco**, aggiungi e abilita **`/usr/bin/eslogger`**. Per selezionare il file,
-usa il pulsante `+` e “Vai alla cartella” con `/usr/bin/eslogger`. Come chiarisce
-il manuale Apple locale `man eslogger`, da LaunchDaemon l'autorizzazione deve
-riguardare eslogger stesso. Il servizio riprova con throttling dopo un errore.
+disco**, aggiungi e abilita **`/Applications/Paratia.app`** con il pulsante `+`.
+Dopo ogni nuova build ad hoc, rimuovi la voce precedente e aggiungi di nuovo
+l'app installata; reinstalla il registro per aggiornare anche la copia protetta.
+Non concedere l'Accesso completo al disco a Python 3.9: quel runtime esegue
+anche altri programmi. Il vecchio servizio avviato direttamente da Python deve
+essere reinstallato. `registro stato` indica `launch_mode`, `needs_reinstall`,
+`fda_entry` e `fda_regrant_after_build`.
+
+Le due copie dell'app mantengono la stessa firma verificata. Questa architettura
+mantiene l'eseguibile dell'app come padre del raccoglitore; il riconoscimento
+dell'identità da parte di TCC e il permesso a eslogger restano da verificare live.
+Il servizio riprova con throttling dopo un errore; un heartbeat recente e sano
+è necessario per considerare la raccolta attiva.
 
 La preparazione e i test sintetici non attestano root, FDA, copertura live,
 persistenza al riavvio o correttezza delle ACL installate: questi controlli
 richiedono il clic umano e l'attivazione effettiva del servizio.
 
 ## Banco e API dell'app
+
+La GUI offre **Sorveglia una cartella…**, elenco e rimozione delle richieste.
+Lo stesso dalla CLI:
+
+```sh
+paratia registro sorveglia ~/Documenti/progetto
+paratia registro sorveglianza
+paratia registro elenco --cartella ~/Documenti/progetto --processo nome
+paratia registro esporta --cartella ~/Documenti/progetto
+paratia registro smetti ~/Documenti/progetto
+```
+
+`--cartella` accetta un ID oppure il percorso assoluto esatto di una cartella
+configurata. Un percorso ambiguo richiede la scelta dell'ID. Sono disponibili
+anche `--file`, `--agente true|false|unknown` oppure il nome dell'agente
+(per esempio `--agente Codex`), `--da` e `--a`.
 
 `sorveglia(id, percorso, nome)` registra una cartella plaintext nel file separato
 `~/.paratia/registro/sorveglianza.json`; non la spaccia per un compartimento.

@@ -78,10 +78,10 @@ paratia doctor
 
 Python 3.11+, macOS, no third-party packages.
 
-`pip install` gives you the command and nothing more. The hooks are not a Python
-package and pip does not place them; they are wired into `~/.claude` by hand, in
-the step further down. Skip that step and you have the compartment without the
-gate, which is the half that does not need an agent to cooperate.
+`pip install` gives you the command. The native app is built separately; it can
+review and connect the session hooks while preserving existing configuration.
+For a CLI-only checkout, wire them into `~/.claude` by hand as described below.
+Without that step you have the encrypted compartment without the session gate.
 
 Then, in your own terminal, never in an agent session:
 
@@ -98,6 +98,50 @@ pointing at `hooks/paratia-gate.py`, then seal it so you find out if it changes:
 ```bash
 paratia unlock && paratia seal ~/dev/paratia/hooks/paratia-gate.py ~/.claude/settings.json && paratia lock
 ```
+
+## Mac app, existing folders and access history
+
+The native app for macOS 13+ has **Cartelle**, **Registro**, **Etichette**,
+**Banco di prova** and **Impostazioni**. Protect an existing folder on an external
+disk, choose its passphrase in the GUI, and open or close it there. Migration
+copies and verifies data before removing the source; an interrupted migration
+keeps recovery actions visible. Timed closure retries a busy mount without force.
+
+In **Registro**, use **Sorveglia una cartella…** to choose any supported folder
+you own, including an unencrypted one. Remove watches, filter events by folder,
+file, process, agent and time, and export CSV. Configured watches and daemon
+acknowledgements are shown separately. The CLI offers the same operations:
+
+```sh
+paratia registro sorveglia ~/Documenti/progetto
+paratia registro sorveglianza
+paratia registro elenco --cartella ~/Documenti/progetto
+paratia registro esporta --cartella ~/Documenti/progetto
+paratia registro smetti ~/Documenti/progetto
+```
+
+The registry keeps metadata from Paratia operations and observed kernel events,
+with distinct sources. An open event does not prove a byte read; missing events
+do not prove that no access occurred. **Banco di prova** displays four phases,
+counts, times, measured access results and any matching kernel evidence.
+
+Build locally with Apple Command Line Tools:
+
+```sh
+python3 strumenti/build-app.py --render-fixtures
+open -n build/Paratia.app --args --launch-check
+```
+
+The app signs ad hoc and is not notarized. After installing it in `/Applications`,
+use **Impostazioni → Installa il registro…** and the macOS administrator dialog.
+The daemon launches a native executable in a root-protected copy of the signed
+app, which keeps Python and eslogger as children. In Full Disk Access, enable
+**`/Applications/Paratia.app`**; remove and re-add it after every new ad hoc
+build, and reinstall the registry copy. Do not enable Python 3.9.
+The new native launcher still needs compilation and live TCC verification.
+
+See the [GUI guide](docs/gui-mac.md), [registry limits](docs/registro-accessi.md)
+and [October 2026 implementation and verification status](docs/stato-2026-10.md).
 
 ## Use
 
@@ -244,12 +288,20 @@ already covers, what it does not, and where the unsolved half is publishable.
 ## Tests
 
 ```bash
+python3 -m pytest -p no:cacheprovider -q
 python3 tests/test_gate.py
+python3 tests/test_fanale.py
+python3 tests/test_specchio.py
+python3 tests/test_zone.py
 ```
 
-Sixteen cases against a fake mountpoint and a synthetic transcript, including
-the base64'd path, the compound command hiding behind an allowed one, and the
-tool result that must not be mistaken for a human taking the turn back.
+Tests cover migration and recovery, worker IPC, watches, registry metadata and
+installer rollback fixtures. The temporary bank runs the worker and four real
+shell metadata probes with simulated registry health; it asserts that keys do
+not enter JSON, logs, process arguments or environment. A separate native macOS
+script uses hdiutil; its run is still pending. These tests do not certify live
+TCC permissions or kernel coverage. Counts and commands are recorded in the
+[verification report](docs/stato-2026-10.md).
 
 ## Name
 

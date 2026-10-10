@@ -212,6 +212,43 @@ paratia etichetta piano
 <span class="c"># or do it in a browser, on any of the three operating systems</span>
 paratia finder</code></pre>
 
+<h2>The Mac app and access history</h2>
+
+<p>The native app for macOS 13+ brings protected folders, access history,
+labels, a four-phase test bank and settings into one window. Protect an existing
+folder on an external disk, choose its key in the app, and open or close it
+there. Migration verifies the copy before removing the source and keeps recovery
+actions available after an interruption.</p>
+
+<p>Use <strong>Sorveglia una cartella…</strong> to watch a folder you own,
+including an unencrypted one. Review or remove watches, filter events by folder,
+file, process, agent and time, and export CSV. A saved watch is shown separately
+from its acknowledgement by an active daemon.</p>
+
+<pre><code>paratia registro sorveglia ~/Documenti/progetto
+paratia registro elenco --cartella ~/Documenti/progetto
+paratia registro esporta --cartella ~/Documenti/progetto
+paratia registro smetti ~/Documenti/progetto</code></pre>
+
+<p>The registry distinguishes local Paratia annotations from observed kernel
+events. An open event does not prove that bytes were read; failed accesses may
+have no kernel event. The bank displays four phases with times, counts, measured
+probe results and any kernel matches. The human Desktop bank has not run.</p>
+
+<p>Build the app with <code>python3 strumenti/build-app.py --render-fixtures</code>.
+After installing it, use <strong>Impostazioni → Installa il registro…</strong>
+and the macOS administrator dialog. The daemon is prepared to launch the native
+binary in a signed, root-protected app copy, keeping Python and eslogger as
+children. Enable <strong>/Applications/Paratia.app</strong> in Full Disk Access;
+remove and re-add that entry after every new ad hoc build and reinstall the
+registry. Do not enable Python 3.9. The new launcher still awaits compilation
+and live TCC verification.</p>
+
+<p>Read the <a href="https://github.com/nerln/paratia/blob/master/docs/gui-mac.md">GUI guide</a>,
+<a href="https://github.com/nerln/paratia/blob/master/docs/registro-accessi.md">registry limits</a>
+and <a href="https://github.com/nerln/paratia/blob/master/docs/stato-2026-10.md">October 2026 verification report</a>.
+The app is signed ad hoc and is not notarized.</p>
+
 <h2>Where it came from</h2>
 
 <p>The reason the guard exists in this shape is a measurement. Two coding agents
