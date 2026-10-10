@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import plistlib
@@ -11,6 +12,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+BOOTSTRAP_ROOT = Path("/Library/Application Support/ParatiaBootstrap/Paratia.app/Contents/Resources/python")
 MODULES = ("paratia.py", "gui_worker.py", "cartelle.py", "etichette.py", "registro.py", "catena.py",
            "registro_installa.py", "registro_daemon.py", "banco.py", "hookinstaller.py")
 
@@ -58,14 +60,26 @@ def main():
         source = ROOT / name
         (resources / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, resources / name)
-    # The installed hook also accepts the real development CLI. Seal its fixed
-    # canonical identity in the app; neither a payload nor PATH can add paths.
+    # Only the manually prepared root-protected bootstrap is exempt from the
+    # mount guard. The developer repository never becomes a trusted identity.
     cli_source = ROOT / "paratia.py"
     if cli_source.is_symlink() or not cli_source.is_file():
         raise ValueError("The source CLI must be a regular file.")
     (resources / "hooks" / "paratia-cli.json").write_text(
-        json.dumps({"versione": 1, "sorgente": str(cli_source.resolve(strict=True))},
+        json.dumps({"versione": 2, "cli": str(BOOTSTRAP_ROOT / "paratia.py"),
+                    "hook_legacy": str((ROOT / "hooks" / "paratia-gate.py").resolve(strict=True))},
                    ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+    # Use env's explicit split mode: kernels do not split multiple shebang
+    # arguments. Only the bundled copy changes; the repository CLI is intact.
+    spec = importlib.util.spec_from_file_location("paratia_build_hookinstaller", ROOT / "hookinstaller.py")
+    hookinstaller = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hookinstaller)
+    runtime = hookinstaller._runtime()
+    cli_copy = resources / "paratia.py"
+    lines = cli_copy.read_text(encoding="utf-8").splitlines(keepends=True)
+    lines[0] = "#!/usr/bin/env -S " + str(runtime) + " -I -S -B\n"
+    cli_copy.write_text("".join(lines), encoding="utf-8")
+    cli_copy.chmod(0o755)
     info = {"CFBundleIdentifier": "it.paratia.app", "CFBundleName": "Paratia", "CFBundleDisplayName": "Paratia",
             "CFBundleExecutable": "Paratia", "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "1.0",
             "CFBundleVersion": "1", "LSMinimumSystemVersion": "13.0", "NSHighResolutionCapable": True,

@@ -1,7 +1,7 @@
 """Reviewable, reversible user hook configuration for the native Paratia app.
 
-This module remains importable by Apple's Python 3.9. The gate itself runs with
-an absolute Python 3.11+ executable. Codex hook trust is always a human action:
+This module and the gate run with protected Apple's Python 3.9 or newer,
+isolated from user imports. Codex hook trust is always a human action:
 this helper neither writes trust state nor changes feature/bypass settings.
 """
 from __future__ import annotations
@@ -9,10 +9,13 @@ from __future__ import annotations
 import base64
 import contextlib
 import copy
+import ctypes
+import errno
 import fcntl
 import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 import stat
@@ -26,6 +29,10 @@ MAX_JSON = 4 * 1024**2
 MAX_BACKUP = 8 * 1024**2
 DOCS = "https://learn.chatgpt.com/docs/hooks"
 TARGETS = {"claude": (".claude", "settings.json"), "codex": (".codex", "hooks.json")}
+BOOTSTRAP_ROOT = Path("/Library/Application Support/ParatiaBootstrap/Paratia.app/Contents/Resources/python")
+PYTHON_VERSIONS = Path("/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions")
+BOOTSTRAP_ASSETS = ("paratia.py", "cartelle.py", "registro.py", "catena.py", "hookinstaller.py",
+                    "hooks/paratia-gate.py", "hooks/paratia-cli.json")
 EVENTS = {"SessionStart": 120, "PreToolUse": 5}
 MESSAGE = ("Hook configurati. Riavvia le sessioni. In Codex apri /hooks "
            "(o la gestione hook dell'app) e verifica/approva la definizione: "
@@ -34,6 +41,150 @@ MESSAGE = ("Hook configurati. Riavvia le sessioni. In Codex apri /hooks "
 
 class Rifiuto(Exception):
     """A config could not be changed without risking existing user settings."""
+
+
+def _acl_write_safe(path):
+    """Darwin's extended ACL, with the same write grants as the native bridge."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        library = ctypes.CDLL(None, use_errno=True)
+        for name, args, result in (
+            ("acl_get_file", [ctypes.c_char_p, ctypes.c_int], ctypes.c_void_p),
+            ("acl_get_entry", [ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p)], ctypes.c_int),
+            ("acl_get_tag_type", [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)], ctypes.c_int),
+            ("acl_get_permset", [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)], ctypes.c_int),
+            ("acl_get_perm_np", [ctypes.c_void_p, ctypes.c_int], ctypes.c_int),
+            ("acl_valid", [ctypes.c_void_p], ctypes.c_int),
+            ("acl_free", [ctypes.c_void_p], ctypes.c_int),
+        ):
+            function = getattr(library, name)
+            function.argtypes, function.restype = args, result
+        ctypes.set_errno(0)
+        acl = library.acl_get_file(os.fsencode(path), 0x100)  # ACL_TYPE_EXTENDED
+        if not acl:
+            return ctypes.get_errno() in (errno.ENOENT, errno.ENOTSUP)
+        try:
+            if library.acl_valid(acl) != 0:
+                return False
+            position = 0  # ACL_FIRST_ENTRY; ACL_NEXT_ENTRY is -1 on Darwin.
+            for _ in range(4096):
+                entry = ctypes.c_void_p()
+                ctypes.set_errno(0)
+                result = library.acl_get_entry(acl, position, ctypes.byref(entry))
+                if result != 0:
+                    # Darwin documents EINVAL at the end of a valid ACL.
+                    # Unexpected read errors are never treated as empty ACLs.
+                    return result == -1 and ctypes.get_errno() == errno.EINVAL and library.acl_valid(acl) == 0
+                position = -1
+                tag, permissions = ctypes.c_int(), ctypes.c_void_p()
+                if (library.acl_get_tag_type(entry, ctypes.byref(tag))
+                        or library.acl_get_permset(entry, ctypes.byref(permissions))):
+                    return False
+                if tag.value == 1 and any(library.acl_get_perm_np(permissions, 1 << bit)
+                                          for bit in (2, 4, 5, 6, 8, 10, 12, 13)):
+                    return False
+            return False
+        finally:
+            library.acl_free(acl)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
+
+
+def _root_path(path, cache=None):
+    """lstat every component: no aliases, non-root owners, writes or write ACLs."""
+    path = Path(path)
+    if (not path.is_absolute() or str(path) != os.path.normpath(str(path))
+            or str(path).startswith("//") or any(p in (".", "..") for p in path.parts)):
+        return False
+    cache = {} if cache is None else cache
+    for current in (path, *path.parents):
+        name = str(current)
+        if name not in cache:
+            try:
+                metadata = os.lstat(current)
+                cache[name] = (metadata.st_uid == 0 and not metadata.st_mode & 0o022
+                               and (stat.S_ISREG(metadata.st_mode) or stat.S_ISDIR(metadata.st_mode))
+                               and _acl_write_safe(current))
+            except OSError:
+                cache[name] = False
+        if not cache[name]:
+            return False
+    return True
+
+
+def _root_tree(root, cache=None, runtime_version=None):
+    """Check all transitive code, including bytecode and extension modules."""
+    cache = {} if cache is None else cache
+    if not _root_path(root, cache) or not Path(root).is_dir():
+        return False
+    pending, count = [Path(root)], 0
+    try:
+        while pending:
+            for entry in os.scandir(pending.pop()):
+                count += 1
+                if count > 20_000:
+                    return False
+                path = Path(entry.path)
+                # Apple ships two build/linker aliases in this non-importable
+                # config directory. Their fixed root-owned links must point to
+                # the checked framework binary. Application resources have no
+                # such exception; every alias there is refused.
+                if runtime_version and entry.is_symlink():
+                    relative = path.relative_to(root).as_posix()
+                    aliases = {f"config-{runtime_version}-darwin/libpython{runtime_version}.a",
+                               f"config-{runtime_version}-darwin/libpython{runtime_version}.dylib"}
+                    metadata = os.lstat(path)
+                    target = Path(root).parent.parent / "Python3"
+                    if (relative not in aliases or metadata.st_uid != 0
+                            or os.readlink(path) != "../../../Python3"
+                            or not _root_path(path.parent, cache) or not _root_path(target, cache)):
+                        return False
+                    continue
+                if not _root_path(path, cache):
+                    return False
+                if entry.is_dir(follow_symlinks=False):
+                    # -S prevents this directory being added to sys.path.
+                    if not (runtime_version and path == Path(root) / "site-packages"):
+                        pending.append(path)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _protected_runtime(binary):
+    binary = Path(binary)
+    version = binary.parent.parent
+    if (binary.parent.name != "bin" or version.parent != PYTHON_VERSIONS
+            or not re.fullmatch(r"3\.(?:9|[1-9][0-9]+)", version.name)
+            or not re.fullmatch(r"python3(?:\.[0-9]+)?", binary.name)):
+        return False
+    cache = {}
+    return (_root_path(binary, cache) and binary.is_file()
+            and _root_path(version / "Python3", cache)
+            and _root_tree(version / "lib" / ("python" + version.name), cache,
+                           runtime_version=version.name))
+
+
+def _protected_bootstrap(root=None):
+    root = BOOTSTRAP_ROOT if root is None else Path(root)
+    if root != BOOTSTRAP_ROOT or not _root_tree(root):
+        return False
+    try:
+        if not all((root / relative).is_file() for relative in BOOTSTRAP_ASSETS):
+            return False
+        manifest = root / "hooks" / "paratia-cli.json"
+        if manifest.stat().st_size > 8192:
+            return False
+        data = json.loads(manifest.read_text())
+        if (not isinstance(data, dict) or set(data) != {"versione", "cli", "hook_legacy"}
+                or data["versione"] != 2 or data["cli"] != str(root / "paratia.py")):
+            return False
+        legacy = data["hook_legacy"]
+        return (isinstance(legacy, str) and legacy.startswith("/")
+                and legacy == os.path.normpath(legacy) and not legacy.startswith("//"))
+    except (OSError, ValueError, TypeError):
+        return False
 
 
 def _digest(data):
@@ -156,60 +307,24 @@ def _directories(home, create=False):
                     os.close(lock)
 
 
-def _stable_runtime_path(candidate):
-    """Retain stable launch aliases instead of freezing Homebrew Cellar versions."""
-    path = Path(candidate)
-    if "Cellar" not in path.parts:
-        return path
-    index = path.parts.index("Cellar")
-    if len(path.parts) <= index + 2:
-        return None
-    prefix = Path(*path.parts[:index])
-    formula = path.parts[index + 1]
-    target = path.resolve(strict=True)
-    aliases = [prefix / "bin" / "python3", prefix / "bin" / path.name,
-               prefix / "opt" / formula / "bin" / path.name,
-               prefix / "opt" / formula / "libexec" / "bin" / "python3"]
-    for alias in aliases:
-        try:
-            if alias.resolve(strict=True) == target:
-                return alias
-        except OSError:
-            continue
-    return None
-
-
 def _runtime(executable=None):
-    candidates = [executable] if executable is not None else [
-        "/opt/homebrew/bin/python3", "/usr/local/bin/python3", sys.executable,
-        *(shutil.which("python3.%d" % minor) for minor in range(14, 10, -1)),
-    ]
+    candidates = [executable] if executable is not None else sorted(
+        PYTHON_VERSIONS.glob("3.*/bin/python3.*"), reverse=True)
     for candidate in candidates:
         if not candidate or not Path(candidate).is_absolute():
             continue
         try:
-            alias = _stable_runtime_path(candidate)
-            if alias is None:
-                continue
-            p = alias.resolve(strict=True)
-            if not p.is_file() or not os.access(p, os.X_OK):
-                continue
-            if p == Path(sys.executable).resolve() and sys.version_info[:2] >= (3, 11):
-                return alias
-            check = subprocess.run([str(alias), "-I", "-S", "-c",
-                                    "import sys; print('%d.%d' % sys.version_info[:2])"],
-                                   capture_output=True, timeout=5, check=False)
-            if check.returncode == 0 and len(check.stdout) < 64:
-                version = tuple(int(v) for v in check.stdout.decode("ascii").strip().split("."))
-                if len(version) == 2 and version >= (3, 11):
-                    return alias
-        except (OSError, ValueError, subprocess.SubprocessError):
+            p = Path(candidate).resolve(strict=True)
+            if os.access(p, os.X_OK) and _protected_runtime(p):
+                return p
+        except (OSError, ValueError, RuntimeError):
             continue
-    raise Rifiuto("Gli hook richiedono Python 3.11 o successivo con percorso assoluto e stabile, per esempio /opt/homebrew/bin/python3; non usare una versione sotto Cellar.")
+    raise Rifiuto("Gli hook richiedono il Python Apple 3.9 o successivo dei Command Line Tools, con runtime e libreria standard protetti da root. Ripristina i Command Line Tools prima di configurarli.")
 
 
 def _parameters(resource_root=None, python_executable=None):
-    root = Path(resource_root if resource_root is not None else Path(__file__).resolve().parent)
+    root = BOOTSTRAP_ROOT if _protected_bootstrap() else Path(
+        resource_root if resource_root is not None else Path(__file__).resolve().parent)
     if not root.is_absolute() or str(root) != os.path.normpath(str(root)):
         raise Rifiuto("Le risorse dell'app richiedono un percorso assoluto.")
     script = root / "hooks" / "paratia-gate.py"
@@ -224,7 +339,7 @@ def _parameters(resource_root=None, python_executable=None):
         if not stat.S_ISREG(s.st_mode) or s.st_uid not in (0, os.getuid()) or s.st_size > MAX_JSON:
             raise Rifiuto("Una risorsa hook non è un file ordinario attendibile.")
     python = _runtime(python_executable)
-    command = " ".join(shlex.quote(str(p)) for p in (python, "-I", "-S", script))
+    command = " ".join(shlex.quote(str(p)) for p in (python, "-I", "-S", "-B", script))
     wanted = {}
     for harness in TARGETS:
         call = command + (" --codex" if harness == "codex" else "")
@@ -234,8 +349,44 @@ def _parameters(resource_root=None, python_executable=None):
     return wanted
 
 
-def _build(handles, wanted):
+def _legacy_scripts(resource_root=None):
+    scripts = {str(Path(__file__).resolve().parent / "hooks" / "paratia-gate.py"),
+               "/Applications/Paratia.app/Contents/Resources/python/hooks/paratia-gate.py",
+               str(BOOTSTRAP_ROOT / "hooks" / "paratia-gate.py")}
+    if resource_root is not None:
+        scripts.add(str(Path(resource_root) / "hooks" / "paratia-gate.py"))
+    if _protected_bootstrap():
+        data = json.loads((BOOTSTRAP_ROOT / "hooks" / "paratia-cli.json").read_text())
+        # This field removes a previous exact handler; it never adds a CLI
+        # identity or authorizes execution of code at the legacy path.
+        scripts.add(data["hook_legacy"])
+    return scripts
+
+
+def _own_legacy_handler(handler, harness, event, scripts):
+    if (not isinstance(handler, dict) or set(handler) != {"type", "command", "timeout"}
+            or handler["type"] != "command" or handler["timeout"] != EVENTS[event]
+            or not isinstance(handler["command"], str)):
+        return False
+    try:
+        argv = shlex.split(handler["command"])
+    except ValueError:
+        return False
+    if (not argv or not os.path.isabs(argv[0])
+            or not re.fullmatch(r"python3(?:\.[0-9]+)?", Path(argv[0]).name)):
+        return False
+    tail = ["--codex"] if harness == "codex" else []
+    for flags in (["-I", "-S"], ["-I", "-S", "-B"]):
+        if (len(argv) == len(flags) + 2 + len(tail) and argv[1:1 + len(flags)] == flags
+                and argv[1 + len(flags)] in scripts and argv[2 + len(flags):] == tail):
+            return True
+    return False
+
+
+def _build(handles, wanted, resource_root=None):
     plans = []
+    migrate = _protected_bootstrap()
+    scripts = _legacy_scripts(resource_root) if migrate else set()
     for harness, (directory, name) in TARGETS.items():
         before, mode = _read(handles[harness], name)
         document = _json(before) if before is not None else {}
@@ -245,10 +396,29 @@ def _build(handles, wanted):
         merged = copy.deepcopy(document)
         merged.setdefault("hooks", {})
         events = {}
+        migrated = False
         for event, group in wanted[harness].items():
             groups = hooks.get(event, [])
             if not isinstance(groups, list) or any(not isinstance(g, dict) for g in groups):
                 raise Rifiuto("Un evento hook esistente non contiene gruppi validi.")
+            if migrate:
+                kept = []
+                for existing in groups:
+                    if existing == group:
+                        kept.append(existing)
+                        continue
+                    # Native definitions have a '*' matcher. Keep every
+                    # foreign group field and foreign handler byte-for-byte.
+                    if existing.get("matcher") == "*" and isinstance(existing.get("hooks"), list):
+                        handlers = [h for h in existing["hooks"] if not _own_legacy_handler(h, harness, event, scripts)]
+                        if handlers != existing["hooks"]:
+                            migrated = True
+                            if handlers:
+                                kept.append({**existing, "hooks": handlers})
+                            continue
+                    kept.append(existing)
+                groups = kept
+                merged["hooks"][event] = copy.deepcopy(groups)
             events[event] = group in groups
             if not events[event]:
                 merged["hooks"].setdefault(event, []).append(copy.deepcopy(group))
@@ -259,7 +429,7 @@ def _build(handles, wanted):
         if len(after) > MAX_JSON:
             raise Rifiuto("La configurazione unita supera il limite consentito.")
         # A configured document is left byte-for-byte unchanged, including whitespace.
-        changed = not all(events.values())
+        changed = migrated or not all(events.values())
         plans.append({"harness": harness, "directory": directory, "name": name,
                       "before": before, "after": after if changed else before,
                       "mode": mode, "events": events, "changed": changed,
@@ -279,17 +449,21 @@ def _summary(path, plans):
         "la definizione in /hooks o nella gestione hook dell'app Codex.")
     if any(h["disabled_in_settings"] for h in harnesses.values()):
         message += " Le impostazioni esistenti disattivano gli hook: riabilitali nell'harness."
+    protected = _protected_bootstrap()
+    if not protected:
+        message += " Copia bootstrap protetta non disponibile: a cartella aperta non è consentita alcuna esenzione CLI. Chiudi le cartelle dall'app Paratia aperta dal Finder."
     return {"configured": configured,
             "harnesses": harnesses, "needs_human_trust": True,
             "codex_trust": "unknown", "delegation_provider": "claude-transcript",
-            "codex_delegation_verified": False, "docs": DOCS, "message": message}
+            "codex_delegation_verified": False, "protected_closure": protected,
+            "docs": DOCS, "message": message}
 
 
 def piano(resource_root=None, python_executable=None, *, home=None):
     """Read configs and describe only proposed handlers, without exposing foreign values."""
     wanted = _parameters(resource_root, python_executable)
     with _directories(home) as (path, handles):
-        plans = _build(handles, wanted)
+        plans = _build(handles, wanted, resource_root)
         result = _summary(path, plans)
         result["changes"] = [{"harness": p["harness"], "path": str(path / p["directory"] / p["name"]),
                               "changed": p["changed"], "hooks": wanted[p["harness"]]} for p in plans]
@@ -351,7 +525,7 @@ def installa(resource_root=None, python_executable=None, *, home=None):
     """User-invoked merge; both originals are backed up before either replacement."""
     wanted = _parameters(resource_root, python_executable)
     with _directories(home, create=True) as (path, handles):
-        plans = _build(handles, wanted)
+        plans = _build(handles, wanted, resource_root)
         changed = [p for p in plans if p["changed"]]
         backups = []
         try:
@@ -379,7 +553,7 @@ def installa(resource_root=None, python_executable=None, *, home=None):
                 "Il ripristino è incompleto: conserva i backup e riapri le impostazioni degli hook."))
             refusal.backups = backups
             raise refusal from exc
-        result = _summary(path, _build(handles, wanted))
+        result = _summary(path, _build(handles, wanted, resource_root))
         result.update(changed=bool(changed), backups=backups)
         return result
 

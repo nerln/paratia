@@ -99,8 +99,8 @@ def main() -> int:
             )),
         )
         verifica(
-            "compartment open still allows `paratia lock`",
-            gate({"tool_name": "Bash", "tool_input": {"command": "paratia lock"}}, mount="/", home=str(casa)) is None,
+            "compartment open refuses user-writable `paratia lock`",
+            negato(gate({"tool_name": "Bash", "tool_input": {"command": "paratia lock"}}, mount="/", home=str(casa))),
         )
         verifica(
             "compartment open refuses `paratia lock` with something appended",
@@ -112,8 +112,8 @@ def main() -> int:
         for command in ("paratia cartella chiudi one", "paratia cartella chiudi-tutte",
                         str(casa / "bin" / "paratia") + " cartella chiudi one",
                         "python3 " + str(GATE.parent.parent / "paratia.py") + " cartella chiudi-tutte"):
-            verifica("compartment open allows real CLI: " + command,
-                     gate({"tool_name": "Bash", "tool_input": {"command": command}}, mount="/", home=str(casa)) is None)
+            verifica("compartment open refuses repository CLI: " + command,
+                     negato(gate({"tool_name": "Bash", "tool_input": {"command": command}}, mount="/", home=str(casa))))
         fake = d / "paratia.py"
         fake.write_text("# same name is not the real program\n")
         verifica("compartment open refuses another paratia.py",

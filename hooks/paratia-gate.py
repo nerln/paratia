@@ -40,12 +40,16 @@ the Claude transcript provider and is not claimed for the Codex adapter.
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import fnmatch
 import json
 import os
+import pwd
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -55,6 +59,10 @@ sys.dont_write_bytecode = True
 CASA = Path(os.environ.get("PARATIA_HOME", Path.home() / ".paratia"))
 MONTAGGIO = Path(os.environ.get("PARATIA_MOUNT", "/Volumes/paratia"))
 REGOLE = CASA / "dogana.json"
+BOOTSTRAP_ROOT = Path("/Library/Application Support/ParatiaBootstrap/Paratia.app/Contents/Resources/python")
+PYTHON_VERSIONS = Path("/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions")
+BOOTSTRAP_ASSETS = ("paratia.py", "cartelle.py", "registro.py", "catena.py", "hookinstaller.py",
+                    "hooks/paratia-gate.py", "hooks/paratia-cli.json")
 
 # Tools that only a human in the chair may ask for. Baked in rather than only
 # configured, so deleting the config file loosens nothing — it is the floor, and
@@ -88,33 +96,163 @@ PERMESSI_APERTO = (
 )
 
 
+def _acl_write_safe(path):
+    """Darwin's extended ACL, with the same write grants as the native bridge."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        library = ctypes.CDLL(None, use_errno=True)
+        for name, args, result in (
+            ("acl_get_file", [ctypes.c_char_p, ctypes.c_int], ctypes.c_void_p),
+            ("acl_get_entry", [ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p)], ctypes.c_int),
+            ("acl_get_tag_type", [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)], ctypes.c_int),
+            ("acl_get_permset", [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)], ctypes.c_int),
+            ("acl_get_perm_np", [ctypes.c_void_p, ctypes.c_int], ctypes.c_int),
+            ("acl_valid", [ctypes.c_void_p], ctypes.c_int),
+            ("acl_free", [ctypes.c_void_p], ctypes.c_int),
+        ):
+            function = getattr(library, name)
+            function.argtypes, function.restype = args, result
+        ctypes.set_errno(0)
+        acl = library.acl_get_file(os.fsencode(path), 0x100)  # ACL_TYPE_EXTENDED
+        if not acl:
+            return ctypes.get_errno() in (errno.ENOENT, errno.ENOTSUP)
+        try:
+            if library.acl_valid(acl) != 0:
+                return False
+            position = 0  # ACL_FIRST_ENTRY; ACL_NEXT_ENTRY is -1 on Darwin.
+            for _ in range(4096):
+                entry = ctypes.c_void_p()
+                ctypes.set_errno(0)
+                result = library.acl_get_entry(acl, position, ctypes.byref(entry))
+                if result != 0:
+                    # Darwin documents EINVAL at the end of a valid ACL.
+                    # Unexpected read errors are never treated as empty ACLs.
+                    return result == -1 and ctypes.get_errno() == errno.EINVAL and library.acl_valid(acl) == 0
+                position = -1
+                tag, permissions = ctypes.c_int(), ctypes.c_void_p()
+                if (library.acl_get_tag_type(entry, ctypes.byref(tag))
+                        or library.acl_get_permset(entry, ctypes.byref(permissions))):
+                    return False
+                if tag.value == 1 and any(library.acl_get_perm_np(permissions, 1 << bit)
+                                          for bit in (2, 4, 5, 6, 8, 10, 12, 13)):
+                    return False
+            return False
+        finally:
+            library.acl_free(acl)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
+
+
+def _root_path(path, cache=None):
+    """lstat every component: no aliases, non-root owners, writes or write ACLs."""
+    path = Path(path)
+    if (not path.is_absolute() or str(path) != os.path.normpath(str(path))
+            or str(path).startswith("//") or any(p in (".", "..") for p in path.parts)):
+        return False
+    cache = {} if cache is None else cache
+    for current in (path, *path.parents):
+        name = str(current)
+        if name not in cache:
+            try:
+                metadata = os.lstat(current)
+                cache[name] = (metadata.st_uid == 0 and not metadata.st_mode & 0o022
+                               and (stat.S_ISREG(metadata.st_mode) or stat.S_ISDIR(metadata.st_mode))
+                               and _acl_write_safe(current))
+            except OSError:
+                cache[name] = False
+        if not cache[name]:
+            return False
+    return True
+
+
+def _root_tree(root, cache=None, runtime_version=None):
+    """Check all transitive code, including bytecode and extension modules."""
+    cache = {} if cache is None else cache
+    if not _root_path(root, cache) or not Path(root).is_dir():
+        return False
+    pending, count = [Path(root)], 0
+    try:
+        while pending:
+            for entry in os.scandir(pending.pop()):
+                count += 1
+                if count > 20_000:
+                    return False
+                path = Path(entry.path)
+                # Apple ships two build/linker aliases in this non-importable
+                # config directory. Their fixed root-owned links must point to
+                # the checked framework binary. Application resources have no
+                # such exception; every alias there is refused.
+                if runtime_version and entry.is_symlink():
+                    relative = path.relative_to(root).as_posix()
+                    aliases = {f"config-{runtime_version}-darwin/libpython{runtime_version}.a",
+                               f"config-{runtime_version}-darwin/libpython{runtime_version}.dylib"}
+                    metadata = os.lstat(path)
+                    target = Path(root).parent.parent / "Python3"
+                    if (relative not in aliases or metadata.st_uid != 0
+                            or os.readlink(path) != "../../../Python3"
+                            or not _root_path(path.parent, cache) or not _root_path(target, cache)):
+                        return False
+                    continue
+                if not _root_path(path, cache):
+                    return False
+                if entry.is_dir(follow_symlinks=False):
+                    # -S prevents this directory being added to sys.path.
+                    if not (runtime_version and path == Path(root) / "site-packages"):
+                        pending.append(path)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _protected_runtime(binary):
+    binary = Path(binary)
+    version = binary.parent.parent
+    if (binary.parent.name != "bin" or version.parent != PYTHON_VERSIONS
+            or not re.fullmatch(r"3\.(?:9|[1-9][0-9]+)", version.name)
+            or not re.fullmatch(r"python3(?:\.[0-9]+)?", binary.name)):
+        return False
+    cache = {}
+    return (_root_path(binary, cache) and binary.is_file()
+            and _root_path(version / "Python3", cache)
+            and _root_tree(version / "lib" / ("python" + version.name), cache,
+                           runtime_version=version.name))
+
+
+def _protected_bootstrap(root=None):
+    root = BOOTSTRAP_ROOT if root is None else Path(root)
+    if root != BOOTSTRAP_ROOT or not _root_tree(root):
+        return False
+    try:
+        if not all((root / relative).is_file() for relative in BOOTSTRAP_ASSETS):
+            return False
+        manifest = root / "hooks" / "paratia-cli.json"
+        if manifest.stat().st_size > 8192:
+            return False
+        data = json.loads(manifest.read_text())
+        if (not isinstance(data, dict) or set(data) != {"versione", "cli", "hook_legacy"}
+                or data["versione"] != 2 or data["cli"] != str(root / "paratia.py")):
+            return False
+        legacy = data["hook_legacy"]
+        return (isinstance(legacy, str) and legacy.startswith("/")
+                and legacy == os.path.normpath(legacy) and not legacy.startswith("//"))
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+
 def cli_attendibili() -> set[Path]:
-    """Fixed code identities; payload, PATH and user settings cannot add one."""
-    radice = Path(__file__).resolve().parent.parent
-    locale = radice / "paratia.py"
-    percorsi = {locale} if locale.is_file() and not locale.is_symlink() else set()
-    manifesto = Path(__file__).resolve().with_name("paratia-cli.json")
-    if manifesto.exists() or manifesto.is_symlink():
-        if manifesto.is_symlink() or not manifesto.is_file() or manifesto.stat().st_size > 8192:
-            raise ValueError("manifesto CLI non valido")
-        dati = json.loads(manifesto.read_text())
-        if (not isinstance(dati, dict) or set(dati) != {"versione", "sorgente"}
-                or dati["versione"] != 1 or not isinstance(dati["sorgente"], str)):
-            raise ValueError("manifesto CLI non valido")
-        sorgente = Path(dati["sorgente"])
-        if (not sorgente.is_absolute() or str(sorgente) != dati["sorgente"]
-                or str(sorgente) != os.path.normpath(str(sorgente))
-                or str(sorgente).startswith("//")):
-            raise ValueError("percorso CLI non valido")
-        # Do not resolve this stored identity again: replacing it by a symlink
-        # must not change which program the manifest authorizes.
-        if sorgente.is_file() and not sorgente.is_symlink():
-            percorsi.add(sorgente)
-    return percorsi
+    """The running hook and every application module must be root-protected."""
+    root = Path(__file__).resolve().parent.parent
+    return {BOOTSTRAP_ROOT / "paratia.py"} if _protected_bootstrap(root) else set()
 
 
 def eseguibile_reale(nome: str) -> Path | None:
     """Resolve a call, never use its basename as evidence of its identity."""
+    if nome.startswith("~/"):
+        # HOME can be supplied by a tool payload or harness environment. The
+        # account database supplies the operator's real home for this alias.
+        nome = str(Path(pwd.getpwuid(os.getuid()).pw_dir) / nome[2:])
     if os.path.isabs(nome):
         percorso = nome
     elif nome in ("paratia", "python3"):
@@ -142,29 +280,47 @@ def comando_sicuro_aperto(dati: dict) -> bool:
         argv = list(parser)
         if not argv:
             return False
+        if any(value.startswith("~/") for value in argv):
+            # The gate resolves ~ from passwd; reject a mismatched shell HOME
+            # as well, because that shell would otherwise expand another path.
+            if os.environ.get("HOME") != pwd.getpwuid(os.getuid()).pw_dir:
+                return False
         attendibili = cli_attendibili()
+        if not attendibili or any(name.startswith("DYLD_") for name in os.environ):
+            return False
         programma = eseguibile_reale(argv[0])
         if programma in attendibili:
+            # A direct script needs exactly the trusted isolated shebang. A
+            # plain env/python3 shebang could load a user sitecustomize first.
+            if not _root_path(Path("/usr/bin/env")):
+                return False
+            with programma.open("rb") as source:
+                shebang = source.readline(1024).decode("ascii").rstrip("\n")
+            prefix = "#!/usr/bin/env -S "
+            if not shebang.startswith(prefix):
+                return False
+            runtime_args = shlex.split(shebang[len(prefix):])
+            if (len(runtime_args) != 4 or runtime_args[1:] != ["-I", "-S", "-B"]
+                    or not os.path.isabs(runtime_args[0])
+                    or not _protected_runtime(Path(runtime_args[0]))):
+                return False
             argomenti = argv[1:]
         else:
-            # Fixed installed runtimes, plus the interpreter running this hook.
-            # Resolving PATH finds the actual call but cannot add a trusted one.
-            runtimes = set()
-            for nome in (sys.executable, "/usr/bin/python3", "/opt/homebrew/bin/python3", "/usr/local/bin/python3"):
-                runtime = eseguibile_reale(nome)
-                if runtime is not None:
-                    runtimes.add(runtime)
-            if programma not in runtimes or len(argv) < 2 or not os.path.isabs(argv[1]):
+            # Isolation excludes PYTHONPATH, PYTHONHOME, cwd and user/site
+            # customization. An otherwise genuine interpreter is insufficient.
+            if (programma is None or not _protected_runtime(programma) or len(argv) < 5
+                    or argv[1:4] != ["-I", "-S", "-B"]
+                    or not (os.path.isabs(argv[4]) or argv[4].startswith("~/"))):
                 return False
-            script = eseguibile_reale(argv[1])
+            script = eseguibile_reale(argv[4])
             if script not in attendibili:
                 return False
-            argomenti = argv[2:]
+            argomenti = argv[5:]
         if argomenti in PERMESSI_APERTO:
             return True
         return (len(argomenti) == 3 and argomenti[:2] == ["cartella", "chiudi"]
                 and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", argomenti[2]) is not None)
-    except (OSError, ValueError, TypeError, RuntimeError):
+    except (OSError, ValueError, TypeError, RuntimeError, KeyError, UnicodeError):
         return False
 
 
@@ -214,9 +370,17 @@ def compartimento_aperto() -> bool:
 def chiudi_inizio_sessione() -> int:
     """SessionStart closes compartments; ordinary tool calls keep denying open ones."""
     try:
+        # Already closed needs no imported disk backend. This also lets an
+        # unprotected fallback keep ordinary sessions usable while closed.
+        if not compartimento_aperto():
+            return 0
         import importlib.util
-        modulo = Path(__file__).resolve().parent.parent / "cartelle.py"
         if (CASA / "cartelle.json").exists():
+            root = Path(__file__).resolve().parent.parent
+            if (not _protected_bootstrap(root) or not sys.flags.isolated or not sys.flags.no_site
+                    or not _protected_runtime(Path(sys.executable).resolve(strict=True))):
+                raise RuntimeError("la chiusura automatica richiede codice e runtime protetti")
+            modulo = root / "cartelle.py"
             spec = importlib.util.spec_from_file_location("cartelle_session_start", modulo)
             cartelle = importlib.util.module_from_spec(spec)
             sys.modules[spec.name] = cartelle
@@ -356,8 +520,14 @@ def main(*, codex: bool = False) -> int:
             "tool call is refused until it is closed. Allowed commands / Comandi consentiti: "
             "`paratia cartella chiudi <id>`, `paratia cartella chiudi-tutte`, `paratia lock`, "
             "`paratia status`, `paratia status --json`, `paratia cartella elenco`. "
-            "Equivalent absolute paths and `python3 /absolute/path/paratia.py ...` are allowed "
-            "only when they resolve to the real Paratia CLI. Close protected folders with "
+            "These exceptions require the root-protected ParatiaBootstrap CLI, every Python "
+            "resource and Apple's protected runtime. Python calls require `PYTHON_APPLE -I -S -B "
+            "/Library/Application Support/ParatiaBootstrap/Paratia.app/Contents/Resources/python/paratia.py ...` "
+            "with the script path quoted. Equivalent absolute paths or ~/.local/bin/paratia "
+            "must resolve to that protected copy. If this protection is unavailable, no CLI "
+            "exception is allowed: open Paratia from Finder and close the folders in the app. "
+            "Se la copia protetta non è disponibile, chiudi le cartelle dall'app Paratia aperta dal Finder. "
+            "Close protected folders with "
             "chiudi or chiudi-tutte and the main store with lock; use status --json to check. "
             "Usa l'ID indicato da cartella elenco; niente altri comandi, concatenazioni o redirezioni."
         )
