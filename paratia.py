@@ -1137,20 +1137,11 @@ def _esegui_registro(registro, args):
 
 
 def _registro_id(registro, cartella, solo_sorveglianza=False):
-    """CLI paths name an exact configured folder; query itself uses stable IDs."""
-    if cartella is None or not os.path.isabs(cartella):
-        return cartella
-    cartella = registro.percorso_normale(cartella)
-    voci = registro.elenco_sorveglianza()
-    if not solo_sorveglianza:
-        voci += registro.leggi_cartelle(registro.CASA / "cartelle.json", os.getuid())
-    ids = {voce["id"] for voce in voci if any(isinstance(voce.get(k), str)
-           and cartella == registro.percorso_normale(voce[k]) for k in ("origine", "montaggio"))}
-    if not ids:
-        raise Rifiuto("La cartella non è configurata nel registro. Sorvegliala prima o usa il suo ID.")
-    if len(ids) != 1:
-        raise Rifiuto("Il percorso corrisponde a più ID. Scegli un ID dall'elenco delle cartelle sorvegliate.")
-    return ids.pop()
+    """Use the same exact configured-path lookup as worker query and CSV."""
+    try:
+        return registro.risolvi_cartella(cartella, solo_sorveglianza=solo_sorveglianza)
+    except ValueError as error:
+        raise Rifiuto(str(error)) from None
 
 
 def cmd_cartella(args) -> int:
@@ -1174,7 +1165,10 @@ def cmd_cartella(args) -> int:
                 preparazione = C.prepara_apertura(args.id, args.minutes)
                 if preparazione["gia_aperta"]:
                     print(json.dumps({**preparazione["cartella"], "gia_aperta": True,
-                                      "messaggio": preparazione["messaggio"]},
+                                      "messaggio": preparazione["messaggio"],
+                                      "timer_invariato": preparazione["timer_invariato"],
+                                      "minutes_richiesti": preparazione["minutes_richiesti"],
+                                      "minutes_effettivi": preparazione["minutes_effettivi"]},
                                      ensure_ascii=False, indent=1))
                     return 0
             if dentro_un_agente():
@@ -1193,6 +1187,14 @@ def cmd_cartella(args) -> int:
             isinstance(r, dict) and r.get("errore") for r in risultato) else 0
     except C.ChiaveErrata as exc:
         print(json.dumps({"errore": "chiave_errata", "messaggio": str(exc)},
+                         ensure_ascii=False), file=sys.stderr)
+        return 2
+    except C.VolumeOccupato as exc:
+        print(json.dumps({"errore": "volume_occupato", "messaggio": str(exc)},
+                         ensure_ascii=False), file=sys.stderr)
+        return 2
+    except C.DiscoNonDisponibile as exc:
+        print(json.dumps({"errore": "disco_non_disponibile", "messaggio": str(exc)},
                          ensure_ascii=False), file=sys.stderr)
         return 2
     except C.Rifiuto as exc:

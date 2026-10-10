@@ -134,7 +134,7 @@ final class AppModel: ObservableObject {
         perform("Controllo dello stato della cartella…") {
             let ready = try await self.worker.request("cartelle.prepara_apertura", parameters: ["id": folder.id, "minutes": self.minutes]) as? Record ?? [:]
             if ready.flag("gia_aperta") {
-                self.notice = "La cartella è già aperta. Nessuna chiave necessaria."
+                self.notice = ready.text("messaggio", fallback: "La cartella è già aperta. Nessuna chiave necessaria; il timer esistente resta invariato.")
                 try await self.refresh()
                 return
             }
@@ -160,6 +160,28 @@ final class AppModel: ObservableObject {
         perform("Chiusura di \(folder.name)…") {
             let result = try await self.worker.request("cartelle.chiudi", parameters: ["id": folder.id])
             self.captureWarnings(result); try await self.refresh()
+        }
+    }
+
+    func forceClose(_ folder: FolderItem) {
+        guard !fixtures, busy == nil else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Forzare la chiusura di \(folder.name)?"
+        alert.informativeText = "La cartella può essere in uso da un'app o da un terminale aperto dentro. Chiudili e prova prima Chiudi. La chiusura forzata può perdere modifiche non salvate."
+        alert.addButton(withTitle: "Annulla")
+        alert.addButton(withTitle: "Chiudi forzatamente")
+        guard alert.runModal() == .alertSecondButtonReturn else { return }
+        perform("Chiusura forzata di \(folder.name)…") {
+            let result = try await self.worker.request("cartelle.chiudi", parameters: ["id": folder.id, "force": true])
+            self.captureWarnings(result)
+            try await self.refresh()
+            if folder.isIncomplete {
+                let recoveryNotice = "Montaggi chiusi. La migrazione resta incompleta: usa Recupera la fonte o Annulla migrazione. La copia in chiaro può essere ancora presente."
+                self.warning = self.warning.map { $0 + "\n" + recoveryNotice } ?? recoveryNotice
+            } else {
+                self.notice = "Chiusura forzata completata. Controlla eventuali documenti con modifiche non salvate."
+            }
         }
     }
 

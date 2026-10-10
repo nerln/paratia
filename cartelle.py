@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import plistlib
+import re
 import select
 import shutil
 import stat
@@ -47,6 +48,14 @@ class Rifiuto(Exception):
 
 class ChiaveErrata(Rifiuto):
     """hdiutil explicitly rejected the supplied passphrase."""
+
+
+class VolumeOccupato(Rifiuto):
+    """A normal detach could not close a volume that is still in use."""
+
+
+class DiscoNonDisponibile(Rifiuto):
+    """The external image is currently unavailable; no recovery is needed."""
 
 
 def annota(evento: str, **metadati) -> None:
@@ -86,17 +95,28 @@ def _corri(argv: list[str], passphrase: bytes | None = None):
         raise Rifiuto("Il comando di sistema richiesto non è disponibile.") from e
 
 
-def _comando(argv: list[str], passphrase: bytes | None = None):
-    r = _corri(argv, passphrase)
+def _autenticazione_fallita(r) -> bool:
+    testo = (r.stderr or b"").decode("utf-8", "replace").casefold()
+    return any(messaggio in testo for messaggio in (
+        "authentication error", "incorrect password", "wrong password", "password incorrect",
+        "errore di autenticazione", "password errata", "error de autenticación",
+        "error de autenticacion", "contraseña incorrecta", "contrasena incorrecta"))
+
+
+def _risultato_comando(argv: list[str], r, passphrase: bytes | None = None):
     if r.returncode:
-        if (argv[:2] == [HDIUTIL, "attach"] and passphrase is not None
-                and any(messaggio in r.stderr.lower() for messaggio in (
-                    b"authentication error", b"incorrect password", b"wrong password",
-                    b"password incorrect"))):
+        if (argv[0] == HDIUTIL and argv[1] in ("attach", "imageinfo")
+                and passphrase is not None and _autenticazione_fallita(r)):
             raise ChiaveErrata("La chiave del compartimento non è corretta. Reinseriscila.")
+        if argv[:2] == [HDIUTIL, "detach"] and r.returncode == errno.EBUSY:
+            raise VolumeOccupato("La cartella è in uso da un'app o da un terminale aperto dentro: chiudili e riprova.")
         # Never forward a subprocess stream: even an error must not echo a key.
         raise Rifiuto(f"Operazione disco non riuscita ({Path(argv[0]).name} {argv[1]}, codice {r.returncode}).")
     return r
+
+
+def _comando(argv: list[str], passphrase: bytes | None = None):
+    return _risultato_comando(argv, _corri(argv, passphrase), passphrase)
 
 
 def _chiave(passphrase: bytes) -> None:
@@ -182,15 +202,53 @@ def _punto_montaggio(dove: Path) -> Path:
 
 
 def _esterno(dove: Path) -> None:
-    r = _comando([DISKUTIL, "info", "-plist", str(_punto_montaggio(dove))])
-    try:
-        dati = plistlib.loads(r.stdout)
-    except (ValueError, plistlib.InvalidFileException) as e:
-        raise Rifiuto("Impossibile verificare il disco scelto.") from e
-    if (not isinstance(dati, dict) or dati.get("Internal") is not False
-            or dati.get("VirtualOrPhysical") != "Physical"
-            or str(dati.get("BusProtocol", "")).lower().replace(" ", "") == "diskimage"):
-        raise Rifiuto("Scegli una cartella su un disco esterno fisico; le immagini disco non sono ammesse.")
+    rifiuto = "Scegli una cartella su un disco esterno fisico; le immagini disco non sono ammesse."
+    cache = {}
+
+    def info(percorso):
+        if percorso not in cache:
+            if len(cache) >= 16:
+                raise Rifiuto("Impossibile verificare il disco scelto.")
+            risultato = _comando([DISKUTIL, "info", "-plist", percorso])
+            try:
+                dati = plistlib.loads(risultato.stdout)
+                if not isinstance(dati, dict):
+                    raise ValueError()
+            except (ValueError, plistlib.InvalidFileException) as e:
+                raise Rifiuto("Impossibile verificare il disco scelto.") from e
+            cache[percorso] = dati
+        return cache[percorso]
+
+    def dispositivo(nome):
+        if not isinstance(nome, str) or not re.fullmatch(r"disk[0-9]+(?:s[0-9]+)*", nome):
+            raise Rifiuto("Impossibile verificare il disco scelto.")
+        return nome
+
+    def fisico(percorso, antenati=()):
+        if percorso in antenati or len(antenati) >= 8:
+            raise Rifiuto("Impossibile verificare il disco scelto.")
+        dati = info(percorso)
+        if str(dati.get("BusProtocol", "")).lower().replace(" ", "") == "diskimage":
+            raise Rifiuto(rifiuto)
+        stores = dati.get("APFSPhysicalStores")
+        if stores is not None:
+            if not isinstance(stores, list) or not stores or len(stores) > 16:
+                raise Rifiuto("Impossibile verificare il disco scelto.")
+            for store in stores:
+                if not isinstance(store, dict):
+                    raise Rifiuto("Impossibile verificare il disco scelto.")
+                fisico(dispositivo(store.get("APFSPhysicalStore")), (*antenati, percorso))
+            return
+        parent = dati.get("ParentWholeDisk")
+        if parent and parent != dati.get("DeviceIdentifier"):
+            fisico(dispositivo(parent), (*antenati, percorso))
+            return
+        intero = dati.get("DeviceIdentifier", percorso)
+        if (not isinstance(intero, str) or not re.fullmatch(r"disk[0-9]+", intero)
+                or dati.get("VirtualOrPhysical") != "Physical" or dati.get("Internal") is not False):
+            raise Rifiuto(rifiuto)
+
+    fisico(str(_punto_montaggio(dove)))
 
 
 def _carica() -> dict:
@@ -477,18 +535,49 @@ def _leggi_manifest(monte: Path, voce: dict) -> dict:
     return manifest
 
 
+def _verifica_chiave(bundle: Path, passphrase: bytes) -> None:
+    """Check an encrypted image's password without attaching a device."""
+    verifica = _corri([HDIUTIL, "isencrypted", str(bundle), "-plist"])
+    cifrata = None
+    if verifica.returncode == 0:
+        try:
+            dati = plistlib.loads(verifica.stdout)
+            if isinstance(dati, dict):
+                cifrata = dati.get("encrypted", dati.get("Encrypted"))
+                if type(cifrata) is not bool:
+                    cifrata = None
+        except (ValueError, plistlib.InvalidFileException):
+            pass  # Older providers can still identify authentication via text.
+    if cifrata is False:
+        raise Rifiuto("L'immagine non risulta cifrata; non verrà aperta.")
+    argv = [HDIUTIL, "imageinfo", str(bundle), "-plist", "-stdinpass"]
+    risultato = _corri(argv, passphrase)
+    if risultato.returncode:
+        if not bundle.is_dir():
+            raise DiscoNonDisponibile("Il disco esterno non è disponibile. Collegalo e riprova ad aprire la cartella.")
+        if (cifrata is True and risultato.returncode not in (
+                errno.ENOENT, errno.EIO, errno.EACCES, errno.ENODEV, errno.ENXIO,
+                errno.EINVAL, errno.ENOSPC, errno.EROFS, errno.ENOTSUP, errno.EBUSY,
+                errno.EAGAIN, errno.EFBIG)):
+            raise ChiaveErrata("La chiave del compartimento non è corretta. Reinseriscila.")
+        _risultato_comando(argv, risultato, passphrase)
+
+
 def _attacca(bundle: Path, monte: Path, passphrase: bytes) -> None:
     if _montato(monte) or any(monte.iterdir()):
         raise Rifiuto("Il punto di montaggio deve essere vuoto e non montato.")
+    _verifica_chiave(bundle, passphrase)
     _comando([HDIUTIL, "attach", str(bundle), "-stdinpass", "-nobrowse", "-noautoopen",
               "-owners", "on", "-mountpoint", str(monte)], passphrase)
     if not _montato(monte):
         raise Rifiuto("Il montaggio del volume non è stato confermato.")
 
 
-def _stacca(monte: Path) -> None:
+def _stacca(monte: Path, force: bool = False) -> None:
+    if type(force) is not bool:
+        raise Rifiuto("La chiusura forzata richiede una scelta esplicita.")
     if _montato(monte):
-        _comando([HDIUTIL, "detach", str(monte)])
+        _comando([HDIUTIL, "detach", str(monte), *(["-force"] if force else [])])
     if _montato(monte):
         raise Rifiuto("Il volume è ancora montato. Nessuna chiusura forzata eseguita.")
 
@@ -634,14 +723,20 @@ def _prepara_apertura(v: dict, minutes: int) -> dict:
     aperta = _montato(monte)
     if not aperta:
         bundle = _percorso(v["bundle"])
-        if not monte.is_dir() or not bundle.is_dir():
-            raise Rifiuto("Il disco esterno o il punto di montaggio non sono disponibili.")
+        if not bundle.is_dir():
+            raise DiscoNonDisponibile("Il disco esterno non è disponibile. Collegalo e riprova ad aprire la cartella.")
+        if not monte.is_dir():
+            raise Rifiuto("Il punto di montaggio non è disponibile. Ripristina il percorso originale e riprova.")
         if any(monte.iterdir()):
             raise Rifiuto("Il punto di montaggio deve essere vuoto e non montato.")
     risultato = {"pronto": not aperta, "gia_aperta": aperta,
                  "cartella": _pubblica(v), "minutes": minutes}
     if aperta:
-        risultato["messaggio"] = "La cartella è già aperta."
+        risultato["timer_invariato"] = True
+        risultato["minutes_richiesti"] = minutes
+        risultato["minutes_effettivi"] = v.get("minutes")
+        risultato["messaggio"] = ("La cartella è già aperta. Il timer resta invariato: "
+                                  "i minuti richiesti non lo riavviano. Chiudi e riapri per cambiarlo.")
     return risultato
 
 
@@ -657,7 +752,8 @@ def apri(identificatore: str, passphrase: bytes, minutes: int = 15) -> dict:
         preparazione = _prepara_apertura(v, minutes)
         if preparazione["gia_aperta"]:
             return {**preparazione["cartella"], "gia_aperta": True,
-                    "messaggio": preparazione["messaggio"]}
+                    "messaggio": preparazione["messaggio"], "timer_invariato": True,
+                    "minutes_richiesti": minutes, "minutes_effettivi": v.get("minutes")}
         _chiave(passphrase)
         monte, bundle = _percorso(v["montaggio"]), _percorso(v["bundle"])
         try:
@@ -684,21 +780,25 @@ def apri(identificatore: str, passphrase: bytes, minutes: int = 15) -> dict:
         return _esito_registrato(v, "cartella-aperta", id=identificatore, minutes=minutes)
 
 
-def _chiudi(r: dict, v: dict) -> dict:
+def _chiudi(r: dict, v: dict, force: bool = False) -> dict:
     stato_precedente = v["stato"]
     montaggi = [Path(v["montaggio"])]
     if v.get("montaggio_temporaneo"):
         montaggi.append(Path(v["montaggio_temporaneo"]))
     era_aperta = any(_montato(p) for p in montaggi)
     try:
-        _stacca(Path(v["montaggio"]))
-    except Rifiuto:
+        # Include an incomplete migration's temporary mount in the same
+        # explicit choice and report the busy folder consistently.
+        for monte in montaggi:
+            if force:
+                _stacca(monte, force=True)
+            else:
+                _stacca(monte)
+    except Rifiuto as e:
+        e.cartella_id = v["id"]
         _audit("tentativo-fallito", azione="chiusura", cartella=v["id"],
-               percorso=v["montaggio"])
+               percorso=str(monte))
         raise
-    # A migration's temporary mount must also close at session start.
-    if v.get("montaggio_temporaneo"):
-        _stacca(Path(v["montaggio_temporaneo"]))
     if v["stato"] not in ("migrazione", "migrazione-incompleta"):
         v["stato"] = "chiusa"
     # A successful detach invalidates the sleeping child without signals or
@@ -709,13 +809,19 @@ def _chiudi(r: dict, v: dict) -> dict:
         v.pop("timer", None)
         _salva(r)
     if era_aperta:
-        return _esito_registrato(v, "cartella-chiusa", id=v["id"])
+        risultato = _esito_registrato(v, "cartella-chiusa", id=v["id"],
+                                      azione="chiusura-forzata" if force else "chiusura")
+        if force:
+            risultato["forzata"] = True
+        return risultato
     return {**_pubblica(v), "gia_chiusa": True, "messaggio": "La cartella è già chiusa."}
 
 
-def chiudi(identificatore: str) -> dict:
+def chiudi(identificatore: str, force: bool = False) -> dict:
+    if type(force) is not bool:
+        raise Rifiuto("La chiusura forzata richiede una scelta esplicita.")
     with _registro() as r:
-        return _chiudi(r, _voce(r, identificatore))
+        return _chiudi(r, _voce(r, identificatore), force=force)
 
 
 def chiudi_tutte() -> list[dict]:

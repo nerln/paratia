@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import plistlib
 import shutil
@@ -10,7 +11,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-MODULES = ("gui_worker.py", "cartelle.py", "etichette.py", "registro.py", "catena.py",
+MODULES = ("paratia.py", "gui_worker.py", "cartelle.py", "etichette.py", "registro.py", "catena.py",
            "registro_installa.py", "registro_daemon.py", "banco.py", "hookinstaller.py")
 
 
@@ -57,6 +58,14 @@ def main():
         source = ROOT / name
         (resources / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, resources / name)
+    # The installed hook also accepts the real development CLI. Seal its fixed
+    # canonical identity in the app; neither a payload nor PATH can add paths.
+    cli_source = ROOT / "paratia.py"
+    if cli_source.is_symlink() or not cli_source.is_file():
+        raise ValueError("The source CLI must be a regular file.")
+    (resources / "hooks" / "paratia-cli.json").write_text(
+        json.dumps({"versione": 1, "sorgente": str(cli_source.resolve(strict=True))},
+                   ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
     info = {"CFBundleIdentifier": "it.paratia.app", "CFBundleName": "Paratia", "CFBundleDisplayName": "Paratia",
             "CFBundleExecutable": "Paratia", "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "1.0",
             "CFBundleVersion": "1", "LSMinimumSystemVersion": "13.0", "NSHighResolutionCapable": True,

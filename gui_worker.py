@@ -36,7 +36,7 @@ SCHEMAS = {
     "cartelle.prepara_apertura": ({"id"}, {"minutes"}),
     "cartelle.proteggi": ({"origine", "dove"}, {"minutes"}),
     "cartelle.apri": ({"id"}, {"minutes"}),
-    "cartelle.chiudi": ({"id"}, set()),
+    "cartelle.chiudi": ({"id"}, {"force"}),
     "cartelle.chiudi_tutte": (set(), set()),
     "cartelle.recupera": ({"id"}, set()),
     "cartelle.annulla": ({"id"}, set()),
@@ -183,7 +183,7 @@ def _validate(action, params, key):
             raise _invalid_params()
     if "minutes" in params and (type(params["minutes"]) is not int or not 1 <= params["minutes"] <= 1440):
         raise RequestError("invalid_params", "La chiusura automatica deve durare da 1 a 1440 minuti.")
-    for name in ("mostra_nascosti", "agenti_reali"):
+    for name in ("mostra_nascosti", "agenti_reali", "force"):
         if name in params and type(params[name]) is not bool:
             raise _invalid_params()
     for name in ("etichetta", "nota", "nome"):
@@ -327,8 +327,10 @@ def dispatch(action, params, key=b""):
             return module.apri(params["id"], key, minutes=params.get("minutes", 15))
         if verb == "recupera":
             return module.recupera(params["id"], key)
-        if verb in ("chiudi", "annulla"):
-            return getattr(module, "annulla_migrazione" if verb == "annulla" else "chiudi")(params["id"])
+        if verb == "chiudi":
+            return module.chiudi(params["id"], **({"force": params["force"]} if "force" in params else {}))
+        if verb == "annulla":
+            return module.annulla_migrazione(params["id"])
         return getattr(module, verb)()
     if group == "registro":
         if verb == "install_plan":
@@ -411,6 +413,10 @@ def _failure(exc, action):
         code, message = exc.code, exc.message
     elif type(exc).__name__ == "ChiaveErrata":
         code, message = "wrong_key", "La chiave non apre questa cartella. Inseriscila di nuovo nel campo sicuro; nessun dato è stato modificato."
+    elif type(exc).__name__ == "VolumeOccupato":
+        code, message = "volume_busy", "La cartella è in uso da un'app o da un terminale aperto dentro: chiudili e riprova. Nell'app puoi scegliere Forza chiusura… e confermare; le modifiche non salvate possono andare perse."
+    elif type(exc).__name__ == "DiscoNonDisponibile":
+        code, message = "disk_unavailable", "Il disco esterno non è disponibile. Collegalo e riprova prima di inserire la chiave."
     elif isinstance(exc, PermissionError):
         code, message = "permission_required", "macOS ha negato l'accesso. Controlla i permessi della cartella e le autorizzazioni in Privacy e sicurezza, poi riprova."
     elif isinstance(exc, FileNotFoundError):

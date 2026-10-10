@@ -13,11 +13,11 @@ import contextlib
 import io
 import json
 import os
+import plistlib
 import secrets
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -55,6 +55,12 @@ class Images:
             bundle.mkdir()
             (bundle / "storage").mkdir()
             self.keys[str(bundle)] = passphrase
+        elif argv[1] == "isencrypted":
+            return subprocess.CompletedProcess(argv, 0, plistlib.dumps({"encrypted": True}), b"")
+        elif argv[1] == "imageinfo":
+            if passphrase != self.keys[str(Path(argv[2]))]:
+                return subprocess.CompletedProcess(argv, 1, b"", b"")
+            return subprocess.CompletedProcess(argv, 0, plistlib.dumps({"Properties": {"Encrypted": True}}), b"")
         elif argv[1] == "attach":
             bundle, mount = Path(argv[2]), Path(argv[argv.index("-mountpoint") + 1])
             if passphrase != self.keys[str(bundle)]:
@@ -80,8 +86,7 @@ def main():
         print(json.dumps({"eseguito": False, "errore": "La copia metadati richiede ditto Apple"}))
         return 2
     script = _load("smoke_bank_driver", ROOT / "strumenti" / "prova-banco-temporaneo.py")
-    base = Path(tempfile.mkdtemp(prefix="paratia-banco-e2e-", dir="/private/tmp")).resolve()
-    (base / ".fixture").write_text(script.MARKER)
+    base = script.new_fixture()
     (base / "home").mkdir()
     key = secrets.token_urlsafe(32).encode("ascii")
     environment = None
@@ -94,10 +99,13 @@ def main():
             cli = _load("smoke_cli", ROOT / "paratia.py")
             worker = _load("smoke_worker", ROOT / "gui_worker.py")
             worker._MODULES["registro"] = registry
-            target = base / "synthetic.txt"
+            watched = base / "watched"
+            watched.mkdir()
+            registry.sorveglia("smoke-watch", watched, "Smoke")
+            target = watched / "synthetic.txt"
             target.write_text("DATI SINTETICI DELLA PROVA DI FUMO")
-            current = registry.annota("smoke", percorso=str(target))
-            registry.appendi(registry.CATENA, {"evento": "smoke-legacy", "quando": "2026-10-10T05:11:37+0200", "percorso": str(target), "source": "paratia"})
+            current = registry.annota("smoke", cartella="smoke-watch", percorso=str(target))
+            registry.appendi(registry.CATENA, {"evento": "smoke-legacy", "quando": "2026-10-10T05:11:37+0200", "percorso": str(target), "source": "paratia", "cartella": "smoke-watch"})
             labels.segna(target, "pubblico")
             cli.annota("smoke")
             for stamp in (current["quando"], labels.elenco()[0]["quando"], json.loads(cli.DIARIO.read_text())["quando"]):
@@ -111,19 +119,20 @@ def main():
                 assert response["ok"], response.get("code")
                 return response["result"]
 
-            filters = {"file": str(target), "since": "2000-01-01T00:00:00+0200", "until": "2100-01-01T00:00:00+0200"}
+            filters = {"folder": str(watched), "file": str(target), "since": "2000-01-01T00:00:00+0200", "until": "2100-01-01T00:00:00+0200"}
             rows = call("registro.query", {"filters": filters})
             assert rows["total"] == 2
             csv_file = base / "events.csv"
             call("registro.export_csv", {"path": str(csv_file), "filters": filters})
             assert len(list(csv.DictReader(io.StringIO(csv_file.read_text())))) == 2
             cli_output = io.StringIO()
-            cli_args = cli.costruisci().parse_args(["registro", "elenco", "--file", str(target)])
+            cli_args = cli.costruisci().parse_args(["registro", "elenco", "--cartella", str(watched), "--file", str(target)])
             with contextlib.redirect_stdout(cli_output), contextlib.redirect_stderr(io.StringIO()):
                 assert cli._esegui_registro(registry, cli_args) == 0
             assert len(json.loads(cli_output.getvalue())) == 2
             report.update(query_reale=True, csv_reale=True, eventi_locali=2, offset_legacy_accettato=True,
                           timestamp_colon_scrittori=3, cli_registro_reale=True, filtri_data_legacy_accettati=True)
+            report["filtro_cartella_percorso_reale"] = True
 
         with script.fixture(base, key, configure_disks=Images,
                             mock_mdls=lambda argv: {"rc": 0 if Path(argv[-1]).is_file() else 1,

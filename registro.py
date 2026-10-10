@@ -549,12 +549,16 @@ def _cambia_sorveglianza(identificatore, percorso=None, nome=""):
     salute = stato()
     attiva = bool(percorso is not None and salute["running"] and salute["healthy"]
                   and identificatore in salute.get("watched_ids", []))
-    return {"id": identificatore, "percorso": percorso, "configurata": percorso is not None,
+    nome_accettato = (_testo(nome) or Path(percorso).name) if percorso is not None else None
+    messaggio = ("Configurazione rimossa." if percorso is None else
+                 "Cartella configurata; il raccoglitore ha confermato la sorveglianza." if attiva else
+                 "Cartella configurata; raccolta non attiva o conferma del raccoglitore ancora assente.")
+    if riutilizzata:
+        messaggio += " Sorveglianza esistente riutilizzata: ID e nome conservati."
+    return {"id": identificatore, "percorso": percorso, "nome": nome_accettato,
+            "configurata": percorso is not None,
             "sorvegliata": attiva, "raccolta_attiva": attiva, "riutilizzata": riutilizzata,
-            "rimossa": percorso is None,
-            "messaggio": "Configurazione rimossa." if percorso is None else
-                         "Cartella configurata; il raccoglitore ha confermato la sorveglianza." if attiva else
-                         "Cartella configurata; raccolta non attiva o conferma del raccoglitore ancora assente."}
+            "rimossa": percorso is None, "messaggio": messaggio}
 
 
 def sorveglia(identificatore, percorso, nome=""):
@@ -573,6 +577,33 @@ def elenco_sorveglianza():
 
 def rimuovi_sorveglianza(identificatore):
     return _cambia_sorveglianza(identificatore)
+
+
+def risolvi_cartella(cartella, solo_sorveglianza=False):
+    """Resolve an exact configured folder path to its stable ID for every caller.
+
+    IDs remain usable for historical records after their configuration is gone.
+    Paths require a current watch or protected-folder entry; ambiguous legacy
+    entries never silently choose an ID.
+    """
+    if cartella is None:
+        return None
+    if not isinstance(cartella, (str, Path)):
+        raise ValueError("Il filtro cartella richiede un ID o un percorso.")
+    cartella = str(cartella)
+    if not os.path.isabs(cartella):
+        return cartella
+    percorso = percorso_normale(cartella)
+    voci = leggi_sorveglianza(CASA / "registro" / "sorveglianza.json", os.getuid())
+    if not solo_sorveglianza:
+        voci += leggi_cartelle(CASA / "cartelle.json", os.getuid())
+    ids = {voce["id"] for voce in voci if any(isinstance(voce.get(k), str)
+           and percorso == percorso_normale(voce[k]) for k in ("origine", "montaggio"))}
+    if not ids:
+        raise ValueError("La cartella non è configurata nel registro. Sorvegliala prima o usa il suo ID.")
+    if len(ids) != 1:
+        raise ValueError("Il percorso corrisponde a più ID. Scegli un ID dall'elenco delle cartelle sorvegliate.")
+    return ids.pop()
 
 
 def annota(evento, **metadata):
@@ -624,6 +655,7 @@ def _corrisponde_file(filtro, valore):
 
 def query(filters=None):
     filters = filters or {}
+    folder = risolvi_cartella(filters.get("folder"))
     risultati = []
     for p in _catene():
         if not p.exists():
@@ -639,7 +671,6 @@ def query(filters=None):
                 r = json.loads(riga)
                 if not isinstance(r, dict):
                     raise ValueError("Il registro contiene una riga non valida.")
-                folder = filters.get("folder")
                 if folder and folder not in (r.get("id"), r.get("cartella")) and not any(folder in (c.get("id"), c.get("nome")) for c in r.get("cartelle", [])):
                     continue
                 if filters.get("file") and not any(_corrisponde_file(filters["file"], r.get(k)) for k in ("percorso", "destinazione", "origine")):

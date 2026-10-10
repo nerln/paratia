@@ -117,7 +117,7 @@ def test_action_allowlist_never_echoes_untrusted_argv(W, monkeypatch, argv):
     ("cartelle.apri", {"id": "abc", "minutes": True}, KEY, "invalid_params"),
     ("cartelle.apri", {"id": "abc", "minutes": 0}, KEY, "invalid_params"),
     ("cartelle.apri", {"id": "../abc"}, KEY, "invalid_params"),
-    ("cartelle.chiudi", {"id": "abc", "force": True}, b"", "invalid_params"),
+    ("cartelle.chiudi", {"id": "abc", "force": "true"}, b"", "invalid_params"),
     ("registro.query", {"filters": {"limit": 1}}, b"", "invalid_params"),
     ("registro.query", {"filters": {"since": "not-a-date"}}, b"", "invalid_params"),
     ("registro.export_csv", {"path": "relative.csv"}, b"", "invalid_params"),

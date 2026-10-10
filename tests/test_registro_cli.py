@@ -106,3 +106,14 @@ def test_new_registration_repairs_legacy_duplicates_and_does_not_reassign_other_
     with pytest.raises(ValueError, match="un'altra cartella"):
         r.sorveglia("first", other)
     assert r.elenco_sorveglianza()[0]["origine"] == str(folder)
+
+
+def test_cli_explicit_new_name_on_same_path_reports_existing_name(cli, capsys):
+    _, r, folder, _ = cli
+    invoke(cli, ["sorveglia", str(folder), "--id", "first", "--nome", "Nome conservato"])
+    capsys.readouterr()
+    invoke(cli, ["sorveglia", str(folder), "--id", "second", "--nome", "Nuovo nome"])
+    result = json.loads(capsys.readouterr().out)
+    assert result["id"] == "first" and result["nome"] == "Nome conservato"
+    assert result["riutilizzata"] and "ID e nome conservati" in result["messaggio"]
+    assert r.elenco_sorveglianza()[0]["nome"] == "Nome conservato"

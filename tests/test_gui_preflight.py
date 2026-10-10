@@ -101,3 +101,59 @@ def test_gui_checks_root_protected_bundle_before_loading_installer_plan():
     install = swift_method("installRegistry")
     assert install.index("NativeInstall.validateBootstrap") < install.index('worker.request("registro.install_plan"')
     assert install.index("NativeInstall.validateBootstrap") < install.index("NSAlert()")
+
+
+@pytest.mark.parametrize("exception_name,code,expected", [
+    ("VolumeOccupato", "volume_busy", "terminale aperto dentro"),
+    ("DiscoNonDisponibile", "disk_unavailable", "Collegalo"),
+])
+def test_busy_and_unavailable_disks_have_distinct_safe_worker_messages(W, monkeypatch, exception_name, code, expected):
+    error = type(exception_name, (Exception,), {})
+
+    def fail(*args, **kwargs):
+        raise error("unsafe backend stream: " + KEY.decode())
+
+    action = "cartelle.chiudi" if code == "volume_busy" else "cartelle.prepara_apertura"
+    function = "chiudi" if code == "volume_busy" else "prepara_apertura"
+    monkeypatch.setattr(W, "_load", lambda name: SimpleNamespace(**{function: fail}))
+    result = request(W, action, {"id": "fixture"})
+    assert result["ok"] is False and result["code"] == code and expected in result["message"]
+    assert "unsafe" not in json.dumps(result) and KEY.decode() not in json.dumps(result)
+    if code == "disk_unavailable":
+        assert "Recupera" not in result["message"] and "Annulla" not in result["message"]
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_worker_force_is_an_explicit_boolean_for_one_folder(W, monkeypatch, force):
+    calls = []
+    monkeypatch.setattr(W, "_load", lambda name: SimpleNamespace(chiudi=lambda *args, **kwargs: calls.append((args, kwargs)) or {"stato": "chiusa"}))
+    result = request(W, "cartelle.chiudi", {"id": "fixture", "force": force})
+    assert result["ok"] and calls == [(("fixture",), {"force": force})]
+    result = request(W, "cartelle.chiudi_tutte", {"force": True})
+    assert result["code"] == "invalid_params" and len(calls) == 1
+
+
+@pytest.mark.parametrize("force", ["true", 1, None])
+def test_worker_refuses_truthy_force_and_keys_before_disk_backend(W, monkeypatch, force):
+    monkeypatch.setattr(W, "_load", lambda name: pytest.fail("Invalid force reached backend"))
+    result = request(W, "cartelle.chiudi", {"id": "fixture", "force": force})
+    assert result["code"] == "invalid_params"
+    result = request(W, "cartelle.chiudi", {"id": "fixture", "force": True}, KEY)
+    assert result["code"] == "unexpected_key"
+
+
+def test_gui_force_close_requires_explicit_second_button_confirmation():
+    force = swift_method("forceClose")
+    assert force.index('alert.addButton(withTitle: "Annulla")') < force.index('alert.addButton(withTitle: "Chiudi forzatamente")')
+    assert force.index("guard alert.runModal() == .alertSecondButtonReturn else { return }") < force.index('worker.request("cartelle.chiudi"')
+    assert '"force": true' in force and "modifiche non salvate" in force
+    assert 'if folder.isIncomplete' in force and "migrazione resta incompleta" in force
+    assert force.index("self.captureWarnings(result)") < force.index("self.warning.map")
+    assert '?? recoveryNotice' in force
+    cards = (ROOT / "macos" / "Views.swift").read_text().split("struct FolderCard", 1)[1]
+    incomplete = cards.split("if folder.isIncomplete {", 1)[1].split('} else if folder.state == "aperta"', 1)[0]
+    assert 'folder.data.text("montaggio_temporaneo", fallback: "")' in incomplete
+    assert "model.close(folder)" in incomplete and "model.forceClose(folder)" in incomplete
+    normal = swift_method("close")
+    assert '"force"' not in normal
+    assert 'ready.text("messaggio"' in swift_method("askKey")

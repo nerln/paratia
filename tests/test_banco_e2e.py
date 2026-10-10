@@ -33,13 +33,14 @@ def load(name, path):
 
 
 @pytest.fixture()
-def integration():
+def integration(tmp_path, monkeypatch):
     if not Path("/usr/bin/ditto").is_file():
         pytest.skip("Metadata copy uses the existing macOS ditto fixture")
     script = load("banco_temporary_test", ROOT / "strumenti" / "prova-banco-temporaneo.py")
     disks = load("banco_e2e_disks_fixture", ROOT / "tests" / "test_cartelle.py")
-    base = Path(tempfile.mkdtemp(prefix="paratia-banco-e2e-", dir="/private/tmp")).resolve()
-    (base / ".fixture").write_text(script.MARKER)
+    monkeypatch.setenv("TMPDIR", str(tmp_path.resolve()))
+    base = script.new_fixture()
+    assert base.parent == tmp_path.resolve()
     configured = {}
 
     def configure(folders):
@@ -181,6 +182,7 @@ def test_native_parent_removes_only_a_fixture_with_confirmed_cleanup(tmp_path, m
     spawned = []
     monkeypatch.setattr(s.sys, "platform", "darwin")
     monkeypatch.setattr(s.sys, "stdin", SimpleNamespace(buffer=io.BytesIO(KEY)))
+    monkeypatch.setenv("TMPDIR", str(tmp_path.resolve()))
 
     class Child:
         returncode = 0
@@ -197,6 +199,7 @@ def test_native_parent_removes_only_a_fixture_with_confirmed_cleanup(tmp_path, m
     def spawn(argv, **kwargs):
         assert KEY.decode() not in " ".join(argv) and "env" not in kwargs
         spawned.append(Path(argv[-1]))
+        assert spawned[-1].parent == tmp_path.resolve()
         return Child()
 
     monkeypatch.setattr(s.subprocess, "Popen", spawn)
@@ -244,11 +247,12 @@ def test_native_guard_tracks_only_the_exact_isolated_folder_timer(monkeypatch):
     assert timers == [spawned[0]] and len(calls) == 3
 
 
-def test_parent_interruption_collects_child_cleanup_before_deleting(monkeypatch, capsys):
+def test_parent_interruption_collects_child_cleanup_before_deleting(tmp_path, monkeypatch, capsys):
     s = load("banco_e2e_cancel_parent_test", ROOT / "strumenti" / "prova-banco-temporaneo.py")
     paths = []
     monkeypatch.setattr(s.sys, "platform", "darwin")
     monkeypatch.setattr(s.sys, "stdin", SimpleNamespace(buffer=io.BytesIO(KEY)))
+    monkeypatch.setenv("TMPDIR", str(tmp_path.resolve()))
     real_is_file = Path.is_file
     monkeypatch.setattr(Path, "is_file", lambda p: True if str(p) in ("/usr/bin/hdiutil", "/usr/bin/ditto", "/usr/bin/mdls") else real_is_file(p))
 
@@ -285,3 +289,31 @@ def test_parent_interruption_collects_child_cleanup_before_deleting(monkeypatch,
         for path in paths:
             if path.exists():
                 shutil.rmtree(path)
+
+
+def test_fixture_refuses_roots_outside_tmpdir_before_backend_or_cleanup(tmp_path, monkeypatch):
+    s = load("banco_e2e_tmp_scope_test", ROOT / "strumenti" / "prova-banco-temporaneo.py")
+    temporary = tmp_path / "chosen-tmp"
+    temporary.mkdir()
+    monkeypatch.setenv("TMPDIR", str(temporary))
+    outside = tmp_path / "paratia-banco-e2e-outside"
+    outside.mkdir()
+    (outside / ".fixture").write_text(s.MARKER)
+    monkeypatch.setattr(s, "_load", lambda *args: pytest.fail("Backend imported for an out-of-scope fixture"))
+    with pytest.raises(ValueError, match="sotto TMPDIR"):
+        with s.fixture(outside, KEY):
+            pytest.fail("Out-of-scope fixture accepted")
+    assert outside.is_dir() and (outside / ".fixture").read_text() == s.MARKER
+
+
+def test_new_fixture_honors_tmpdir_after_tempfile_default_cache(tmp_path, monkeypatch):
+    s = load("banco_e2e_tmp_cache_test", ROOT / "strumenti" / "prova-banco-temporaneo.py")
+    tempfile.gettempdir()
+    monkeypatch.setenv("TMPDIR", str(tmp_path.resolve()))
+    base = s.new_fixture()
+    try:
+        assert base.parent == tmp_path.resolve()
+        assert base.stat().st_uid == os.getuid() and base.stat().st_mode & 0o777 == 0o700
+        assert (base / ".fixture").read_text() == s.MARKER
+    finally:
+        shutil.rmtree(base)

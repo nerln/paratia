@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import errno
 import json
 import os
 import plistlib
@@ -19,6 +20,24 @@ ROOT = Path(__file__).resolve().parent.parent
 KEY = b"fixture-only-passphrase-123"
 
 
+def dischi_fixture(interno=False, immagine=False, exfat=False):
+    protocollo = "USB"
+    volume = {"DeviceIdentifier": "disk12s1", "FilesystemType": "apfs",
+              "Internal": interno, "BusProtocol": protocollo, "ParentWholeDisk": "disk12",
+              "APFSPhysicalStores": [{"APFSPhysicalStore": "disk10s4"}]}
+    if exfat:
+        volume = {"DeviceIdentifier": "disk10s3", "FilesystemType": "exfat",
+                  "Internal": interno, "BusProtocol": protocollo, "ParentWholeDisk": "disk10"}
+    return {"volume": volume,
+            "disk12": {"DeviceIdentifier": "disk12", "VirtualOrPhysical": "Virtual",
+                       "Internal": interno, "BusProtocol": protocollo,
+                       "APFSPhysicalStores": [{"APFSPhysicalStore": "disk10s4"}]},
+            "disk10s4": {"DeviceIdentifier": "disk10s4", "Internal": interno,
+                         "BusProtocol": protocollo, "ParentWholeDisk": "disk10"},
+            "disk10": {"DeviceIdentifier": "disk10", "VirtualOrPhysical": "Virtual" if immagine else "Physical",
+                       "Internal": interno, "BusProtocol": "Disk Image" if immagine else protocollo}}
+
+
 class Dischi:
     def __init__(self, C):
         self.C = C
@@ -27,6 +46,7 @@ class Dischi:
         self.chiamate = []
         self.conta = Counter()
         self.fallisce = None
+        self.rc_fallisce = 1
         self.interno = False
         self.corrompi_al_mount = None
         self.after_copy = None
@@ -38,11 +58,11 @@ class Dischi:
         verbo = argv[1] if argv[0] == self.C.HDIUTIL else Path(argv[0]).name
         self.conta[verbo] += 1
         if self.fallisce == (verbo, self.conta[verbo]):
-            return subprocess.CompletedProcess(argv, 1, KEY, KEY)
+            return subprocess.CompletedProcess(argv, self.rc_fallisce, KEY, KEY)
         if argv[0] == self.C.DISKUTIL:
-            return subprocess.CompletedProcess(argv, 0, plistlib.dumps({
-                "Internal": self.interno, "VirtualOrPhysical": "Physical",
-            }), b"")
+            dischi = dischi_fixture(interno=self.interno)
+            return subprocess.CompletedProcess(argv, 0,
+                                               plistlib.dumps(dischi.get(argv[-1], dischi["volume"])), b"")
         if argv[0] == self.C.DITTO:
             r = self.corri_vero(argv)
             if self.after_copy:
@@ -65,6 +85,12 @@ class Dischi:
             self.montati[str(monte)] = bundle
             if self.corrompi_al_mount == self.conta[verbo]:
                 (monte / "segreto.txt").write_text("corrotto")
+        elif verbo == "isencrypted":
+            return subprocess.CompletedProcess(argv, 0, plistlib.dumps({"encrypted": True}), b"")
+        elif verbo == "imageinfo":
+            if self.chiavi.get(argv[2]) != passphrase:
+                return subprocess.CompletedProcess(argv, 1, KEY, b"opaque localized error: " + KEY)
+            return subprocess.CompletedProcess(argv, 0, plistlib.dumps({"Properties": {"Encrypted": True}}), b"")
         elif verbo == "detach":
             monte = Path(argv[2])
             storage = self.montati.pop(str(monte)) / "storage"
@@ -126,7 +152,7 @@ def test_proteggi_verifica_rimontaggio_e_lascia_mountpoint_vuoto(C, D, albero):
         assert KEY.decode() not in " ".join(argv)
         if key is not None:
             assert argv[0] == "/usr/bin/hdiutil" and "-stdinpass" in argv
-            assert "-encryption" in argv or argv[1] == "attach"
+            assert "-encryption" in argv or argv[1] in ("attach", "imageinfo")
     assert all("-force" not in argv for argv, _ in D.chiamate)
 
 
@@ -254,12 +280,14 @@ def test_timer_chiude_e_retry_busy(C, D, albero, monkeypatch, capsys):
     v = C.proteggi(albero[0], disco, KEY)
     aperta = C.apri(v["id"], KEY)
     D.fallisce = ("detach", D.conta["detach"] + 1)
+    D.rc_fallisce = errno.EBUSY
     pause = []
     monkeypatch.setattr(C, "_attendi_timer", lambda _id, _gen, _token, secondi: pause.append(secondi) or True)
     assert C._timer(v["id"], aperta["generation"], 0) == 0
     assert pause == [0, 5]
     assert capsys.readouterr().out == "ready\n"
     assert C.elenco()[0]["stato"] == "chiusa"
+    assert all("-force" not in argv for argv, _ in D.chiamate)
 
 
 def test_timer_che_non_parte_richiude_cartella(C, D, albero, monkeypatch):
@@ -432,7 +460,7 @@ def test_migrazione_nativa_fixture_temporanea(C, albero, monkeypatch):
         C.chiudi_tutte()
 
 
-@pytest.mark.parametrize("caso", ["sottocartella", "radice", "interno", "immagine"])
+@pytest.mark.parametrize("caso", ["sottocartella", "radice", "exfat", "interno", "immagine", "contenitore"])
 def test_diskutil_interroga_il_mount_e_rifiuta_interno_e_immagine(C, tmp_path, monkeypatch, caso):
     radice = tmp_path / "SSD"
     figlia = radice / "backup" / "paratia"
@@ -440,6 +468,9 @@ def test_diskutil_interroga_il_mount_e_rifiuta_interno_e_immagine(C, tmp_path, m
     dove = radice if caso == "radice" else figlia
     chiamate = []
     vero_stat = Path.stat
+    dischi = dischi_fixture(interno=caso == "interno", immagine=caso == "immagine", exfat=caso == "exfat")
+    if caso == "contenitore":
+        del dischi["volume"]["APFSPhysicalStores"]
 
     def volume_stat(p, *args, **kwargs):
         s = vero_stat(p, *args, **kwargs)
@@ -448,12 +479,13 @@ def test_diskutil_interroga_il_mount_e_rifiuta_interno_e_immagine(C, tmp_path, m
 
     def diskutil(argv, passphrase=None):
         chiamate.append(argv)
-        assert argv == [C.DISKUTIL, "info", "-plist", str(radice)]
+        assert argv[:3] == [C.DISKUTIL, "info", "-plist"]
         assert passphrase is None
-        return subprocess.CompletedProcess(argv, 0, plistlib.dumps({
-            "Internal": caso == "interno", "VirtualOrPhysical": "Physical",
-            "BusProtocol": "Disk Image" if caso == "immagine" else "USB",
-        }), b"")
+        if argv[-1] == str(radice):
+            dati = dischi["volume"]
+        else:
+            dati = dischi[argv[-1]]
+        return subprocess.CompletedProcess(argv, 0, plistlib.dumps(dati), b"")
 
     with monkeypatch.context() as m:
         m.setattr(Path, "stat", volume_stat)
@@ -464,7 +496,13 @@ def test_diskutil_interroga_il_mount_e_rifiuta_interno_e_immagine(C, tmp_path, m
                 C._esterno(dove)
         else:
             C._esterno(dove)
-    assert len(chiamate) == 1
+    attesi = [str(radice)]
+    if caso == "contenitore":
+        attesi.append("disk12")
+    if caso != "exfat":
+        attesi.append("disk10s4")
+    attesi.append("disk10")
+    assert [argv[-1] for argv in chiamate] == attesi
 
 
 def test_firmlink_usa_il_mount_statfs_anziche_users(C, tmp_path, monkeypatch):
@@ -657,3 +695,177 @@ def test_cli_chiave_errata_ha_codice_json_distinguibile(C, D, CLI, albero, monke
     output = capsys.readouterr()
     assert output.out == "" and json.loads(output.err)["errore"] == "chiave_errata"
     assert KEY.decode() not in output.err and "wrong-fixture-passphrase" not in output.err
+
+
+@pytest.mark.parametrize("messaggio", [b"opaque unfamiliar locale", b"Errore di autenticazione",
+                                       b"Authentication error", "Error de autenticación".encode()])
+def test_chiave_cifrata_verificata_senza_mount_indipendentemente_dalla_lingua(C, tmp_path, monkeypatch, messaggio):
+    bundle, monte = tmp_path / "fixture.sparsebundle", tmp_path / "mount"
+    bundle.mkdir()
+    monte.mkdir()
+    chiamate = []
+
+    def corri(argv, passphrase=None):
+        chiamate.append((argv, passphrase))
+        if argv[1] == "isencrypted":
+            assert passphrase is None
+            return subprocess.CompletedProcess(argv, 0, plistlib.dumps({"encrypted": True}), b"")
+        assert argv == [C.HDIUTIL, "imageinfo", str(bundle), "-plist", "-stdinpass"]
+        assert passphrase == KEY
+        return subprocess.CompletedProcess(argv, 1, KEY, messaggio + b": " + KEY)
+
+    monkeypatch.setattr(C, "_corri", corri)
+    with pytest.raises(C.ChiaveErrata) as errore:
+        C._attacca(bundle, monte, KEY)
+    assert [argv[1] for argv, _ in chiamate] == ["isencrypted", "imageinfo"]
+    assert KEY.decode() not in str(errore.value)
+    assert all(KEY.decode() not in " ".join(argv) for argv, _ in chiamate)
+
+
+@pytest.mark.parametrize("messaggio", [b"attach failed - Errore di autenticazione",
+                                       b"attach failed - Authentication error",
+                                       "attach failed - Error de autenticación".encode()])
+def test_errori_localizzati_come_ripiego_senza_metadata_cifratura(C, tmp_path, monkeypatch, messaggio):
+    bundle = tmp_path / "fixture.sparsebundle"
+    bundle.mkdir()
+    def corri(argv, passphrase=None):
+        if argv[1] == "isencrypted":
+            return subprocess.CompletedProcess(argv, 64, b"", b"provider unsupported")
+        return subprocess.CompletedProcess(argv, 1, KEY, messaggio)
+    monkeypatch.setattr(C, "_corri", corri)
+    with pytest.raises(C.ChiaveErrata):
+        C._verifica_chiave(bundle, KEY)
+    for verbo in ("attach", "imageinfo"):
+        with pytest.raises(C.ChiaveErrata):
+            C._comando([C.HDIUTIL, verbo, str(bundle), "-stdinpass"], KEY)
+
+
+def test_immagine_non_cifrata_rifiutata_senza_chiave_o_mount(C, tmp_path, monkeypatch):
+    bundle = tmp_path / "fixture.sparsebundle"
+    bundle.mkdir()
+    chiamate = []
+    def corri(argv, passphrase=None):
+        chiamate.append((argv, passphrase))
+        return subprocess.CompletedProcess(argv, 0, plistlib.dumps({"encrypted": False}), b"")
+    monkeypatch.setattr(C, "_corri", corri)
+    with pytest.raises(C.Rifiuto, match="non risulta cifrata"):
+        C._verifica_chiave(bundle, KEY)
+    assert len(chiamate) == 1 and chiamate[0][1] is None
+
+
+@pytest.mark.parametrize("rc", [errno.EIO, errno.EACCES, errno.ENODEV, errno.ENXIO,
+                               errno.EINVAL, errno.ENOSPC, errno.EROFS, errno.ENOTSUP, errno.EBUSY,
+                               errno.EAGAIN, errno.EFBIG])
+def test_imageinfo_errore_io_non_diventa_chiave_errata(C, tmp_path, monkeypatch, rc):
+    bundle = tmp_path / "fixture.sparsebundle"
+    bundle.mkdir()
+    def corri(argv, passphrase=None):
+        if argv[1] == "isencrypted":
+            return subprocess.CompletedProcess(argv, 0, plistlib.dumps({"encrypted": True}), b"")
+        return subprocess.CompletedProcess(argv, rc, KEY, KEY)
+    monkeypatch.setattr(C, "_corri", corri)
+    with pytest.raises(C.Rifiuto) as errore:
+        C._verifica_chiave(bundle, KEY)
+    assert not isinstance(errore.value, C.ChiaveErrata)
+    assert KEY.decode() not in str(errore.value)
+
+
+def test_volume_occupato_esplicito_e_forza_solo_su_scelta(C, D, albero):
+    v = C.proteggi(*albero, KEY)
+    C.apri(v["id"], KEY)
+    prima = C._carica()["cartelle"][v["id"]]
+    D.fallisce = ("detach", D.conta["detach"] + 1)
+    D.rc_fallisce = errno.EBUSY
+    with pytest.raises(C.VolumeOccupato, match="app.*terminale") as errore:
+        C.chiudi(v["id"])
+    assert errore.value.cartella_id == v["id"]
+    dopo = C._carica()["cartelle"][v["id"]]
+    assert dopo["generation"] == prima["generation"] and dopo["timer"] == prima["timer"]
+    assert "-force" not in D.chiamate[-1][0]
+    risultato = C.chiudi(v["id"], force=True)
+    assert risultato["forzata"] is True and risultato["stato"] == "chiusa"
+    assert D.chiamate[-1][0] == [C.HDIUTIL, "detach", str(albero[0]), "-force"]
+    eventi = [json.loads(line) for line in (C.CASA / "registro" / "catena.jsonl").read_text().splitlines()]
+    assert eventi[-1]["azione"] == "chiusura-forzata"
+
+
+@pytest.mark.parametrize("force", [1, "true", None])
+def test_forza_richiede_bool_esplicito(C, D, albero, force):
+    v = C.proteggi(*albero, KEY)
+    C.apri(v["id"], KEY)
+    chiamate = len(D.chiamate)
+    with pytest.raises(C.Rifiuto, match="scelta esplicita"):
+        C.chiudi(v["id"], force=force)
+    assert len(D.chiamate) == chiamate and C.elenco()[0]["stato"] == "aperta"
+    C.chiudi(v["id"])
+
+
+def test_chiudi_tutte_busy_non_forza_e_preserva_timer(C, D, albero):
+    v = C.proteggi(*albero, KEY)
+    C.apri(v["id"], KEY)
+    token = C._carica()["cartelle"][v["id"]]["timer"]
+    D.fallisce = ("detach", D.conta["detach"] + 1)
+    D.rc_fallisce = errno.EBUSY
+    risultato = C.chiudi_tutte()[0]
+    assert "in uso" in risultato["errore"] and risultato["stato"] == "aperta"
+    assert C._carica()["cartelle"][v["id"]]["timer"] == token
+    assert all("-force" not in argv for argv, _ in D.chiamate)
+    C.chiudi(v["id"])
+
+
+def test_disco_scollegato_preflight_tipizzato_prima_della_chiave(C, D, albero):
+    v = C.proteggi(*albero, KEY)
+    bundle = Path(v["bundle"])
+    bundle.rename(bundle.with_name("temporaneamente-non-disponibile"))
+    for operazione in (lambda: C.prepara_apertura(v["id"]), lambda: C.apri(v["id"], None)):
+        with pytest.raises(C.DiscoNonDisponibile, match="disco esterno non è disponibile") as errore:
+            operazione()
+        assert "recuper" not in str(errore.value).lower() and "annulla" not in str(errore.value).lower()
+    assert D.conta["attach"] == 2
+
+
+def test_gia_aperta_minuti_richiesti_non_riavviano_timer(C, D, albero):
+    v = C.proteggi(*albero, KEY)
+    aperta = C.apri(v["id"], KEY, minutes=7)
+    prima = C.ARCHIVIO.read_bytes()
+    pronto = C.prepara_apertura(v["id"], minutes=30)
+    risultato = C.apri(v["id"], None, minutes=30)
+    for r in (pronto, risultato):
+        assert r["timer_invariato"] is True and r["minutes_richiesti"] == 30
+        assert r["minutes_effettivi"] == 7 and "non lo riavviano" in r["messaggio"]
+    assert risultato["minutes"] == 7 and risultato["generation"] == aperta["generation"]
+    assert risultato["scadenza"] == aperta["scadenza"] and len(D.timer) == 1
+    assert C.ARCHIVIO.read_bytes() == prima
+    C.chiudi(v["id"])
+
+
+def test_cli_disco_scollegato_non_chiede_chiave(C, D, CLI, albero, capsys):
+    v = C.proteggi(*albero, KEY)
+    bundle = Path(v["bundle"])
+    bundle.rename(bundle.with_name("temporaneamente-non-disponibile"))
+    args = CLI.costruisci().parse_args(["cartella", "apri", v["id"]])
+    assert CLI.cmd_cartella(args) == 2
+    assert json.loads(capsys.readouterr().err)["errore"] == "disco_non_disponibile"
+
+
+def test_cli_busy_esplicito(C, D, CLI, albero, capsys):
+    v = C.proteggi(*albero, KEY)
+    C.apri(v["id"], KEY)
+    D.fallisce = ("detach", D.conta["detach"] + 1)
+    D.rc_fallisce = errno.EBUSY
+    args = CLI.costruisci().parse_args(["cartella", "chiudi", v["id"]])
+    assert CLI.cmd_cartella(args) == 2
+    esito = json.loads(capsys.readouterr().err)
+    assert esito["errore"] == "volume_occupato" and "terminale" in esito["messaggio"]
+    C.chiudi(v["id"])
+
+
+def test_cli_gia_aperta_minutes_esplicito(C, D, CLI, albero, capsys):
+    v = C.proteggi(*albero, KEY)
+    C.apri(v["id"], KEY, minutes=7)
+    args = CLI.costruisci().parse_args(["cartella", "apri", v["id"], "--minutes", "30"])
+    assert CLI.cmd_cartella(args) == 0
+    esito = json.loads(capsys.readouterr().out)
+    assert esito["timer_invariato"] and esito["minutes"] == esito["minutes_effettivi"] == 7
+    assert esito["minutes_richiesti"] == 30 and "non lo riavviano" in esito["messaggio"]
+    C.chiudi(v["id"])

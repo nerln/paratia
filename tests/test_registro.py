@@ -11,6 +11,7 @@ import os
 import sys
 import tempfile
 import unittest
+import unicodedata
 from pathlib import Path
 from unittest import mock
 
@@ -69,6 +70,60 @@ class RegistroTests(unittest.TestCase):
         self.assertEqual(gui["cartella"], "a")
         self.assertEqual(gui["azione"], "apri")
         self.assertNotIn("SECRET", R.CATENA.read_text())
+
+    def test_folder_path_query_and_csv_resolve_exact_unicode_watch_to_id(self):
+        folder = self.base / "caffè"
+        folder.mkdir()
+        R.sorveglia("watch-first", folder, "Nome originale")
+        R.annota("open", cartella="watch-first", percorso=str(folder / "file"))
+        R.annota("open", cartella="another", percorso=str(folder.with_name("caffè-altro") / "file"))
+        filters = {"folder": unicodedata.normalize("NFD", str(folder)) + "/"}
+        self.assertEqual([r["cartella"] for r in R.query(filters)], ["watch-first"])
+        self.assertEqual([r["cartella"] for r in csv.DictReader(io.StringIO(R.export_csv(filters)))], ["watch-first"])
+        self.assertTrue(filters["folder"].endswith("/"))  # A caller's filter is not mutated.
+        with self.assertRaisesRegex(ValueError, "non è configurata"):
+            R.query({"folder": str(folder.with_name("caffè-altro"))})
+
+    def test_folder_path_resolves_protected_metadata_and_ids_remain_historical(self):
+        folder = self.base / "protected"
+        folder.mkdir()
+        identifier = "a" * 32
+        bundle = self.base / (folder.name + "-" + identifier + ".sparsebundle")
+        (R.CASA / "cartelle.json").write_text(json.dumps({"versione": 1, "cartelle": {
+            identifier: {"id": identifier, "nome": "Protetta", "origine": str(folder),
+                         "montaggio": str(folder), "bundle": str(bundle)}}}))
+        R.annota("open", cartella=identifier, percorso=str(folder / "file"))
+        self.assertEqual(R.risolvi_cartella(str(folder) + "/"), identifier)
+        self.assertEqual(len(R.query({"folder": str(folder)})), 1)
+        with self.assertRaisesRegex(ValueError, "non è configurata"):
+            R.risolvi_cartella(str(folder), solo_sorveglianza=True)
+        (R.CASA / "cartelle.json").unlink()
+        self.assertEqual(len(R.query({"folder": identifier})), 1)
+        with self.assertRaisesRegex(ValueError, "non è configurata"):
+            R.export_csv({"folder": str(folder)})
+
+    def test_legacy_ambiguous_folder_path_is_refused_and_explicit_id_still_works(self):
+        folder = self.base / "watched"
+        folder.mkdir()
+        path = R.CASA / "registro" / "sorveglianza.json"
+        path.parent.mkdir()
+        path.write_text(json.dumps({"versione": 1, "percorsi": {
+            identifier: {"percorso": str(folder)} for identifier in ("old-a", "old-b")}}))
+        R.annota("open", cartella="old-a", percorso=str(folder / "file"))
+        for function in (R.query, R.export_csv):
+            with self.assertRaisesRegex(ValueError, "più ID"):
+                function({"folder": str(folder)})
+        self.assertEqual(len(R.query({"folder": "old-a"})), 1)
+
+    def test_reused_watch_reports_preserved_name_instead_of_silent_rename(self):
+        folder = self.base / "watched"
+        folder.mkdir()
+        R.sorveglia("original", folder, "Nome personale")
+        result = R.sorveglia("new-request", folder, "Nome richiesto diverso")
+        self.assertEqual((result["id"], result["nome"]), ("original", "Nome personale"))
+        self.assertTrue(result["riutilizzata"])
+        self.assertIn("ID e nome conservati", result["messaggio"])
+        self.assertEqual(R.elenco_sorveglianza()[0]["nome"], "Nome personale")
 
     def test_ancestry_pidversion_and_snapshot_uncertainty(self):
         a = R.Discendenza({99: {"processo": "/usr/local/bin/codex", "ppid": 1},

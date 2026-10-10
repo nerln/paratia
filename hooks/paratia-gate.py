@@ -43,7 +43,9 @@ from __future__ import annotations
 import fnmatch
 import json
 import os
+import re
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -75,15 +77,95 @@ ARGV_SOLO_UMANO = ("paratia", "osascript", "cliclick", "security", "sudo")
 
 # While the compartment is open every tool call is denied, with these exact
 # invocations excepted so a session is not wedged: they close it or report on
-# it, and neither reveals anything. Matched after shlex.split against the whole
-# command, so `paratia lock; cat /Volumes/paratia/x` is not one of them.
+# it, and neither reveals anything. The executable must resolve to this CLI or
+# its fixed build-time source identity. A same-named file is never sufficient.
 PERMESSI_APERTO = (
-    ["paratia", "lock"],
-    ["paratia", "status"],
-    ["paratia", "status", "--json"],
-    ["paratia", "cartella", "chiudi-tutte"],
-    ["paratia", "cartella", "elenco"],
+    ["lock"],
+    ["status"],
+    ["status", "--json"],
+    ["cartella", "chiudi-tutte"],
+    ["cartella", "elenco"],
 )
+
+
+def cli_attendibili() -> set[Path]:
+    """Fixed code identities; payload, PATH and user settings cannot add one."""
+    radice = Path(__file__).resolve().parent.parent
+    locale = radice / "paratia.py"
+    percorsi = {locale} if locale.is_file() and not locale.is_symlink() else set()
+    manifesto = Path(__file__).resolve().with_name("paratia-cli.json")
+    if manifesto.exists() or manifesto.is_symlink():
+        if manifesto.is_symlink() or not manifesto.is_file() or manifesto.stat().st_size > 8192:
+            raise ValueError("manifesto CLI non valido")
+        dati = json.loads(manifesto.read_text())
+        if (not isinstance(dati, dict) or set(dati) != {"versione", "sorgente"}
+                or dati["versione"] != 1 or not isinstance(dati["sorgente"], str)):
+            raise ValueError("manifesto CLI non valido")
+        sorgente = Path(dati["sorgente"])
+        if (not sorgente.is_absolute() or str(sorgente) != dati["sorgente"]
+                or str(sorgente) != os.path.normpath(str(sorgente))
+                or str(sorgente).startswith("//")):
+            raise ValueError("percorso CLI non valido")
+        # Do not resolve this stored identity again: replacing it by a symlink
+        # must not change which program the manifest authorizes.
+        if sorgente.is_file() and not sorgente.is_symlink():
+            percorsi.add(sorgente)
+    return percorsi
+
+
+def eseguibile_reale(nome: str) -> Path | None:
+    """Resolve a call, never use its basename as evidence of its identity."""
+    if os.path.isabs(nome):
+        percorso = nome
+    elif nome in ("paratia", "python3"):
+        percorso = shutil.which(nome)
+    else:
+        return None
+    if not percorso:
+        return None
+    try:
+        risultato = Path(percorso).resolve(strict=True)
+        return risultato if risultato.is_file() else None
+    except (OSError, RuntimeError):
+        return None
+
+
+def comando_sicuro_aperto(dati: dict) -> bool:
+    """One literal invocation of the real CLI, with a harmless fixed verb."""
+    comando = (dati.get("tool_input") or {}).get("command")
+    if not isinstance(comando, str) or any(c in comando for c in ("$", "`", "\n", "\r", "\x00")):
+        return False
+    try:
+        parser = shlex.shlex(comando, posix=True, punctuation_chars=";&|<>")
+        parser.whitespace_split = True
+        parser.commenters = ""
+        argv = list(parser)
+        if not argv:
+            return False
+        attendibili = cli_attendibili()
+        programma = eseguibile_reale(argv[0])
+        if programma in attendibili:
+            argomenti = argv[1:]
+        else:
+            # Fixed installed runtimes, plus the interpreter running this hook.
+            # Resolving PATH finds the actual call but cannot add a trusted one.
+            runtimes = set()
+            for nome in (sys.executable, "/usr/bin/python3", "/opt/homebrew/bin/python3", "/usr/local/bin/python3"):
+                runtime = eseguibile_reale(nome)
+                if runtime is not None:
+                    runtimes.add(runtime)
+            if programma not in runtimes or len(argv) < 2 or not os.path.isabs(argv[1]):
+                return False
+            script = eseguibile_reale(argv[1])
+            if script not in attendibili:
+                return False
+            argomenti = argv[2:]
+        if argomenti in PERMESSI_APERTO:
+            return True
+        return (len(argomenti) == 3 and argomenti[:2] == ["cartella", "chiudi"]
+                and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", argomenti[2]) is not None)
+    except (OSError, ValueError, TypeError, RuntimeError):
+        return False
 
 
 def nega(motivo: str) -> None:
@@ -266,15 +348,18 @@ def main(*, codex: bool = False) -> int:
 
     # ---- first refusal: the compartment is open
     if compartimento_aperto():
-        argv = argv_di(dati)
-        if strumento == "Bash" and argv is not None and list(argv) in [list(x) for x in PERMESSI_APERTO]:
+        if strumento == "Bash" and comando_sicuro_aperto(dati):
             return 0
         nega(
             "A paratia compartment is mounted, so its plaintext is "
             f"readable by anything running as this user, including this session. Every "
-            "tool call is refused until it is closed. Run `paratia cartella chiudi-tutte` "
-            "to close protected folders and `paratia lock` to close the main store. "
-            "Both commands are allowed; use `paratia status --json` to check, then carry on."
+            "tool call is refused until it is closed. Allowed commands / Comandi consentiti: "
+            "`paratia cartella chiudi <id>`, `paratia cartella chiudi-tutte`, `paratia lock`, "
+            "`paratia status`, `paratia status --json`, `paratia cartella elenco`. "
+            "Equivalent absolute paths and `python3 /absolute/path/paratia.py ...` are allowed "
+            "only when they resolve to the real Paratia CLI. Close protected folders with "
+            "chiudi or chiudi-tutte and the main store with lock; use status --json to check. "
+            "Usa l'ID indicato da cartella elenco; niente altri comandi, concatenazioni o redirezioni."
         )
         return 0
 

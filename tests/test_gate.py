@@ -24,7 +24,8 @@ esiti: list[tuple[bool, str]] = []
 
 
 def gate(payload: dict, *, mount: str, home: str) -> dict | None:
-    amb = {**os.environ, "PARATIA_MOUNT": mount, "PARATIA_HOME": home}
+    amb = {**os.environ, "PARATIA_MOUNT": mount, "PARATIA_HOME": home,
+           "PATH": str(Path(home) / "bin") + os.pathsep + os.environ.get("PATH", os.defpath)}
     p = subprocess.run(
         [sys.executable, str(GATE)],
         input=json.dumps(payload).encode(),
@@ -76,6 +77,11 @@ def main() -> int:
         d = Path(d)
         casa = d / "casa"
         casa.mkdir()
+        (casa / "bin").mkdir()
+        # Resolve the shell alias to the real repository CLI without executing
+        # it. Gate subprocesses only classify the synthetic hook payload.
+        (casa / "bin" / "paratia").symlink_to(GATE.parent.parent / "paratia.py")
+        (casa / "bin" / "python3").symlink_to(Path(sys.executable).resolve())
         chiuso = str(d / "non-montato")
         aperto = str(d)  # a real directory; is_mount() is false, so simulate below
 
@@ -103,6 +109,16 @@ def main() -> int:
                 mount="/", home=str(casa),
             )),
         )
+        for command in ("paratia cartella chiudi one", "paratia cartella chiudi-tutte",
+                        str(casa / "bin" / "paratia") + " cartella chiudi one",
+                        "python3 " + str(GATE.parent.parent / "paratia.py") + " cartella chiudi-tutte"):
+            verifica("compartment open allows real CLI: " + command,
+                     gate({"tool_name": "Bash", "tool_input": {"command": command}}, mount="/", home=str(casa)) is None)
+        fake = d / "paratia.py"
+        fake.write_text("# same name is not the real program\n")
+        verifica("compartment open refuses another paratia.py",
+                 negato(gate({"tool_name": "Bash", "tool_input": {"command": "python3 " + str(fake) + " cartella chiudi-tutte"}},
+                             mount="/", home=str(casa))))
 
         # --- closed compartment, human turn: silence
         t_umano = transcript(d, [turno_umano("apri il browser"), risultato_strumento()])

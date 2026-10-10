@@ -30,6 +30,23 @@ ROOT = Path(__file__).resolve().parents[1]
 MARKER = "paratia-banco-temporaneo-v1"
 
 
+def _temporary_root():
+    """Honor an explicit TMPDIR even if tempfile's default was already cached."""
+    root = Path(os.environ.get("TMPDIR") or tempfile.gettempdir())
+    if not root.is_absolute():
+        raise ValueError("TMPDIR deve essere un percorso assoluto.")
+    root = root.resolve(strict=True)
+    if not root.is_dir():
+        raise ValueError("TMPDIR deve essere una cartella esistente.")
+    return root
+
+
+def new_fixture():
+    base = Path(tempfile.mkdtemp(prefix="paratia-banco-e2e-", dir=str(_temporary_root()))).resolve()
+    (base / ".fixture").write_text(MARKER)
+    return base
+
+
 def _load(name, path):
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
@@ -83,9 +100,11 @@ class SubprocessGuard:
 @contextlib.contextmanager
 def fixture(base, key, configure_disks=None, mock_mdls=None):
     """Confine runtime overrides to one newly created, owned temporary root."""
+    if Path(base).is_symlink():
+        raise ValueError("La fixture rifiuta una radice con collegamento simbolico.")
     base = Path(base).resolve(strict=True)
-    if base.parent != Path("/private/tmp").resolve() or not base.name.startswith("paratia-banco-e2e-"):
-        raise ValueError("La fixture richiede una nuova cartella /private/tmp/paratia-banco-e2e-…")
+    if base.parent != _temporary_root() or not base.name.startswith("paratia-banco-e2e-"):
+        raise ValueError("La fixture richiede una nuova cartella paratia-banco-e2e-… sotto TMPDIR.")
     if base.stat().st_uid != os.getuid() or (base / ".fixture").read_text() != MARKER:
         raise ValueError("La cartella non appartiene a questa fixture")
     home, state, disk = base / "home", base / "state", base / "temporary-disk"
@@ -288,8 +307,7 @@ def main(argv=None):
     if any(key_text in value for value in os.environ.values()):
         print(json.dumps({"eseguito": False, "errore": "La chiave fittizia è già presente nell'ambiente"}))
         return 2
-    base = Path(tempfile.mkdtemp(prefix="paratia-banco-e2e-", dir="/private/tmp")).resolve()
-    (base / ".fixture").write_text(MARKER)
+    base = new_fixture()
     payload = frame({"dove": str(base / "temporary-disk"), "minutes": 1, "agenti_reali": False}, key)
     process = None
     report = {"ipc_ok": False, "cleanup": {"volumi_chiusi": False, "timer_terminati": False}}

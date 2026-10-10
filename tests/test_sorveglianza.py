@@ -15,6 +15,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import unicodedata
 import uuid
 from pathlib import Path
 
@@ -341,6 +342,20 @@ def test_cli_query_and_csv_resolve_watched_folder_filter(isolated_app, folder, m
     assert csv_rows[0]["percorso"] == str(folder / "sintetico.txt")
 
 
+@pytest.mark.parametrize("ambiguous", [False, True])
+@pytest.mark.parametrize("verb", ["elenco", "esporta"])
+def test_cli_folder_path_refuses_unknown_or_legacy_ambiguity(isolated_app, folder, ambiguous, verb):
+    if ambiguous:
+        path = isolated_app["state"] / "registro" / "sorveglianza.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"versione": 1, "percorsi": {
+            identifier: {"percorso": str(folder)} for identifier in ("old-a", "old-b")}}))
+    response = cli(isolated_app, verb, "--cartella", str(folder))
+    assert response.returncode != 0 and not response.stdout
+    assert "Traceback" not in response.stderr
+    assert ("più ID" if ambiguous else "non è configurata") in response.stderr
+
+
 def test_worker_watch_list_remove_use_real_backend_routes(isolated_app, folder):
     created = worker(isolated_app, "registro.sorveglia", {"id": "watch-gui", "percorso": str(folder), "nome": "Documenti GUI"})
     assert created["ok"] is True and created["result"]["configurata"] is True
@@ -354,6 +369,56 @@ def test_worker_watch_list_remove_use_real_backend_routes(isolated_app, folder):
     assert stopped["ok"] is True and stopped["result"]["sorvegliata"] is False
     assert worker(isolated_app, "registro.elenco_sorveglianza", {})["result"] == []
     assert (folder / "sintetico.txt").read_bytes() == CONTENT
+
+
+@pytest.mark.parametrize("configured", ["watch", "protected"])
+def test_worker_query_and_csv_resolve_folder_path_with_real_backend(isolated_app, folder, monkeypatch, configured):
+    monkeypatch.setenv("PARATIA_HOME", str(isolated_app["state"]))
+    R = load_module("registro_worker_path_test", isolated_app["app"] / "registro.py")
+    if configured == "watch":
+        R.sorveglia("watch-1", folder)
+        identifier = "watch-1"
+    else:
+        identifier = "a" * 32
+        R.CASA.mkdir(parents=True)
+        bundle = folder.parent / (folder.name + "-" + identifier + ".sparsebundle")
+        (R.CASA / "cartelle.json").write_text(json.dumps({"versione": 1, "cartelle": {
+            identifier: {"id": identifier, "nome": "Protetta", "origine": str(folder),
+                         "montaggio": str(folder), "bundle": str(bundle)}}}))
+    R.annota("open", cartella=identifier, percorso=str(folder / "sintetico.txt"))
+    R.annota("unrelated", cartella="other", percorso=str(folder / "altro.txt"))
+    filters = {"folder": unicodedata.normalize("NFD", str(folder)) + "/"}
+    response = worker(isolated_app, "registro.query", {"filters": filters})
+    assert response["ok"] and response["result"]["total"] == 1
+    assert response["result"]["rows"][0]["cartella"] == identifier
+    output = isolated_app["home"] / "events.csv"
+    exported = worker(isolated_app, "registro.export_csv", {"path": str(output), "filters": filters})
+    assert exported["ok"] and [r["cartella"] for r in csv.DictReader(io.StringIO(output.read_text()))] == [identifier]
+
+
+@pytest.mark.parametrize("ambiguous", [False, True])
+@pytest.mark.parametrize("action", ["registro.query", "registro.export_csv"])
+def test_worker_folder_path_refuses_unknown_or_legacy_ambiguous_before_export(isolated_app, folder, action, ambiguous):
+    if ambiguous:
+        path = isolated_app["state"] / "registro" / "sorveglianza.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"versione": 1, "percorsi": {
+            identifier: {"percorso": str(folder)} for identifier in ("old-a", "old-b")}}))
+    output = isolated_app["home"] / "must-not-exist.csv"
+    params = {"filters": {"folder": str(folder)}}
+    if action == "registro.export_csv":
+        params["path"] = str(output)
+    response = worker(isolated_app, action, params)
+    assert response["ok"] is False and response["code"] == "invalid_data"
+    assert not output.exists()
+
+
+def test_worker_reused_watch_explicitly_preserves_the_original_name(isolated_app, folder):
+    worker(isolated_app, "registro.sorveglia", {"id": "original", "percorso": str(folder), "nome": "Nome GUI"})
+    response = worker(isolated_app, "registro.sorveglia", {"id": "new-request", "percorso": str(folder), "nome": "Nome richiesto"})
+    assert response["ok"] and response["result"]["riutilizzata"]
+    assert response["result"]["id"] == "original" and response["result"]["nome"] == "Nome GUI"
+    assert "ID e nome conservati" in response["result"]["messaggio"]
 
 
 @pytest.mark.parametrize("action,params", [

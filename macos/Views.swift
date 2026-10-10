@@ -131,9 +131,14 @@ struct FolderCard: View {
                     if folder.isIncomplete {
                         Button("Recupera la fonte") { model.askKey(folder, recovery: true) }
                         Button("Annulla migrazione") { model.cancelMigration(folder) }
+                        if !folder.data.text("montaggio_temporaneo", fallback: "").isEmpty {
+                            Button("Chiudi montaggi") { model.close(folder) }
+                            Button("Forza chiusura…", role: .destructive) { model.forceClose(folder) }
+                        }
                     } else if folder.state == "aperta" {
                         Button("Mostra nel Finder") { NSWorkspace.shared.open(URL(fileURLWithPath: folder.source)) }
                         Button("Chiudi") { model.close(folder) }.buttonStyle(.borderedProminent)
+                        Button("Forza chiusura…", role: .destructive) { model.forceClose(folder) }
                     } else {
                         Button("Apri…") { model.askKey(folder) }.buttonStyle(.borderedProminent)
                     }
