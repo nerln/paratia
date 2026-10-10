@@ -48,6 +48,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.dont_write_bytecode = True
+
 CASA = Path(os.environ.get("PARATIA_HOME", Path.home() / ".paratia"))
 MONTAGGIO = Path(os.environ.get("PARATIA_MOUNT", "/Volumes/paratia"))
 REGOLE = CASA / "dogana.json"

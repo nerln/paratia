@@ -2,5 +2,9 @@ __pycache__/
 *.pyc
 .DS_Store
 *.sparsebundle
+build/
+dist/
+.swiftmodulecache/
+.pytest_cache/
 lab/e3/riservato/
 lab/e3/pubblico/

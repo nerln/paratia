@@ -23,6 +23,7 @@ build-backend = "hatchling.build"
 # Flat modules, not a package. paratia.py loads specchio.py, etichette.py and
 # finder.py by path from its own directory, so they have to land side by side.
 # web/ ships too: `paratia finder` serves finder.html from it and a wheel without
-# it installs a command that 500s on its first request. The hooks are deliberately
-# absent: they are wired into ~/.claude, not installed by pip.
-only-include = ["paratia.py", "specchio.py", "fanale.py", "catena.py", "etichette.py", "finder.py", "cartelle.py", "registro.py", "registro_daemon.py", "registro_installa.py", "web"]
+# it installs a command that 500s on its first request. GUI helpers and their two
+# scripts stay together too. Shipping a hook does not activate it: the native
+# app offers a separate, reversible configuration step.
+only-include = ["paratia.py", "specchio.py", "fanale.py", "catena.py", "etichette.py", "finder.py", "cartelle.py", "registro.py", "registro_daemon.py", "registro_installa.py", "gui_worker.py", "banco.py", "hookinstaller.py", "hooks/paratia-gate.py", "strumenti/banco-probe.py", "web"]

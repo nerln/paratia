@@ -26,6 +26,9 @@ import time
 import uuid
 from pathlib import Path
 
+# Timers import sibling registry modules from a sealed app bundle as well.
+sys.dont_write_bytecode = True
+
 CASA = Path(os.environ.get("PARATIA_HOME", Path.home() / ".paratia"))
 ARCHIVIO = CASA / "cartelle.json"
 HDIUTIL = "/usr/bin/hdiutil"
@@ -539,7 +542,7 @@ def proteggi(origine: str | Path, dove: str | Path, passphrase: bytes, minutes: 
 
 
 def _avvia_timer(identificatore: str, generation: str, secondi: int) -> None:
-    processo = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "timer", identificatore,
+    processo = subprocess.Popen([sys.executable, "-I", "-S", "-B", str(Path(__file__).resolve()), "timer", identificatore,
                                 generation, str(secondi)], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.DEVNULL, close_fds=True, start_new_session=True)
     try:
