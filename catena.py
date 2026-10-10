@@ -4,11 +4,11 @@ from __future__ import annotations
 import fcntl
 import ctypes
 import errno
+import datetime
 import hashlib
 import json
 import os
 import stat
-import time
 import sys
 from pathlib import Path
 
@@ -90,7 +90,7 @@ def appendi(percorso, voce, durevole=True):
         fcntl.flock(fd, fcntl.LOCK_EX)
         try:
             r = {**voce, "precedente": _coda(f),
-                 "quando": voce.get("quando", time.strftime("%Y-%m-%dT%H:%M:%S%z"))}
+                 "quando": voce.get("quando", datetime.datetime.now().astimezone().isoformat(timespec="seconds"))}
             dati = (json.dumps(r, ensure_ascii=False, sort_keys=True) + "\n").encode()
             if len(dati) > 1048576:
                 raise ValueError("Il record della catena è troppo grande.")

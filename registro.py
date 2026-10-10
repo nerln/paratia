@@ -14,11 +14,13 @@ import json
 import os
 import pwd
 import plistlib
+import re
 import stat
 import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 from pathlib import Path
 
 _spec = importlib.util.spec_from_file_location("paratia_catena", Path(__file__).resolve().with_name("catena.py"))
@@ -264,7 +266,7 @@ def normalizza(msg, ancestry=None):
 
 
 def percorso_normale(p):
-    p = os.path.normpath(p)
+    p = unicodedata.normalize("NFC", os.path.normpath(p))
     for alias in ("/tmp", "/var", "/etc"):
         if p == alias or p.startswith(alias + "/"):
             return "/private" + p
@@ -452,7 +454,7 @@ def _valida_radici(v, uid):
                 raise ValueError("Il recupero temporaneo non corrisponde alla cartella.")
 
 
-def _valida_sorveglianza(p, uid):
+def _valida_sorveglianza(p, uid, richiedi_esistente=True):
     if not isinstance(p, (str, Path)):
         raise ValueError("Il percorso di sorveglianza non è valido.")
     p = Path(p)
@@ -470,6 +472,8 @@ def _valida_sorveglianza(p, uid):
             continue
         if stat.S_ISLNK(s.st_mode):
             raise ValueError("La sorveglianza rifiuta i collegamenti simbolici.")
+    if richiedi_esistente and not p.is_dir():
+        raise ValueError("Scegli una cartella esistente da configurare per la sorveglianza.")
     esistente = p if p.exists() else p.parent
     if not esistente.is_dir() or esistente.stat().st_uid != uid:
         raise ValueError("La cartella da sorvegliare deve appartenere all'utente.")
@@ -486,7 +490,9 @@ def leggi_sorveglianza(percorso, uid):
     for identificatore, voce in dati["percorsi"].items():
         if not isinstance(identificatore, str) or not 1 <= len(identificatore) <= 128 or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for c in identificatore) or not isinstance(voce, dict):
             raise ValueError("Una sorveglianza non è valida.")
-        percorso = _valida_sorveglianza(voce.get("percorso", ""), uid)
+        # A configured source may briefly disappear during migration or later
+        # be removed. Reading its metadata is distinct from adding a new watch.
+        percorso = _valida_sorveglianza(voce.get("percorso", ""), uid, richiedi_esistente=False)
         risultati.append({"id": identificatore, "nome": _testo(voce.get("nome")) or Path(percorso).name,
                           "origine": percorso, "tipo": "sorveglianza"})
     return risultati
@@ -502,13 +508,31 @@ def _cambia_sorveglianza(identificatore, percorso=None, nome=""):
         dati = _leggi_json_posseduto(p, os.getuid()) or {"versione": 1, "percorsi": {}}
         if not isinstance(dati, dict) or dati.get("versione") != 1 or not isinstance(dati.get("percorsi"), dict):
             raise ValueError("La sorveglianza non è valida.")
-        if percorso is None:
-            dati["percorsi"].pop(identificatore, None)
-        else:
-            dati["percorsi"][identificatore] = {"percorso": _valida_sorveglianza(percorso, os.getuid()), "nome": nome}
         # Validate identifiers and paths before the atomic registry replacement.
         if not isinstance(identificatore, str) or not 1 <= len(identificatore) <= 128 or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for c in identificatore):
             raise ValueError("L'identificatore della sorveglianza non è valido.")
+        riutilizzata = False
+        if percorso is None:
+            if identificatore not in dati["percorsi"]:
+                raise ValueError("L'identificatore non è configurato per la sorveglianza.")
+            dati["percorsi"].pop(identificatore)
+        else:
+            percorso = _valida_sorveglianza(percorso, os.getuid())
+            voci = leggi_sorveglianza(p, os.getuid())
+            uguali = [v["id"] for v in voci if percorso_normale(v["origine"]) == percorso_normale(percorso)]
+            if uguali:
+                # Keep the original stable ID. Also repair duplicate legacy
+                # watch entries for this exact path while holding the lock.
+                identificatore = uguali[0]
+                riutilizzata = True
+                # Reusing a request must preserve the person's label, including
+                # when the bank temporarily needs that same watched path.
+                nome = dati["percorsi"][identificatore].get("nome", "")
+                for duplicato in uguali[1:]:
+                    dati["percorsi"].pop(duplicato)
+            elif identificatore in dati["percorsi"]:
+                raise ValueError("L'identificatore appartiene a un'altra cartella. Rimuovilo prima di riutilizzarlo.")
+            dati["percorsi"][identificatore] = {"percorso": percorso, "nome": nome}
         fd, temporaneo = tempfile.mkstemp(dir=directory, prefix=".sorveglianza-")
         try:
             with os.fdopen(fd, "w") as f:
@@ -522,7 +546,15 @@ def _cambia_sorveglianza(identificatore, percorso=None, nome=""):
     finally:
         fcntl.flock(lock, fcntl.LOCK_UN)
         os.close(lock)
-    return {"id": identificatore, "percorso": percorso, "sorvegliata": percorso is not None}
+    salute = stato()
+    attiva = bool(percorso is not None and salute["running"] and salute["healthy"]
+                  and identificatore in salute.get("watched_ids", []))
+    return {"id": identificatore, "percorso": percorso, "configurata": percorso is not None,
+            "sorvegliata": attiva, "raccolta_attiva": attiva, "riutilizzata": riutilizzata,
+            "rimossa": percorso is None,
+            "messaggio": "Configurazione rimossa." if percorso is None else
+                         "Cartella configurata; il raccoglitore ha confermato la sorveglianza." if attiva else
+                         "Cartella configurata; raccolta non attiva o conferma del raccoglitore ancora assente."}
 
 
 def sorveglia(identificatore, percorso, nome=""):
@@ -532,7 +564,10 @@ def sorveglia(identificatore, percorso, nome=""):
 def elenco_sorveglianza():
     """Read validated user watch configuration; never imply kernel coverage."""
     voci = leggi_sorveglianza(CASA / "registro" / "sorveglianza.json", os.getuid())
-    return sorted(({**voce, "percorso": voce["origine"], "esiste": Path(voce["origine"]).is_dir()}
+    salute = stato()
+    return sorted(({**voce, "percorso": voce["origine"], "esiste": Path(voce["origine"]).is_dir(),
+                    "configurata": True, "raccolta_attiva": bool(salute["running"] and salute["healthy"]
+                        and voce["id"] in salute.get("watched_ids", []) and Path(voce["origine"]).is_dir())}
                    for voce in voci), key=lambda voce: (voce["nome"].casefold(), voce["id"]))
 
 
@@ -568,7 +603,23 @@ def _catene():
 def _data(v):
     if not v:
         return None
-    return datetime.datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp()
+    testo = str(v).replace("Z", "+00:00")
+    # Python 3.9 accepts colon-separated UTC offsets, unlike the historical
+    # strftime %z writer. Preserve old rows without rewriting their hash chain.
+    testo = re.sub(r"([+-]\d{2})(\d{2})$", r"\1:\2", testo)
+    return datetime.datetime.fromisoformat(testo).timestamp()
+
+
+def _corrisponde_file(filtro, valore):
+    if not isinstance(valore, str):
+        return False
+    filtro = str(filtro)
+    if os.path.isabs(filtro):
+        if not os.path.isabs(valore):
+            return False
+        radice, percorso = percorso_normale(filtro), percorso_normale(valore)
+        return percorso == radice or percorso.startswith(radice.rstrip("/") + "/")
+    return unicodedata.normalize("NFC", filtro).casefold() in unicodedata.normalize("NFC", valore).casefold()
 
 
 def query(filters=None):
@@ -591,7 +642,7 @@ def query(filters=None):
                 folder = filters.get("folder")
                 if folder and folder not in (r.get("id"), r.get("cartella")) and not any(folder in (c.get("id"), c.get("nome")) for c in r.get("cartelle", [])):
                     continue
-                if filters.get("file") and not any(str(filters["file"]) in str(r.get(k, "")) for k in ("percorso", "destinazione", "origine")):
+                if filters.get("file") and not any(_corrisponde_file(filters["file"], r.get(k)) for k in ("percorso", "destinazione", "origine")):
                     continue
                 if filters.get("process") and str(filters["process"]).lower() not in (str(r.get("processo", "")) + " " + str(r.get("app_responsabile", ""))).lower() and str(filters["process"]) != str(r.get("pid")):
                     continue

@@ -203,7 +203,11 @@ class RegistroTests(unittest.TestCase):
     def test_plaintext_watch_is_separate_metadata_and_reversible(self):
         folder = self.base / "plain"
         folder.mkdir()
-        self.assertTrue(R.sorveglia("banco-before", folder, "Prima")["sorvegliata"])
+        with mock.patch.object(R, "stato", return_value={"running": False, "healthy": False, "watched_ids": []}):
+            configured = R.sorveglia("banco-before", folder, "Prima")
+        self.assertTrue(configured["configurata"])
+        self.assertFalse(configured["sorvegliata"])
+        self.assertFalse(configured["raccolta_attiva"])
         p = R.CASA / "registro" / "sorveglianza.json"
         self.assertEqual(R.leggi_sorveglianza(p, os.getuid())[0]["origine"], str(folder))
         self.assertFalse((R.CASA / "cartelle.json").exists())
@@ -213,6 +217,49 @@ class RegistroTests(unittest.TestCase):
             R.sorveglia("collector", R.SYSTEM)
         R.rimuovi_sorveglianza("banco-before")
         self.assertEqual(R.leggi_sorveglianza(p, os.getuid()), [])
+
+    def test_watch_deduplicates_exact_unicode_path_and_rejects_missing_folder_or_id(self):
+        folder = self.base / "caffè"
+        folder.mkdir()
+        stopped = {"running": False, "healthy": False, "watched_ids": []}
+        with mock.patch.object(R, "stato", return_value=stopped):
+            first = R.sorveglia("first", folder)
+            second = R.sorveglia("second", folder)
+            self.assertEqual(second["id"], first["id"])
+            self.assertTrue(second["riutilizzata"])
+            self.assertEqual(len(R.elenco_sorveglianza()), 1)
+            self.assertFalse(R.elenco_sorveglianza()[0]["raccolta_attiva"])
+            with self.assertRaises(ValueError):
+                R.sorveglia("missing", self.base / "non-esiste")
+            with self.assertRaises(ValueError):
+                R.rimuovi_sorveglianza("unknown")
+        with mock.patch.object(R, "stato", return_value={"running": True, "healthy": True, "watched_ids": ["first"]}):
+            self.assertTrue(R.sorveglia("third", folder)["raccolta_attiva"])
+            self.assertTrue(R.elenco_sorveglianza()[0]["raccolta_attiva"])
+
+    def test_file_filter_boundary_unicode_and_casefolded_free_name(self):
+        import unicodedata
+        paths = ["/a/b", "/a/b/CAFÉ.txt", "/a/bc/x", "/a/autre/cafe\u0301.txt"]
+        for n, path in enumerate(paths):
+            catena.appendi(R.CATENA, {"numero": n, "percorso": path})
+        catena.appendi(R.CATENA, {"numero": 4, "percorso": "/other", "destinazione": "/a/b/nuovo"})
+        self.assertEqual({r["numero"] for r in R.query({"file": "/a/b/"})}, {0, 1, 4})
+        self.assertEqual({r["numero"] for r in R.query({"file": "/a/bc"})}, {2})
+        self.assertEqual({r["numero"] for r in R.query({"file": unicodedata.normalize("NFD", "/a/b/CAFÉ.txt")})}, {1})
+        self.assertEqual({r["numero"] for r in R.query({"file": "café"})}, {1, 3})
+        self.assertEqual({r["numero"] for r in R.query({"file": "CAFÉ"})}, {1, 3})
+        self.assertEqual(R.corrisponde({"percorso": "/a/cafe\u0301/x"}, [{"id": "unicode", "origine": "/a/café"}])[0]["id"], "unicode")
+
+    def test_timestamp_new_writer_and_legacy_rows_share_one_query(self):
+        current = catena.appendi(R.CATENA, {"evento": "nuovo"})
+        self.assertRegex(current["quando"], r"[+-]\d{2}:\d{2}$")
+        for stamp in ("2026-10-10T05:11:37+0200", "2026-10-10T05:11:37+02:00", "2026-10-10T03:11:37Z"):
+            catena.appendi(R.CATENA, {"quando": stamp, "evento": "legacy"})
+        self.assertEqual(R._data("2026-10-10T05:11:37+0200"), R._data("2026-10-10T03:11:37Z"))
+        rows = R.query()
+        self.assertEqual(len(rows), 4)
+        self.assertEqual(len(list(csv.DictReader(io.StringIO(R.export_csv())))), 4)
+        self.assertTrue(R.verifica()["ok"])
 
     def test_migration_backup_and_residual_scope(self):
         source = self.base / "folder"

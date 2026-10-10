@@ -78,9 +78,13 @@ def test_listing_is_metadata_only_and_watch_does_not_encrypt_or_move(R, folder, 
         patch.setattr(os, "open", guard_os_open)
         result = R.sorveglia("documenti-1", folder, "Documenti di prova")
         rows = R.elenco_sorveglianza()
-    assert result == {"id": "documenti-1", "percorso": str(folder), "sorvegliata": True}
+    assert result["id"] == "documenti-1" and result["percorso"] == str(folder)
+    assert result["configurata"] is True
+    assert result["sorvegliata"] is result["raccolta_attiva"] is False
+    assert "raccolta non attiva" in result["messaggio"]
     assert rows == [{"id": "documenti-1", "nome": "Documenti di prova", "origine": str(folder),
-                     "percorso": str(folder), "tipo": "sorveglianza", "esiste": True}]
+                     "percorso": str(folder), "tipo": "sorveglianza", "esiste": True,
+                     "configurata": True, "raccolta_attiva": False}]
     assert CONTENT.decode() not in json.dumps(rows)
     assert CONTENT not in watch_file(R).read_bytes()
     assert (folder / "sintetico.txt").read_bytes() == CONTENT
@@ -95,7 +99,13 @@ def test_listing_does_not_create_store_and_missing_folder_is_explicit_metadata(R
     assert R.elenco_sorveglianza() == []
     assert not R.CASA.exists()
     missing = tmp_path.resolve() / "cartella-non-presente"
+    with pytest.raises(ValueError, match="cartella esistente"):
+        R.sorveglia("attesa", missing)
+    assert not watch_file(R).exists()
+    # Existing requests remain visible if their folder later disappears.
+    missing.mkdir()
     R.sorveglia("attesa", missing)
+    missing.rmdir()
     row = R.elenco_sorveglianza()[0]
     assert row["origine"] == row["percorso"] == str(missing)
     assert row["nome"] == missing.name
@@ -113,7 +123,8 @@ def test_listing_projects_validated_metadata_from_user_configuration(R, folder):
         "password": KEY.decode(), "stato": "protetta", "healthy": True,
     }}}), encoding="utf-8")
     row = R.elenco_sorveglianza()[0]
-    assert set(row) == {"id", "nome", "origine", "percorso", "tipo", "esiste"}
+    assert set(row) == {"id", "nome", "origine", "percorso", "tipo", "esiste", "configurata", "raccolta_attiva"}
+    assert row["configurata"] is True and row["raccolta_attiva"] is False
     assert row["nome"] == "Nome umano"
     assert CONTENT.decode() not in json.dumps(row)
     assert KEY.decode() not in json.dumps(row)
@@ -313,7 +324,7 @@ def test_cli_query_and_csv_resolve_watched_folder_filter(isolated_app, folder, m
     add_records(R, folder)
     selected = str(folder) if by_path else "watch-1"
     queried = cli(isolated_app, "elenco", "--cartella", selected)
-    assert queried.returncode == 0 and queried.stderr == ""
+    assert queried.returncode == 0 and "raccolta kernel non attiva" in queried.stderr
     rows = json.loads(queried.stdout)
     assert len(rows) == 1 and rows[0]["evento"] == "open"
     named = cli(isolated_app, "elenco", "--cartella", selected, "--agente", "Codex")
@@ -323,7 +334,7 @@ def test_cli_query_and_csv_resolve_watched_folder_filter(isolated_app, folder, m
     other = cli(isolated_app, "elenco", "--cartella", selected, "--agente", "Claude Code")
     assert other.returncode == 0 and json.loads(other.stdout) == []
     exported = cli(isolated_app, "esporta", "--cartella", selected)
-    assert exported.returncode == 0 and exported.stderr == ""
+    assert exported.returncode == 0 and "raccolta kernel non attiva" in exported.stderr
     csv_rows = list(csv.DictReader(io.StringIO(exported.stdout)))
     assert len(csv_rows) == 1
     assert csv_rows[0]["processo"] == "'=synthetic-formula"
@@ -332,7 +343,8 @@ def test_cli_query_and_csv_resolve_watched_folder_filter(isolated_app, folder, m
 
 def test_worker_watch_list_remove_use_real_backend_routes(isolated_app, folder):
     created = worker(isolated_app, "registro.sorveglia", {"id": "watch-gui", "percorso": str(folder), "nome": "Documenti GUI"})
-    assert created["ok"] is True and created["result"]["sorvegliata"] is True
+    assert created["ok"] is True and created["result"]["configurata"] is True
+    assert created["result"]["sorvegliata"] is created["result"]["raccolta_attiva"] is False
     listed = worker(isolated_app, "registro.elenco_sorveglianza", {})
     assert listed["ok"] is True
     row = listed["result"][0]

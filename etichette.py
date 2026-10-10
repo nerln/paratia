@@ -34,6 +34,7 @@ per child, so moving a folder does not leave orphaned rules behind.
 from __future__ import annotations
 
 import json
+import datetime
 import os
 import time
 from pathlib import Path
@@ -121,7 +122,7 @@ def segna(percorso: str | Path, etichetta: str, nota: str = "") -> dict:
     d = carica()
     d["voci"][k] = {
         "etichetta": e,
-        "quando": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "quando": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "nota": nota,
     }
     salva(d)

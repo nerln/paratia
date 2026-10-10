@@ -38,6 +38,7 @@ Mac it cannot be anything else.
 from __future__ import annotations
 
 import argparse
+import datetime
 import hashlib
 import json
 import os
@@ -106,7 +107,7 @@ def annota(evento: str, **campi) -> None:
     log you can only read when the thing is open tells you nothing about the
     times it was opened. It is append-only by convention only — see `attest`."""
     CASA.mkdir(parents=True, exist_ok=True)
-    riga = {"quando": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "evento": evento, **campi}
+    riga = {"quando": datetime.datetime.now().astimezone().isoformat(timespec="seconds"), "evento": evento, **campi}
     with DIARIO.open("a") as f:
         f.write(json.dumps(riga, ensure_ascii=False) + "\n")
 
@@ -385,25 +386,51 @@ def cmd_attest(args) -> int:
 
 
 def cmd_status(args) -> int:
+    cartelle = []
+    cartelle_incerte = False
+    if (CASA / "cartelle.json").exists() or (CASA / "cartelle.json").is_symlink():
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("cartelle_status", Path(__file__).resolve().with_name("cartelle.py"))
+        C = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = C
+        spec.loader.exec_module(C)
+        try:
+            for entry in C.elenco():
+                mounts = [entry.get("montaggio"), entry.get("montaggio_temporaneo")]
+                mounted = [path for path in mounts if path and C._montato(Path(path))]
+                incomplete = entry.get("stato") in ("migrazione", "migrazione-incompleta") or bool(entry.get("plaintext_residuo"))
+                if mounted or incomplete:
+                    cartelle.append({"id": entry["id"], "nome": entry["nome"], "stato": entry["stato"],
+                                     "montaggi_aperti": mounted, "da_recuperare": incomplete})
+        except (C.Rifiuto, OSError, ValueError, KeyError, TypeError):
+            cartelle_incerte = True
+    forziere_aperto = aperto()
     stato = {
         "forziere": str(FORZIERE),
         "esiste": FORZIERE.exists(),
-        "aperto": aperto(),
+        "aperto": forziere_aperto or bool(cartelle),
+        "forziere_aperto": forziere_aperto,
+        "cartelle_aperte": cartelle,
+        "cartelle_non_verificate": cartelle_incerte,
         "montaggio": str(MONTAGGIO),
         "sessione_agente": dentro_un_agente(),
         "diario": str(DIARIO) if DIARIO.exists() else None,
     }
     if args.json:
         print(json.dumps(stato, indent=1))
-        return 0
+        return 2 if cartelle_incerte else 0
     print(f"compartment  {FORZIERE}")
-    print(f"state        {'OPEN — agent tools are denied right now' if stato['aperto'] else 'locked'}")
+    print(f"state        {'UNKNOWN — protected folder registry must be checked' if cartelle_incerte else 'OPEN — agent tools are denied right now' if stato['aperto'] else 'locked'}")
+    for entry in cartelle:
+        print(f"folder       {entry['nome']} ({entry['id']}): " + ("recovery required" if entry["da_recuperare"] else "open") + " · " + ", ".join(entry["montaggi_aperti"]))
+    if cartelle:
+        print("close        paratia cartella chiudi-tutte")
     if stato["sessione_agente"]:
         print(f"context      inside an agent session ({stato['sessione_agente']})")
-    if aperto():
+    if forziere_aperto:
         verbi = leggi_json(VERBI, {})
         print(f"verbs        {', '.join(sorted(verbi)) or 'none'}")
-    return 0
+    return 2 if cartelle_incerte else 0
 
 
 def cmd_doctor(args) -> int:
@@ -1094,6 +1121,9 @@ def _esegui_registro(registro, args):
         identificatore = _registro_id(registro, args.cartella, solo_sorveglianza=True)
         risultato = registro.rimuovi_sorveglianza(identificatore)
     else:
+        salute = registro.stato()
+        if not (salute["running"] and salute["healthy"]):
+            print("Registro: raccolta kernel non attiva. I risultati provengono soltanto dagli eventi già registrati; un elenco vuoto non prova l'assenza di accessi.", file=sys.stderr)
         filtri = {k: v for k, v in {
             "folder": _registro_id(registro, args.cartella), "file": args.file, "process": args.processo,
             "agent": args.agente, "since": args.da, "until": args.a,
@@ -1110,12 +1140,12 @@ def _registro_id(registro, cartella, solo_sorveglianza=False):
     """CLI paths name an exact configured folder; query itself uses stable IDs."""
     if cartella is None or not os.path.isabs(cartella):
         return cartella
-    if cartella != os.path.normpath(cartella):
-        raise Rifiuto("Usa il percorso assoluto della cartella, senza .. o separatori finali.")
+    cartella = registro.percorso_normale(cartella)
     voci = registro.elenco_sorveglianza()
     if not solo_sorveglianza:
         voci += registro.leggi_cartelle(registro.CASA / "cartelle.json", os.getuid())
-    ids = {voce["id"] for voce in voci if cartella in (voce.get("origine"), voce.get("montaggio"))}
+    ids = {voce["id"] for voce in voci if any(isinstance(voce.get(k), str)
+           and cartella == registro.percorso_normale(voce[k]) for k in ("origine", "montaggio"))}
     if not ids:
         raise Rifiuto("La cartella non è configurata nel registro. Sorvegliala prima o usa il suo ID.")
     if len(ids) != 1:
@@ -1138,6 +1168,15 @@ def cmd_cartella(args) -> int:
         elif args.operazione == "chiudi":
             risultato = C.chiudi(args.id)
         else:
+            if args.operazione == "proteggi":
+                C.prepara_protezione(args.origine, args.dove, args.minutes)
+            else:
+                preparazione = C.prepara_apertura(args.id, args.minutes)
+                if preparazione["gia_aperta"]:
+                    print(json.dumps({**preparazione["cartella"], "gia_aperta": True,
+                                      "messaggio": preparazione["messaggio"]},
+                                     ensure_ascii=False, indent=1))
+                    return 0
             if dentro_un_agente():
                 raise Rifiuto("Apri Paratia dal Finder: la chiave va inserita "
                               "nel campo sicuro dell'app, fuori dalla sessione agente.")
@@ -1152,6 +1191,10 @@ def cmd_cartella(args) -> int:
         print(json.dumps(risultato, ensure_ascii=False, indent=1))
         return 1 if isinstance(risultato, list) and any(
             isinstance(r, dict) and r.get("errore") for r in risultato) else 0
+    except C.ChiaveErrata as exc:
+        print(json.dumps({"errore": "chiave_errata", "messaggio": str(exc)},
+                         ensure_ascii=False), file=sys.stderr)
+        return 2
     except C.Rifiuto as exc:
         raise Rifiuto(str(exc)) from exc
 
@@ -1324,7 +1367,7 @@ def costruisci() -> argparse.ArgumentParser:
         res.add_parser(nome).set_defaults(fn=cmd_registro)
     rw = res.add_parser("sorveglia", help="configura una cartella dell'utente per il registro kernel")
     rw.add_argument("cartella")
-    rw.add_argument("--id", help="identificatore stabile; se omesso viene creato un UUID")
+    rw.add_argument("--id", help="identificatore stabile; un percorso già configurato conserva il proprio ID")
     rw.add_argument("--nome")
     rw.set_defaults(fn=cmd_registro)
     rd = res.add_parser("smetti", help="rimuovi una sorveglianza per ID o percorso esatto")
