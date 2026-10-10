@@ -62,9 +62,11 @@ class InstallerTests(unittest.TestCase):
         command = result["changes"][1]["hooks"]["PreToolUse"]["hooks"][0]["command"]
         argv = shlex.split(command)
         self.assertTrue(Path(argv[0]).is_absolute())
-        self.assertEqual(argv[1:], ["-I", "-S", str(self.resources / "hooks" / "paratia-gate.py"), "--codex"])
+        self.assertEqual(argv[1:], ["-I", "-S", "-B", str(self.resources / "hooks" / "paratia-gate.py"), "--codex"])
         self.assertTrue(result["needs_human_trust"])
         self.assertEqual(result["codex_trust"], "unknown")
+        self.assertFalse(result["protected_closure"])
+        self.assertIn("app Paratia aperta dal Finder", result["message"])
 
     def test_preserves_foreign_hooks_flags_and_trust_bytes_and_is_idempotent(self):
         foreign_group = {"matcher": "Bash", "hooks": [{"type": "command", "command": "echo foreign", "async": True}]}
@@ -259,7 +261,7 @@ class InstallerTests(unittest.TestCase):
             with self.assertRaises(H.Rifiuto):
                 H._runtime("/usr/bin/python3")
 
-    def test_homebrew_runtime_and_plan_keep_stable_alias_across_updates(self):
+    def test_user_homebrew_runtime_and_stable_alias_cannot_authorize_protected_hooks(self):
         brew = self.base / "brew"
         version = brew / "Cellar" / "python@3.14" / "3.14.6" / "bin" / "python3.14"
         version.parent.mkdir(parents=True)
@@ -268,23 +270,19 @@ class InstallerTests(unittest.TestCase):
         alias = brew / "bin" / "python3"
         alias.parent.mkdir()
         alias.symlink_to(version)
-        result = SimpleNamespace(returncode=0, stdout=b"3.14\n")
-        with mock.patch.object(H.subprocess, "run", return_value=result):
-            runtime = H._runtime(str(version))
-            self.assertEqual(runtime, alias)
-            commands = H._parameters(resource_root=self.resources, python_executable=str(version))
-        for harness in H.TARGETS:
-            argv = shlex.split(commands[harness]["PreToolUse"]["hooks"][0]["command"])
-            self.assertEqual(argv[0], str(alias))
-            self.assertNotIn("Cellar", argv[0])
+        with mock.patch.object(H.subprocess, "run", side_effect=AssertionError("Untrusted Python executed")):
+            for candidate in (version, alias):
+                with self.assertRaises(H.Rifiuto):
+                    H._runtime(str(candidate))
         next_version = brew / "Cellar" / "python@3.14" / "3.14.7" / "bin" / "python3.14"
         next_version.parent.mkdir(parents=True)
         next_version.write_text("updated synthetic interpreter; never executed")
         next_version.chmod(0o700)
         alias.unlink()
         alias.symlink_to(next_version)
-        with mock.patch.object(H.subprocess, "run", return_value=result):
-            self.assertEqual(H._runtime(str(alias)), runtime)
+        with mock.patch.object(H.subprocess, "run", side_effect=AssertionError("Untrusted Python executed")):
+            with self.assertRaises(H.Rifiuto):
+                H._runtime(str(alias))
 
     def test_cellar_runtime_without_matching_stable_alias_is_refused(self):
         version = self.base / "Cellar" / "python@3.14" / "3.14.6" / "bin" / "python3.14"

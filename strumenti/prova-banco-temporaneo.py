@@ -149,7 +149,8 @@ def fixture(base, key, configure_disks=None, mock_mdls=None):
             watched = registry.leggi_sorveglianza(state / "registro" / "sorveglianza.json", os.getuid())
             identifiers = [entry["id"] for entry in watched] + [entry["id"] for entry in folders.elenco()]
             acknowledgements.extend(identifier for identifier in identifiers if identifier not in acknowledgements)
-            return {"running": True, "healthy": True, "local_chain_ok": True, "watched_ids": identifiers,
+            return {"running": True, "healthy": True, "needs_fda": False, "schema_supported": True,
+                    "local_chain_ok": True, "watched_ids": identifiers,
                     "fixture": "Registro simulato; nessuna raccolta kernel"}
 
         registry.stato = simulated_status

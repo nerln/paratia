@@ -65,6 +65,11 @@ SCHEMAS = {
 }
 KEY_ACTIONS = {"cartelle.proteggi", "cartelle.apri", "cartelle.recupera", "banco.run"}
 FILTERS = {"folder", "file", "process", "agent", "since", "until"}
+REGISTRY_ERRORS = {
+    "folder_not_configured": "La cartella non è configurata nel registro. Scegli una cartella dall'elenco o aggiungi una sorveglianza.",
+    "folder_ambiguous": "Il percorso corrisponde a più ID. Scegli l'ID della cartella dall'elenco del registro.",
+    "protected_folder_watch": "Questo percorso appartiene a una cartella protetta già configurata. Seleziona la cartella nel Registro; non aggiungere una sorveglianza separata.",
+}
 _MODULES = {}
 
 
@@ -343,10 +348,12 @@ def dispatch(action, params, key=b""):
         filters = params.get("filters", {})
         if verb == "query":
             rows = module.query(filters)
-            return {"rows": rows[:MAX_ROWS], "total": len(rows), "truncated": len(rows) > MAX_ROWS}
+            return {"rows": rows[:MAX_ROWS], "total": len(rows), "truncated": len(rows) > MAX_ROWS,
+                    **module.raccolta_kernel(filters)}
         if verb == "export_csv":
             contents = module.export_csv(filters)
-            return _export(params["path"], contents, _csv_count(contents))
+            collection = module.raccolta_kernel(filters)
+            return {**_export(params["path"], contents, _csv_count(contents)), **collection}
         return getattr(module, verb)()
     if group == "etichette":
         module = _load("etichette")
@@ -411,6 +418,12 @@ def _muted_output():
 def _failure(exc, action):
     if isinstance(exc, RequestError):
         code, message = exc.code, exc.message
+    elif (action.startswith("registro.") and type(exc).__name__ == "ErroreRegistro"
+          and getattr(exc, "code", None) in REGISTRY_ERRORS):
+        code = exc.code
+        message = REGISTRY_ERRORS[code]
+    elif type(exc).__name__ == "ImmagineDanneggiata":
+        code, message = "damaged_image", "L'immagine è danneggiata o incompleta. Ricollega il disco e ripristina una copia integra del compartimento; conserva l'immagine attuale e non ripetere la migrazione sulla fonte."
     elif type(exc).__name__ == "ChiaveErrata":
         code, message = "wrong_key", "La chiave non apre questa cartella. Inseriscila di nuovo nel campo sicuro; nessun dato è stato modificato."
     elif type(exc).__name__ == "VolumeOccupato":
@@ -436,7 +449,7 @@ def _failure(exc, action):
         elif action.startswith("banco."):
             message = "Il banco non può procedere. Verifica il registro, Accesso completo al disco e il disco esterno prima di riprovare."
         elif action.startswith("hooks."):
-            message = "Gli hook non possono essere configurati. Verifica il piano, le impostazioni degli agenti e la disponibilità di Python 3.11 o successivo."
+            message = "Gli hook non possono essere configurati. Verifica il piano, le impostazioni degli agenti e il runtime Apple dei Command Line Tools: Python 3.9 o successivo, protetto da root con la sua libreria standard."
         else:
             message = "L'operazione è stata rifiutata. Controlla il percorso e i dati inseriti, poi riprova."
     elif isinstance(exc, (ValueError, TypeError)):

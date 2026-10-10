@@ -49,6 +49,21 @@ LIMITI = [
 ]
 
 
+class ErroreRegistro(ValueError):
+    """User-facing resolver errors with fixed codes and no supplied path/data."""
+
+    MESSAGGI = {
+        "folder_not_configured": "La cartella non è configurata nel registro. Scegli una cartella dall'elenco o aggiungi una sorveglianza.",
+        "folder_ambiguous": "Il percorso corrisponde a più ID. Scegli l'ID della cartella dall'elenco del registro.",
+        "protected_folder_watch": "Questo percorso appartiene a una cartella protetta già configurata. Seleziona la cartella nel Registro; non aggiungere una sorveglianza separata.",
+    }
+
+    def __init__(self, code):
+        self.code = code
+        self.message = self.MESSAGGI[code]
+        super().__init__(self.message)
+
+
 def _testo(v):
     if isinstance(v, dict):
         v = v.get("data")
@@ -511,13 +526,20 @@ def _cambia_sorveglianza(identificatore, percorso=None, nome=""):
         # Validate identifiers and paths before the atomic registry replacement.
         if not isinstance(identificatore, str) or not 1 <= len(identificatore) <= 128 or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for c in identificatore):
             raise ValueError("L'identificatore della sorveglianza non è valido.")
+        if _testo(nome) is None:
+            raise ValueError("Il nome della sorveglianza non è valido.")
         riutilizzata = False
+        rinominata = False
         if percorso is None:
             if identificatore not in dati["percorsi"]:
                 raise ValueError("L'identificatore non è configurato per la sorveglianza.")
             dati["percorsi"].pop(identificatore)
         else:
             percorso = _valida_sorveglianza(percorso, os.getuid())
+            protette = leggi_cartelle(CASA / "cartelle.json", os.getuid())
+            if any(percorso_normale(percorso) == percorso_normale(voce[campo])
+                   for voce in protette for campo in ("origine", "montaggio")):
+                raise ErroreRegistro("protected_folder_watch")
             voci = leggi_sorveglianza(p, os.getuid())
             uguali = [v["id"] for v in voci if percorso_normale(v["origine"]) == percorso_normale(percorso)]
             if uguali:
@@ -525,9 +547,14 @@ def _cambia_sorveglianza(identificatore, percorso=None, nome=""):
                 # watch entries for this exact path while holding the lock.
                 identificatore = uguali[0]
                 riutilizzata = True
-                # Reusing a request must preserve the person's label, including
-                # when the bank temporarily needs that same watched path.
-                nome = dati["percorsi"][identificatore].get("nome", "")
+                precedente = dati["percorsi"][identificatore].get("nome", "")
+                if nome.strip():
+                    nome = nome.strip()
+                    rinominata = nome != (_testo(precedente) or Path(percorso).name)
+                else:
+                    # Callers that reuse a watch without a label, including the
+                    # bank, preserve the person's existing name.
+                    nome = _testo(precedente) or ""
                 for duplicato in uguali[1:]:
                     dati["percorsi"].pop(duplicato)
             elif identificatore in dati["percorsi"]:
@@ -547,17 +574,19 @@ def _cambia_sorveglianza(identificatore, percorso=None, nome=""):
         fcntl.flock(lock, fcntl.LOCK_UN)
         os.close(lock)
     salute = stato()
-    attiva = bool(percorso is not None and salute["running"] and salute["healthy"]
-                  and identificatore in salute.get("watched_ids", []))
+    attiva = bool(percorso is not None and _raccolta_pronta(salute)
+                  and identificatore in _ids_confermati(salute))
     nome_accettato = (_testo(nome) or Path(percorso).name) if percorso is not None else None
     messaggio = ("Configurazione rimossa." if percorso is None else
                  "Cartella configurata; il raccoglitore ha confermato la sorveglianza." if attiva else
                  "Cartella configurata; raccolta non attiva o conferma del raccoglitore ancora assente.")
     if riutilizzata:
-        messaggio += " Sorveglianza esistente riutilizzata: ID e nome conservati."
+        messaggio += (" Sorveglianza rinominata; ID conservato." if rinominata else
+                      " Sorveglianza esistente riutilizzata: ID e nome conservati.")
     return {"id": identificatore, "percorso": percorso, "nome": nome_accettato,
             "configurata": percorso is not None,
             "sorvegliata": attiva, "raccolta_attiva": attiva, "riutilizzata": riutilizzata,
+            "rinominata": rinominata,
             "rimossa": percorso is None, "messaggio": messaggio}
 
 
@@ -570,8 +599,8 @@ def elenco_sorveglianza():
     voci = leggi_sorveglianza(CASA / "registro" / "sorveglianza.json", os.getuid())
     salute = stato()
     return sorted(({**voce, "percorso": voce["origine"], "esiste": Path(voce["origine"]).is_dir(),
-                    "configurata": True, "raccolta_attiva": bool(salute["running"] and salute["healthy"]
-                        and voce["id"] in salute.get("watched_ids", []) and Path(voce["origine"]).is_dir())}
+                    "configurata": True, "raccolta_attiva": bool(_raccolta_pronta(salute)
+                        and voce["id"] in _ids_confermati(salute) and Path(voce["origine"]).is_dir())}
                    for voce in voci), key=lambda voce: (voce["nome"].casefold(), voce["id"]))
 
 
@@ -600,10 +629,52 @@ def risolvi_cartella(cartella, solo_sorveglianza=False):
     ids = {voce["id"] for voce in voci if any(isinstance(voce.get(k), str)
            and percorso == percorso_normale(voce[k]) for k in ("origine", "montaggio"))}
     if not ids:
-        raise ValueError("La cartella non è configurata nel registro. Sorvegliala prima o usa il suo ID.")
+        raise ErroreRegistro("folder_not_configured")
     if len(ids) != 1:
-        raise ValueError("Il percorso corrisponde a più ID. Scegli un ID dall'elenco delle cartelle sorvegliate.")
+        raise ErroreRegistro("folder_ambiguous")
     return ids.pop()
+
+
+def _raccolta_pronta(salute):
+    return (salute.get("running") is True and salute.get("healthy") is True
+            and salute.get("needs_fda") is False and salute.get("schema_supported") is not False)
+
+
+def _ids_confermati(salute):
+    valori = salute.get("watched_ids", [])
+    return {identifier for identifier in valori if isinstance(identifier, str) and len(identifier) <= 128} if isinstance(valori, list) else set()
+
+
+def raccolta_kernel(filters=None):
+    """Describe collection now; neither health nor an ID ACK proves coverage."""
+    folder = risolvi_cartella((filters or {}).get("folder"))
+    salute = stato()
+    running = salute.get("running") is True
+    healthy = salute.get("healthy") is True
+    needs_fda = salute.get("needs_fda") if type(salute.get("needs_fda")) is bool else None
+    supported = salute.get("schema_supported") if type(salute.get("schema_supported")) is bool else None
+    ids = _ids_confermati(salute)
+    acknowledged = folder in ids if folder else None
+    active = _raccolta_pronta(salute) and acknowledged is not False
+    if not running:
+        message = "Raccolta kernel non attiva. Un elenco vuoto non prova l'assenza di accessi."
+    elif not healthy or supported is False:
+        message = "Raccolta kernel non sana. I risultati restano consultabili, ma la copertura non è confermata."
+    elif needs_fda is not False:
+        message = "Raccolta kernel non confermata: Accesso completo al disco non verificato."
+    elif acknowledged is False:
+        message = "Cartella configurata; il raccoglitore non ha ancora confermato questo ID. Un elenco vuoto non prova l'assenza di accessi."
+    elif not ids:
+        message = "Raccolta kernel attiva; nessuna cartella confermata. Un elenco vuoto non prova l'assenza di accessi."
+    else:
+        message = "Raccolta kernel attiva. Gli eventi mancanti non provano l'assenza di accessi."
+    return {"kernel_active": bool(active), "kernel_collection": {
+        "running": running, "healthy": healthy, "needs_fda": needs_fda,
+        "schema_supported": supported, "folder_id": folder or None,
+        "acknowledged": acknowledged, "watched_count": len(ids),
+        "drop_detection_available": salute.get("drop_detection_available") is True,
+        "dropped_events": _intero(salute.get("dropped_events")),
+        "coverage_guaranteed": False, "message": message}}
 
 
 def annota(evento, **metadata):

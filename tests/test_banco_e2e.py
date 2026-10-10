@@ -138,6 +138,45 @@ def test_ipc_failure_after_real_reopen_closes_fixture_and_keeps_safe_history(int
     assert e.cleanup == {"volumi_chiusi": True, "timer_terminati": True}
 
 
+def test_protected_bank_rerun_uses_folder_ack_and_preserves_existing_user_watch(integration):
+    s = integration.script
+    with s.fixture(integration.base, KEY, integration.configure, integration.mdls) as e:
+        e.registry.sorveglia("user-owned", e.source, "Nome scelto dalla persona")
+        first = s.request(e, run_payload(e, s))
+        assert first["ok"] and first["result"]["stato_finale"] == "chiusa"
+        path = e.state / "registro" / "sorveglianza.json"
+        preserved = path.read_bytes()
+        assert e.registry.elenco_sorveglianza()[0]["nome"] == "Nome scelto dalla persona"
+        with pytest.raises(e.registry.ErroreRegistro) as error:
+            e.registry.sorveglia("extra", e.source)
+        assert error.value.code == "protected_folder_watch" and path.read_bytes() == preserved
+
+        def no_separate_watch(*args, **kwargs):
+            pytest.fail("A protected bank rerun must not register or rename another watch")
+
+        e.bank.R.sorveglia = no_separate_watch
+        second = s.request(e, run_payload(e, s))
+        assert second["ok"], second
+        assert second["result"]["stato_finale"] == "chiusa"
+        assert second["result"]["inventario"] == first["result"]["inventario"]
+        bundle = Path(first["result"]["bundle"])
+        assert (bundle / "storage" / ".fseventsd").is_dir()
+        assert ".fseventsd" not in second["result"]["inventario"]
+        assert first["result"]["cartella_id"] == second["result"]["cartella_id"]
+        assert path.read_bytes() == preserved and e.registry.elenco_sorveglianza()[0]["id"] == "user-owned"
+        phases = second["result"]["fasi"]
+        assert [phase["nome"] for phase in phases] == ["prima", "chiusa", "riaperta", "richiusa"]
+        assert [phase["file_visibili"] for phase in phases] == [4, 0, 4, 0]
+        for phase, opened in zip(phases, (True, False, True, False)):
+            shell = next(row for row in phase["prove"] if row["attore"] == "shell")
+            assert shell["misurato"] and shell["riuscito"] is opened
+            assert shell["errno"] == (None if opened else errno.ENOENT)
+        # A rerun opens the existing image; it does not measure another migration.
+        assert "verifica_migrazione" not in second["result"]
+        assert s.summarize(e, second, KEY)["catena_locale_integra"]
+    assert e.cleanup == {"volumi_chiusi": True, "timer_terminati": True}
+
+
 def test_worker_discards_backend_raw_output_through_the_actual_ipc_path(integration, capfd):
     s = integration.script
     with s.fixture(integration.base, KEY, integration.configure, integration.mdls) as e:

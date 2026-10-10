@@ -100,10 +100,14 @@ def storico():
     return {**dati["prove"][-1], "prove": dati["prove"], "limiti": LIMITI}
 
 
-def _inventario(percorso, escluso=None):
+def _inventario(percorso, escluso=None, sistema_assenti=()):
     """Only lstat/scandir: never open a user file or follow its symlink."""
     p = Path(percorso)
     risultati = {}
+    # APFS can create these root directories after the synthetic source has
+    # been migrated. Only a protected rerun supplies the names absent from its
+    # previous inventory; matching files, aliases and nested names stay visible.
+    ignorati = set(sistema_assenti) & C.DIR_SISTEMA if sistema_assenti else set()
 
     def visita(fd, prefisso="", profondita=0):
         if profondita > 100:
@@ -114,6 +118,8 @@ def _inventario(percorso, escluso=None):
                 if not prefisso and e.name == escluso:
                     continue
                 s = e.stat(follow_symlinks=False)
+                if not prefisso and e.name in ignorati and stat.S_ISDIR(s.st_mode):
+                    continue
                 if not (stat.S_ISREG(s.st_mode) or stat.S_ISDIR(s.st_mode)):
                     raise Rifiuto("Il banco rifiuta collegamenti e file speciali: conserva i tuoi dati e usa una cartella vuota.")
                 risultati[relativo] = {"tipo": "cartella" if stat.S_ISDIR(s.st_mode) else "file",
@@ -467,18 +473,23 @@ def esegui(dove, passphrase: bytes, minutes=15, agenti_reali=True):
     watch_id = None
     try:
         requested = "banco-" + prova["id"]
-        configured = R.sorveglia(requested, fonte, "Banco sintetico prima/dopo")
-        configured = configured if isinstance(configured, dict) else {}
-        watch_id = configured.get("id", requested)
-        # Reuse an acknowledged watch of this exact path without owning its
-        # lifecycle. A user-created watch must survive the bank's cleanup.
-        if watch_id == requested and not configured.get("riutilizzata", False):
-            watch = requested
+        if identificatore:
+            # A protected source is already in the collector's folder registry.
+            # Do not create another watch or alter a person's existing request.
+            watch_id = identificatore
+        else:
+            configured = R.sorveglia(requested, fonte)
+            configured = configured if isinstance(configured, dict) else {}
+            watch_id = configured.get("id", requested)
+            # Reuse without a new label and without owning its lifecycle.
+            if watch_id == requested and not configured.get("riutilizzata", False):
+                watch = requested
         _attendi_sorveglianza(watch_id)
         if identificatore:
             if esistenti[0]["stato"] == "chiusa":
                 _operazione(prova, C.apri(identificatore, passphrase, minutes))
-            attuale = _inventario(fonte, escluso=esistenti[0].get("metadir"))
+            attuale = _inventario(fonte, escluso=esistenti[0].get("metadir"),
+                                 sistema_assenti=C.DIR_SISTEMA - vecchia["inventario"].keys())
             if attuale != vecchia["inventario"]:
                 raise Rifiuto("I metadati del banco sono cambiati: la prova non tratta questi file come sintetici.")
             prova["inventario"] = attuale

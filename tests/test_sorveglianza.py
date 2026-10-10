@@ -15,6 +15,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import time
 import unicodedata
 import uuid
 from pathlib import Path
@@ -409,16 +410,60 @@ def test_worker_folder_path_refuses_unknown_or_legacy_ambiguous_before_export(is
     if action == "registro.export_csv":
         params["path"] = str(output)
     response = worker(isolated_app, action, params)
-    assert response["ok"] is False and response["code"] == "invalid_data"
+    code = "folder_ambiguous" if ambiguous else "folder_not_configured"
+    assert response["ok"] is False and response["code"] == code
+    assert ("più ID" if ambiguous else "non è configurata") in response["message"]
     assert not output.exists()
 
 
-def test_worker_reused_watch_explicitly_preserves_the_original_name(isolated_app, folder):
+def test_worker_reused_watch_explicitly_renames_with_original_id(isolated_app, folder):
     worker(isolated_app, "registro.sorveglia", {"id": "original", "percorso": str(folder), "nome": "Nome GUI"})
     response = worker(isolated_app, "registro.sorveglia", {"id": "new-request", "percorso": str(folder), "nome": "Nome richiesto"})
     assert response["ok"] and response["result"]["riutilizzata"]
-    assert response["result"]["id"] == "original" and response["result"]["nome"] == "Nome GUI"
-    assert "ID e nome conservati" in response["result"]["messaggio"]
+    assert response["result"]["id"] == "original" and response["result"]["nome"] == "Nome richiesto"
+    assert response["result"]["rinominata"] and "rinominata; ID conservato" in response["result"]["messaggio"]
+
+
+@pytest.mark.parametrize("change,active", [
+    ({}, True), ({"running": False}, False), ({"healthy": False}, False),
+    ({"needs_fda": None}, False), ({"needs_fda": True}, False),
+    ({"schema_supported": False}, False), ({"watched_ids": []}, False),
+    ({"heartbeat": 0}, False),
+])
+def test_worker_empty_query_and_export_show_scoped_collection_metadata(isolated_app, folder, change, active):
+    assert cli(isolated_app, "sorveglia", str(folder), "--id", "watch-1").returncode == 0
+    status = isolated_app["home"].parent / "collector" / "logs" / str(os.getuid()) / "stato.json"
+    status.parent.mkdir(parents=True)
+    status.write_text(json.dumps({"heartbeat": time.time(), "running": True, "healthy": True,
+                                  "needs_fda": False, "schema_supported": True,
+                                  "watched_ids": ["watch-1"], "message": "PRIVATE-UNTRUSTED-STATUS", **change}))
+    filters = {"folder": str(folder)}
+    response = worker(isolated_app, "registro.query", {"filters": filters})
+    assert response["ok"] and response["result"]["total"] == 0
+    assert response["result"]["kernel_active"] is active
+    metadata = response["result"]["kernel_collection"]
+    assert metadata["folder_id"] == "watch-1" and metadata["coverage_guaranteed"] is False
+    assert "PRIVATE-UNTRUSTED" not in json.dumps(response)
+    output = isolated_app["home"] / "empty.csv"
+    exported = worker(isolated_app, "registro.export_csv", {"path": str(output), "filters": filters})
+    assert exported["ok"] and exported["result"]["kernel_active"] is active
+    assert exported["result"]["kernel_collection"] == metadata
+    assert list(csv.DictReader(io.StringIO(output.read_text()))) == []
+
+
+def test_worker_protected_mount_watch_returns_specific_error_without_ambiguity(isolated_app, folder):
+    identifier = "a" * 32
+    isolated_app["state"].mkdir(parents=True)
+    path = isolated_app["state"] / "cartelle.json"
+    path.write_text(json.dumps({"versione": 1, "cartelle": {
+        identifier: {"id": identifier, "nome": "Protetta", "origine": str(folder),
+                     "montaggio": str(folder), "bundle": str(folder.parent / (folder.name + "-" + identifier + ".sparsebundle"))}}}))
+    response = worker(isolated_app, "registro.sorveglia", {"id": "extra-watch", "percorso": str(folder)})
+    assert not response["ok"] and response["code"] == "protected_folder_watch"
+    assert "cartella protetta" in response["message"]
+    assert not (isolated_app["state"] / "registro" / "sorveglianza.json").exists()
+    queried = worker(isolated_app, "registro.query", {"filters": {"folder": str(folder)}})
+    assert queried["ok"] and queried["result"]["kernel_collection"]["folder_id"] == identifier
 
 
 @pytest.mark.parametrize("action,params", [

@@ -87,7 +87,7 @@ def test_unreadable_registry_is_unknown_instead_of_locked(app):
     assert rc == 2 and "UNKNOWN" in text and "state        locked" not in text
 
 
-def test_gate_refusal_names_folder_close_and_both_exact_commands_are_allowed(tmp_path, monkeypatch):
+def test_gate_refusal_names_human_closure_and_denies_repository_exemptions(tmp_path, monkeypatch):
     monkeypatch.setenv("PARATIA_HOME", str(tmp_path))
     spec = importlib.util.spec_from_file_location("status_gate_test", ROOT / "hooks" / "paratia-gate.py")
     gate = importlib.util.module_from_spec(spec)
@@ -105,6 +105,8 @@ def test_gate_refusal_names_folder_close_and_both_exact_commands_are_allowed(tmp
     refused = run("cat /fixture/secret")
     reason = refused["hookSpecificOutput"]["permissionDecisionReason"]
     assert "paratia cartella chiudi-tutte" in reason and "paratia lock" in reason
-    assert run("paratia cartella chiudi-tutte") is None
-    assert run("paratia status --json") is None
+    assert "app Paratia" in reason and "Finder" in reason
+    assert "no CLI exception is allowed" in reason
+    assert run("paratia cartella chiudi-tutte") is not None
+    assert run("paratia status --json") is not None
     assert run("paratia cartella chiudi-tutte; cat /fixture/secret") is not None

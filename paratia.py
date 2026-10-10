@@ -256,9 +256,9 @@ def cmd_lock(args) -> int:
         if not args.quiet:
             print("already locked")
         return 0
-    esito = _corri(["hdiutil", "detach", str(MONTAGGIO)])
+    esito = _corri(["/usr/bin/hdiutil", "detach", str(MONTAGGIO)])
     if esito.returncode != 0:
-        esito = _corri(["hdiutil", "detach", str(MONTAGGIO), "-force"])
+        esito = _corri(["/usr/bin/hdiutil", "detach", str(MONTAGGIO), "-force"])
     if esito.returncode != 0:
         raise Rifiuto(f"did not close: {esito.stderr.decode(errors='replace').strip()}")
     annota("lock")
@@ -344,11 +344,11 @@ def _impronta(p: Path) -> str:
 def cmd_seal(args) -> int:
     """Record what the policy files look like right now, inside the compartment.
 
-    On a Mac with one account there is no file an agent running as you cannot
-    rewrite, including the hook that stops it. What there is, is a place it
-    cannot write to and cannot read: in here. So the hashes go in here, and
-    `attest` compares. That buys detection, not prevention, and the difference
-    is written out in docs/architettura.md rather than glossed over.
+    An agent running as you can rewrite your policy and harness settings.
+    Root-protected hook resources resist that UID, but do not make those
+    settings immutable. Store the hashes inside the closed compartment;
+    `attest` compares them after reopening. That buys detection, not prevention,
+    as described in docs/architettura.md.
     """
     sigilli = {}
     for nome in args.files:
@@ -1144,7 +1144,28 @@ def _registro_id(registro, cartella, solo_sorveglianza=False):
         raise Rifiuto(str(error)) from None
 
 
+def conferma_chiusura_forzata() -> bool:
+    """Confirm only on the controlling terminal; stdin never grants consent."""
+    try:
+        with open("/dev/tty", "r+b", buffering=0) as tty:
+            if not tty.isatty():
+                raise Rifiuto("La chiusura forzata richiede un terminale interattivo aperto da te.")
+            tty.write(("La chiusura forzata può perdere modifiche non salvate. "
+                       "Digita FORZA per confermare; Invio annulla: ").encode("utf-8"))
+            return tty.readline(64).strip() == b"FORZA"
+    except OSError as errore:
+        raise Rifiuto("La chiusura forzata richiede un terminale interattivo aperto da te.") from errore
+
+
 def cmd_cartella(args) -> int:
+    forza = args.operazione == "chiudi" and getattr(args, "force", False)
+    if forza:
+        # Refuse before loading the backend or opening the terminal device.
+        if dentro_un_agente():
+            raise Rifiuto("La chiusura forzata è vietata nelle sessioni agente. "
+                          "Usa Paratia dal Finder o un terminale aperto da te.")
+        if not conferma_chiusura_forzata():
+            raise Rifiuto("Chiusura forzata annullata. Il volume resta aperto.")
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         "cartelle", Path(__file__).resolve().parent / "cartelle.py")
@@ -1157,7 +1178,7 @@ def cmd_cartella(args) -> int:
         elif args.operazione == "chiudi-tutte":
             risultato = C.chiudi_tutte()
         elif args.operazione == "chiudi":
-            risultato = C.chiudi(args.id)
+            risultato = C.chiudi(args.id, force=True) if forza else C.chiudi(args.id)
         else:
             if args.operazione == "proteggi":
                 C.prepara_protezione(args.origine, args.dove, args.minutes)
@@ -1185,12 +1206,17 @@ def cmd_cartella(args) -> int:
         print(json.dumps(risultato, ensure_ascii=False, indent=1))
         return 1 if isinstance(risultato, list) and any(
             isinstance(r, dict) and r.get("errore") for r in risultato) else 0
+    except C.ImmagineDanneggiata as exc:
+        print(json.dumps({"errore": "immagine_danneggiata", "messaggio": str(exc)},
+                         ensure_ascii=False), file=sys.stderr)
+        return 2
     except C.ChiaveErrata as exc:
         print(json.dumps({"errore": "chiave_errata", "messaggio": str(exc)},
                          ensure_ascii=False), file=sys.stderr)
         return 2
     except C.VolumeOccupato as exc:
-        print(json.dumps({"errore": "volume_occupato", "messaggio": str(exc)},
+        print(json.dumps({"errore": "volume_occupato", "messaggio": str(exc),
+                          "processi": exc.processi},
                          ensure_ascii=False), file=sys.stderr)
         return 2
     except C.DiscoNonDisponibile as exc:
@@ -1352,6 +1378,7 @@ def costruisci() -> argparse.ArgumentParser:
         cas.add_parser(nome).set_defaults(fn=cmd_cartella)
     cc = cas.add_parser("chiudi")
     cc.add_argument("id")
+    cc.add_argument("--force", action="store_true", help="conferma su /dev/tty; vietato nelle sessioni agente")
     cc.set_defaults(fn=cmd_cartella)
     cap = cas.add_parser("apri")
     cap.add_argument("id")

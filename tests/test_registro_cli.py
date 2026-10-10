@@ -30,7 +30,7 @@ def cli(tmp_path, monkeypatch):
     p = load("registro_cli_test", ROOT / "paratia.py")
     r = load("registro_backend_cli_test", ROOT / "registro.py")
     r.SYSTEM = home / "kernel"
-    state = {"running": False, "healthy": False, "watched_ids": []}
+    state = {"running": False, "healthy": False, "needs_fda": False, "schema_supported": True, "watched_ids": []}
     monkeypatch.setattr(r, "stato", lambda: dict(state))
     folder = home / "caffè"
     folder.mkdir()
@@ -108,12 +108,12 @@ def test_new_registration_repairs_legacy_duplicates_and_does_not_reassign_other_
     assert r.elenco_sorveglianza()[0]["origine"] == str(folder)
 
 
-def test_cli_explicit_new_name_on_same_path_reports_existing_name(cli, capsys):
+def test_cli_explicit_new_name_on_same_path_renames_without_changing_id(cli, capsys):
     _, r, folder, _ = cli
     invoke(cli, ["sorveglia", str(folder), "--id", "first", "--nome", "Nome conservato"])
     capsys.readouterr()
     invoke(cli, ["sorveglia", str(folder), "--id", "second", "--nome", "Nuovo nome"])
     result = json.loads(capsys.readouterr().out)
-    assert result["id"] == "first" and result["nome"] == "Nome conservato"
-    assert result["riutilizzata"] and "ID e nome conservati" in result["messaggio"]
-    assert r.elenco_sorveglianza()[0]["nome"] == "Nome conservato"
+    assert result["id"] == "first" and result["nome"] == "Nuovo nome"
+    assert result["riutilizzata"] and result["rinominata"] and "rinominata; ID conservato" in result["messaggio"]
+    assert r.elenco_sorveglianza()[0]["nome"] == "Nuovo nome"

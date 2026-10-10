@@ -258,9 +258,12 @@ struct RegistryView: View {
             }.contextMenu { Button("Apri dettaglio") { openDetail() }.disabled(selection == nil) }
             HStack {
                 Text("\(model.eventTotal) eventi\(model.eventsTruncated ? " · visualizzazione limitata: restringi i filtri o esporta il CSV completo" : "")").font(.caption).foregroundStyle(.secondary)
+                Label(model.eventsKernelActive == true ? "Raccolta kernel attiva" : model.eventsKernelActive == false ? "Raccolta kernel inattiva" : "Raccolta kernel da verificare", systemImage: model.eventsKernelActive == true ? "checkmark.circle" : "exclamationmark.circle")
+                    .font(.caption).foregroundStyle(model.eventsKernelActive == true ? Color.green : .orange)
                 Spacer()
                 Button("Apri dettaglio") { openDetail() }.disabled(selection == nil)
             }
+            Text(model.eventsKernelMessage).font(.caption).foregroundStyle(.secondary)
             Text("Un'apertura per lettura non prova una lettura dei byte. Gli eventi mancanti e la discendenza sconosciuta vengono indicati, non ricostruiti.")
                 .font(.caption).foregroundStyle(.secondary)
         }.padding(28).onAppear { if model.events.isEmpty { model.loadEvents() } }

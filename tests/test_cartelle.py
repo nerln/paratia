@@ -8,8 +8,10 @@ import json
 import os
 import plistlib
 import shutil
+import struct
 import subprocess
 import sys
+import tempfile
 from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,6 +20,26 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 KEY = b"fixture-only-passphrase-123"
+
+
+def bundle_fixture(bundle):
+    """A synthetic encrypted-v2 sparsebundle header; it contains no real keys."""
+    bundle.mkdir()
+    info = plistlib.dumps({"diskimage-bundle-type": "com.apple.diskimage.sparsebundle",
+                          "bundle-backingstore-version": 1, "band-size": 8388608,
+                          "size": 268435456})
+    (bundle / "Info.plist").write_bytes(info)
+    (bundle / "Info.bckup").write_bytes(info)
+    (bundle / "bands").mkdir()
+    token = bytearray(4096)
+    token[:8] = b"encrcdsa"
+    struct.pack_into(">I", token, 8, 2)
+    struct.pack_into(">I", token, 52, 4096)
+    struct.pack_into(">Q", token, 64, len(token))
+    struct.pack_into(">I", token, 72, 1)
+    struct.pack_into(">IQQ", token, 76, 1, 96, 128)
+    (bundle / "token").write_bytes(token)
+    return bundle
 
 
 def dischi_fixture(interno=False, immagine=False, exfat=False):
@@ -70,7 +92,7 @@ class Dischi:
             return r
         if verbo == "create":
             bundle = Path(argv[-1])
-            bundle.mkdir()
+            bundle_fixture(bundle)
             (bundle / "storage").mkdir()
             self.chiavi[str(bundle)] = passphrase
         elif verbo == "attach":
@@ -118,6 +140,7 @@ def D(C, monkeypatch):
     monkeypatch.setattr(C, "_corri", d.corri)
     monkeypatch.setattr(C, "_montato", lambda p: str(p) in d.montati)
     monkeypatch.setattr(C, "_avvia_timer", lambda *a: d.timer.append(a))
+    monkeypatch.setattr(C, "_processi_occupanti", lambda _: [])
     return d
 
 
@@ -701,7 +724,7 @@ def test_cli_chiave_errata_ha_codice_json_distinguibile(C, D, CLI, albero, monke
                                        b"Authentication error", "Error de autenticación".encode()])
 def test_chiave_cifrata_verificata_senza_mount_indipendentemente_dalla_lingua(C, tmp_path, monkeypatch, messaggio):
     bundle, monte = tmp_path / "fixture.sparsebundle", tmp_path / "mount"
-    bundle.mkdir()
+    bundle_fixture(bundle)
     monte.mkdir()
     chiamate = []
 
@@ -727,7 +750,7 @@ def test_chiave_cifrata_verificata_senza_mount_indipendentemente_dalla_lingua(C,
                                        "attach failed - Error de autenticación".encode()])
 def test_errori_localizzati_come_ripiego_senza_metadata_cifratura(C, tmp_path, monkeypatch, messaggio):
     bundle = tmp_path / "fixture.sparsebundle"
-    bundle.mkdir()
+    bundle_fixture(bundle)
     def corri(argv, passphrase=None):
         if argv[1] == "isencrypted":
             return subprocess.CompletedProcess(argv, 64, b"", b"provider unsupported")
@@ -742,7 +765,7 @@ def test_errori_localizzati_come_ripiego_senza_metadata_cifratura(C, tmp_path, m
 
 def test_immagine_non_cifrata_rifiutata_senza_chiave_o_mount(C, tmp_path, monkeypatch):
     bundle = tmp_path / "fixture.sparsebundle"
-    bundle.mkdir()
+    bundle_fixture(bundle)
     chiamate = []
     def corri(argv, passphrase=None):
         chiamate.append((argv, passphrase))
@@ -758,7 +781,7 @@ def test_immagine_non_cifrata_rifiutata_senza_chiave_o_mount(C, tmp_path, monkey
                                errno.EAGAIN, errno.EFBIG])
 def test_imageinfo_errore_io_non_diventa_chiave_errata(C, tmp_path, monkeypatch, rc):
     bundle = tmp_path / "fixture.sparsebundle"
-    bundle.mkdir()
+    bundle_fixture(bundle)
     def corri(argv, passphrase=None):
         if argv[1] == "isencrypted":
             return subprocess.CompletedProcess(argv, 0, plistlib.dumps({"encrypted": True}), b"")
@@ -868,4 +891,255 @@ def test_cli_gia_aperta_minutes_esplicito(C, D, CLI, albero, capsys):
     esito = json.loads(capsys.readouterr().out)
     assert esito["timer_invariato"] and esito["minutes"] == esito["minutes_effettivi"] == 7
     assert esito["minutes_richiesti"] == 30 and "non lo riavviano" in esito["messaggio"]
+    C.chiudi(v["id"])
+
+
+def _manomette_bundle(bundle, manomissione):
+    if manomissione == "info":
+        (bundle / "Info.plist").unlink()
+        (bundle / "Info.bckup").unlink()
+    elif manomissione == "bands":
+        (bundle / "bands").rmdir()
+    elif manomissione == "token-assente":
+        (bundle / "token").unlink()
+    elif manomissione == "token-illeggibile":
+        (bundle / "token").chmod(0)
+    elif manomissione == "token-troncato":
+        # Retain the signature, version, table and part of the key blob. The
+        # declared data offset still catches a truncation after those headers.
+        (bundle / "token").write_bytes((bundle / "token").read_bytes()[:150])
+
+
+@pytest.mark.parametrize("manomissione", ["info", "bands", "token-assente", "token-illeggibile", "token-troncato"])
+def test_immagine_danneggiata_precede_prompt_chiave_e_comandi(C, D, CLI, albero, capsys, manomissione):
+    v = C.proteggi(*albero, KEY)
+    bundle = Path(v["bundle"])
+    _manomette_bundle(bundle, manomissione)
+    prima = len(D.chiamate)
+    try:
+        for operazione in (lambda: C.prepara_apertura(v["id"]), lambda: C.apri(v["id"], None)):
+            with pytest.raises(C.ImmagineDanneggiata, match="danneggiata o incompleta") as errore:
+                operazione()
+            assert not isinstance(errore.value, C.ChiaveErrata)
+            assert errore.value.cartella_id == v["id"]
+        args = CLI.costruisci().parse_args(["cartella", "apri", v["id"]])
+        assert CLI.cmd_cartella(args) == 2
+        esito = json.loads(capsys.readouterr().err)
+        assert esito["errore"] == "immagine_danneggiata"
+        assert "conserva" in esito["messaggio"] and "Reinserisci" not in esito["messaggio"]
+        assert len(D.chiamate) == prima  # No passphrase reached hdiutil.
+    finally:
+        if manomissione == "token-illeggibile":
+            (bundle / "token").chmod(0o600)
+
+
+@pytest.mark.parametrize("dimensione", [0, 8, 12, 75, 95, 150, 4095])
+def test_troncamento_token_prima_e_dopo_magic_non_diventa_wrong_key(C, tmp_path, monkeypatch, dimensione):
+    bundle = bundle_fixture(tmp_path / "fixture.sparsebundle")
+    token = bundle / "token"
+    token.write_bytes(token.read_bytes()[:dimensione])
+    monkeypatch.setattr(C, "_corri", lambda *_: pytest.fail("damaged image must not receive a key"))
+    with pytest.raises(C.ImmagineDanneggiata):
+        C._verifica_chiave(bundle, KEY)
+
+
+@pytest.mark.parametrize("dimensione", [512, 8192, 122368])
+def test_token_dimensione_da_header_non_da_costante(C, tmp_path, dimensione):
+    bundle = bundle_fixture(tmp_path / "fixture.sparsebundle")
+    token = bytearray((bundle / "token").read_bytes()[:512])
+    token.extend(b"\0" * (dimensione - len(token)))
+    struct.pack_into(">Q", token, 64, dimensione)
+    (bundle / "token").write_bytes(token)
+    C._verifica_struttura_bundle(bundle)
+
+
+@pytest.mark.parametrize("metadata", ["Info.plist", "Info.bckup"])
+def test_metadata_primario_o_backup_sufficiente(C, tmp_path, metadata):
+    bundle = bundle_fixture(tmp_path / "fixture.sparsebundle")
+    (bundle / metadata).unlink()
+    C._verifica_struttura_bundle(bundle)
+
+
+def test_metadata_corrotto_con_backup_integro_ammesso(C, tmp_path):
+    bundle = bundle_fixture(tmp_path / "fixture.sparsebundle")
+    (bundle / "Info.plist").write_bytes(b"<?xml version='1.0'?><plist><")
+    C._verifica_struttura_bundle(bundle)
+    (bundle / "Info.bckup").unlink()
+    with pytest.raises(C.ImmagineDanneggiata):
+        C._verifica_struttura_bundle(bundle)
+
+
+@pytest.mark.parametrize("elemento", ["Info.plist", "Info.bckup", "bands", "token"])
+def test_struttura_bundle_rifiuta_symlink_anche_con_backup(C, tmp_path, elemento):
+    bundle = bundle_fixture(tmp_path / "fixture.sparsebundle")
+    percorso = bundle / elemento
+    originale = tmp_path / "originale"
+    percorso.rename(originale)
+    percorso.symlink_to(originale, target_is_directory=originale.is_dir())
+    with pytest.raises(C.ImmagineDanneggiata):
+        C._verifica_struttura_bundle(bundle)
+
+
+@pytest.mark.parametrize("tipo", ["directory", "fifo", "hardlink"])
+def test_token_deve_essere_file_regolare_indipendente(C, tmp_path, tipo):
+    bundle = bundle_fixture(tmp_path / "fixture.sparsebundle")
+    token = bundle / "token"
+    if tipo == "hardlink":
+        os.link(token, tmp_path / "secondo-token")
+    else:
+        token.unlink()
+        token.mkdir() if tipo == "directory" else os.mkfifo(token)
+    with pytest.raises(C.ImmagineDanneggiata):
+        C._verifica_struttura_bundle(bundle)
+
+
+@pytest.mark.parametrize("campo,valore", [("offset", 4097), ("count", 1000), ("blob-offset", 4095), ("blob-size", 9000)])
+def test_token_extents_manomessi_rifiutati(C, tmp_path, campo, valore):
+    bundle = bundle_fixture(tmp_path / "fixture.sparsebundle")
+    token = bytearray((bundle / "token").read_bytes())
+    formati = {"offset": (">Q", 64), "count": (">I", 72), "blob-offset": (">Q", 80), "blob-size": (">Q", 88)}
+    formato, posizione = formati[campo]
+    struct.pack_into(formato, token, posizione, valore)
+    (bundle / "token").write_bytes(token)
+    with pytest.raises(C.ImmagineDanneggiata):
+        C._verifica_struttura_bundle(bundle)
+
+
+def test_cli_force_vietato_agente_prima_di_import_backend_o_tty(CLI, monkeypatch):
+    args = CLI.costruisci().parse_args(["cartella", "chiudi", "fixture-id", "--force"])
+    monkeypatch.setattr(CLI, "dentro_un_agente", lambda: "fixture-agent")
+    monkeypatch.setattr(CLI, "conferma_chiusura_forzata", lambda: pytest.fail("agent must never reach tty"))
+    monkeypatch.setattr(importlib.util, "spec_from_file_location", lambda *_: pytest.fail("agent must not load backend"))
+    with pytest.raises(CLI.Rifiuto, match="vietata nelle sessioni agente"):
+        CLI.cmd_cartella(args)
+
+
+@pytest.mark.parametrize("conferma", [True, False])
+def test_cli_force_necessita_conferma_esplicita(C, D, CLI, albero, monkeypatch, capsys, conferma):
+    v = C.proteggi(*albero, KEY)
+    C.apri(v["id"], KEY)
+    monkeypatch.setattr(CLI, "dentro_un_agente", lambda: None)
+    monkeypatch.setattr(CLI, "conferma_chiusura_forzata", lambda: conferma)
+    args = CLI.costruisci().parse_args(["cartella", "chiudi", v["id"], "--force"])
+    prima = len(D.chiamate)
+    if conferma:
+        assert CLI.cmd_cartella(args) == 0
+        assert json.loads(capsys.readouterr().out)["forzata"] is True
+        assert D.chiamate[-1][0][-1] == "-force"
+    else:
+        with pytest.raises(CLI.Rifiuto, match="annullata"):
+            CLI.cmd_cartella(args)
+        assert len(D.chiamate) == prima and C.elenco()[0]["stato"] == "aperta"
+        C.chiudi(v["id"])
+
+
+@pytest.mark.parametrize("risposta,atteso", [(b"\n", False), (b"", False), (b"si\n", False),
+                                            (b"FORZA\n", True), (b"forza\n", False)])
+def test_conferma_force_legge_solo_dev_tty_con_default_no(CLI, monkeypatch, risposta, atteso):
+    chiamate, scritti = [], []
+
+    class TTY:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            pass
+        def isatty(self):
+            return True
+        def write(self, data):
+            scritti.append(data)
+        def readline(self, limite):
+            assert limite == 64
+            return risposta
+
+    def apri(percorso, modo, **kwargs):
+        chiamate.append((percorso, modo, kwargs))
+        return TTY()
+    monkeypatch.setattr("builtins.open", apri)
+    monkeypatch.setattr(CLI.sys, "stdin", SimpleNamespace(readline=lambda *_: pytest.fail("stdin is not consent")))
+    assert CLI.conferma_chiusura_forzata() is atteso
+    assert chiamate == [("/dev/tty", "r+b", {"buffering": 0})]
+    assert "non salvate" in b"".join(scritti).decode()
+
+
+def test_conferma_force_senza_tty_non_ripiega_su_stdin(CLI, monkeypatch):
+    def non_disponibile(*args, **kwargs):
+        raise OSError("fixture unavailable")
+    monkeypatch.setattr("builtins.open", non_disponibile)
+    monkeypatch.setattr(CLI.sys, "stdin", SimpleNamespace(readline=lambda *_: pytest.fail("stdin is not consent")))
+    with pytest.raises(CLI.Rifiuto, match="terminale interattivo"):
+        CLI.conferma_chiusura_forzata()
+
+
+class LsofFixture:
+    def __init__(self, output, stato=0):
+        self.stdout = tempfile.TemporaryFile()
+        self.stdout.write(output)
+        self.stdout.seek(0)
+        self.stato, self.ucciso = stato, False
+    def wait(self, timeout=None):
+        return self.stato
+    def poll(self):
+        return self.stato
+    def kill(self):
+        self.ucciso, self.stato = True, -9
+
+
+def test_lsof_diagnosi_solo_nome_pid_e_mount_literal(C, tmp_path, monkeypatch):
+    mount = tmp_path / "folder;$(echo fixture)"
+    output = (b"p123\0cTextEdit\0\nn/private/file-name\0f10\0"
+              b"p124\0cTerminal\0\np123\0cduplicate\0"
+              b"p125\0cunsafe\nname\0p0\0cInvalid\0p99999999999\0cInvalid\0")
+    child = LsofFixture(output)
+    chiamate = []
+    def crea(argv, **kwargs):
+        chiamate.append((argv, kwargs))
+        return child
+    monkeypatch.setattr(C.subprocess, "Popen", crea)
+    assert C._processi_occupanti(mount) == [{"nome": "TextEdit", "pid": 123}, {"nome": "Terminal", "pid": 124}]
+    argv, kwargs = chiamate[0]
+    assert argv == ["/usr/sbin/lsof", "-nP", "-Fpc0", "+f", "--", str(mount)]
+    assert kwargs["stdin"] == kwargs["stderr"] == subprocess.DEVNULL
+    assert child.stdout.closed and not child.ucciso
+
+
+def test_lsof_limita_numero_processi_e_dimensione_nome(C, tmp_path, monkeypatch):
+    output = b"p99\0c" + b"x" * 81 + b"\0" + b"".join(
+        f"p{i}\0cApp{i}\0".encode() for i in range(1, 40))
+    child = LsofFixture(output)
+    monkeypatch.setattr(C.subprocess, "Popen", lambda *_args, **_kwargs: child)
+    processi = C._processi_occupanti(tmp_path)
+    assert len(processi) == 12 and processi[0] == {"nome": "App1", "pid": 1}
+
+
+@pytest.mark.parametrize("caso", ["timeout", "oversize", "unavailable"])
+def test_lsof_errori_e_limiti_non_impediscono_busy(C, tmp_path, monkeypatch, caso):
+    child = LsofFixture(b"x" * 65537 if caso == "oversize" else b"", stato=None)
+    def crea(*_args, **_kwargs):
+        if caso == "unavailable":
+            raise OSError("fixture unavailable")
+        return child
+    monkeypatch.setattr(C.subprocess, "Popen", crea)
+    if caso == "timeout":
+        monkeypatch.setattr(C.select, "select", lambda *_: ([], [], []))
+    try:
+        assert C._processi_occupanti(tmp_path) == []
+        if caso != "unavailable":
+            assert child.ucciso and child.stdout.closed
+    finally:
+        child.stdout.close()
+
+
+def test_cli_busy_mostra_nomipids_non_contenuti(C, D, CLI, albero, monkeypatch, capsys):
+    v = C.proteggi(*albero, KEY)
+    C.apri(v["id"], KEY)
+    D.fallisce = ("detach", D.conta["detach"] + 1)
+    D.rc_fallisce = errno.EBUSY
+    monkeypatch.setattr(C, "_processi_occupanti", lambda _: [{"nome": "TextEdit", "pid": 123}])
+    args = CLI.costruisci().parse_args(["cartella", "chiudi", v["id"]])
+    assert CLI.cmd_cartella(args) == 2
+    output = capsys.readouterr().err
+    esito = json.loads(output)
+    assert esito["processi"] == [{"nome": "TextEdit", "pid": 123}]
+    assert "TextEdit (PID 123)" in esito["messaggio"]
+    assert KEY.decode() not in output and "fixture-private-marker" not in output
     C.chiudi(v["id"])

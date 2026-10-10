@@ -53,6 +53,13 @@ def run_main(W, action, payload):
     return json.loads(lines[0])
 
 
+def collection_fixture(active=False):
+    return {"kernel_active": active, "kernel_collection": {
+        "message": "Raccolta kernel attiva." if active else "Raccolta kernel inattiva.",
+        "coverage_guaranteed": False,
+    }}
+
+
 @pytest.mark.parametrize("payload", [
     b"", b"\0", struct.pack(">I", 0), struct.pack(">I", 1048577),
     struct.pack(">I", 5) + b"{}", raw_frame(b"{"), raw_frame(b"[]"),
@@ -228,15 +235,73 @@ def test_query_passes_all_filters_and_truncates_only_display(W, monkeypatch):
                "since": "2026-10-07T10:00:00+02:00", "until": "2026-10-08T20:00:00Z"}
     seen = []
     rows = [{"pid": n} for n in range(3100)]
-    monkeypatch.setattr(W, "_load", lambda name: SimpleNamespace(query=lambda f: seen.append(f) or rows))
+    monkeypatch.setattr(W, "_load", lambda name: SimpleNamespace(
+        query=lambda f: seen.append(f) or rows, raccolta_kernel=lambda f: collection_fixture(True)))
     result = W.dispatch("registro.query", {"filters": filters})
     assert seen == [filters]
-    assert result == {"rows": rows[:2500], "total": 3100, "truncated": True}
+    assert result == {"rows": rows[:2500], "total": 3100, "truncated": True, **collection_fixture(True)}
 
 
 def test_short_query_is_not_marked_truncated(W, monkeypatch):
-    monkeypatch.setattr(W, "_load", lambda name: SimpleNamespace(query=lambda f: []))
-    assert W.dispatch("registro.query", {}) == {"rows": [], "total": 0, "truncated": False}
+    monkeypatch.setattr(W, "_load", lambda name: SimpleNamespace(
+        query=lambda f: [], raccolta_kernel=lambda f: collection_fixture()))
+    assert W.dispatch("registro.query", {}) == {"rows": [], "total": 0, "truncated": False,
+                                              **collection_fixture()}
+
+
+@pytest.mark.parametrize("active", [False, True])
+@pytest.mark.parametrize("action", ["registro.query", "registro.export_csv"])
+def test_empty_registry_results_preserve_kernel_state_for_query_and_csv(W, monkeypatch, tmp_path, active, action):
+    filters = {"folder": "stable-folder"}
+    seen = []
+
+    def health(actual):
+        seen.append(actual)
+        return collection_fixture(active)
+
+    monkeypatch.setattr(W, "_load", lambda name: SimpleNamespace(
+        query=lambda f: [], export_csv=lambda f: "evento\n", raccolta_kernel=health))
+    params = {"filters": filters}
+    if action.endswith("export_csv"):
+        params["path"] = str(tmp_path.resolve() / "empty.csv")
+    response = run_main(W, action, frame(params))
+    assert response["ok"] and response["result"]["kernel_active"] is active
+    assert not response["result"]["kernel_collection"]["coverage_guaranteed"]
+    assert seen == [filters]
+    count = "total" if action.endswith("query") else "count"
+    assert response["result"][count] == 0
+
+
+@pytest.mark.parametrize("action,code,fragment", [
+    ("registro.query", "folder_not_configured", "La cartella non è configurata nel registro"),
+    ("registro.export_csv", "folder_not_configured", "La cartella non è configurata nel registro"),
+    ("registro.query", "folder_ambiguous", "Il percorso corrisponde a più ID"),
+    ("registro.export_csv", "folder_ambiguous", "Il percorso corrisponde a più ID"),
+    ("registro.sorveglia", "protected_folder_watch", "cartella protetta già configurata"),
+])
+def test_registry_errors_reach_the_app_without_raw_diagnostics_or_export(W, monkeypatch, tmp_path, action, code, fragment):
+    class ErroreRegistro(ValueError):
+        def __init__(self):
+            self.code = code
+            self.message = "unsafe stream " + KEY.decode()
+            super().__init__(self.message)
+
+    def fail(*args, **kwargs):
+        raise ErroreRegistro()
+
+    monkeypatch.setattr(W, "_load", lambda name: SimpleNamespace(
+        query=fail, export_csv=fail, sorveglia=fail))
+    target = tmp_path.resolve() / "must-not-exist.csv"
+    if action.endswith("sorveglia"):
+        params = {"id": "stable-folder", "percorso": str(tmp_path.resolve())}
+    else:
+        params = {"filters": {"folder": "/fixture/configured-path"}}
+        if action.endswith("export_csv"):
+            params["path"] = str(target)
+    response = run_main(W, action, frame(params))
+    assert not response["ok"] and response["code"] == code and fragment in response["message"]
+    assert KEY.decode() not in json.dumps(response) and "unsafe stream" not in json.dumps(response)
+    assert not target.exists()
 
 
 def test_registry_csv_uses_backend_escaping_and_complete_rows(W, monkeypatch, tmp_path):
@@ -249,6 +314,7 @@ def test_registry_csv_uses_backend_escaping_and_complete_rows(W, monkeypatch, tm
     rows += [{"evento": "open"} for _ in range(2501)]
     seen = []
     monkeypatch.setattr(registro, "query", lambda filters: seen.append(filters) or rows)
+    monkeypatch.setattr(registro, "raccolta_kernel", lambda filters: collection_fixture())
     monkeypatch.setattr(W, "_load", lambda name: registro)
     target = str(tmp_path.resolve() / "registro.csv")
     result = W.dispatch("registro.export_csv", {"path": target, "filters": {"agent": True}})
@@ -258,6 +324,7 @@ def test_registry_csv_uses_backend_escaping_and_complete_rows(W, monkeypatch, tm
     assert seen == [{"agent": True}]
     assert stat.S_IMODE(Path(target).stat().st_mode) == 0o600
     assert result["bytes"] == len(Path(target).read_bytes())
+    assert result["kernel_active"] is False and not result["kernel_collection"]["coverage_guaranteed"]
 
 
 @pytest.mark.parametrize("kind", ["file", "dangling", "ancestor"])
@@ -274,7 +341,8 @@ def test_exports_refuse_symlink_destinations_and_ancestors(W, monkeypatch, tmp_p
     else:
         target = base / "link.csv"
         target.symlink_to(original if kind == "file" else base / "absent.csv")
-    monkeypatch.setattr(W, "_load", lambda name: SimpleNamespace(export_csv=lambda f: "evento\nopen\n"))
+    monkeypatch.setattr(W, "_load", lambda name: SimpleNamespace(
+        export_csv=lambda f: "evento\nopen\n", raccolta_kernel=lambda f: collection_fixture()))
     response = run_main(W, "registro.export_csv", frame({"path": str(target)}))
     assert response["code"] == "unsafe_path"
     assert original.read_text() == "existing"
@@ -285,7 +353,8 @@ def test_export_replaces_atomically_and_cleans_up_on_write_failure(W, monkeypatc
     target = tmp_path.resolve() / "registro.csv"
     target.write_text("original")
     target.chmod(0o644)
-    monkeypatch.setattr(W, "_load", lambda name: SimpleNamespace(export_csv=lambda f: "evento\nopen\n"))
+    monkeypatch.setattr(W, "_load", lambda name: SimpleNamespace(
+        export_csv=lambda f: "evento\nopen\n", raccolta_kernel=lambda f: collection_fixture()))
     real_replace = os.replace
     inspected = []
 
@@ -372,7 +441,9 @@ def test_hook_restore_from_worker_preserves_original_and_refuses_later_edit(W, m
     original = b'{"env":{"existing":"retained"}}\n'
     target = home / ".claude" / "settings.json"
     target.write_bytes(original)
-    installed = hooks.installa(resource_root=ROOT, python_executable=sys.executable, home=home)
+    # Hook installation chooses the protected Apple runtime. The pytest venv
+    # interpreter is intentionally not an authorized hook runtime.
+    installed = hooks.installa(resource_root=ROOT, home=home)
     backup = next(path for path in installed["backups"] if "/.claude/" in path)
     monkeypatch.setattr(W, "_load", lambda *a, **k: SimpleNamespace(
         ripristina=lambda path: hooks.ripristina(path, home=home)))

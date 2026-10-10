@@ -45,6 +45,7 @@ def bank(tmp_path, monkeypatch):
     monkeypatch.setenv("PARATIA_HOME", str(home / ".paratia"))
     b = load("banco_test", ROOT / "banco.py")
     real_c, real_r = b.C, b.R
+    real_r.SYSTEM = area / "kernel-fixture"
     events, entries, keys, kernel = [], {}, [], []
     protected = area / "protected-fixture"
     ident = "a" * 32
@@ -95,6 +96,7 @@ def bank(tmp_path, monkeypatch):
         return dict(entries[folder])
 
     fake_c = SimpleNamespace(_chiave=real_c._chiave, _minuti=real_c._minuti,
+                             DIR_SISTEMA=real_c.DIR_SISTEMA,
                              _esterno=lambda p: events.append(("external", str(p))),
                              elenco=lambda: list(entries.values()), Rifiuto=real_c.Rifiuto,
                              proteggi=protect, apri=open_folder, chiudi=close_folder)
@@ -105,7 +107,7 @@ def bank(tmp_path, monkeypatch):
         events.append(("status", None))
         return {**readiness, "watched_ids": list(watches) + list(entries)}
 
-    def watch(folder, path, name):
+    def watch(folder, path, name=""):
         events.append(("watch", folder))
         real_r.sorveglia(folder, path, name)
         watches[folder] = str(path)
@@ -203,7 +205,7 @@ def test_reused_user_watch_is_acknowledged_and_survives_bank_cleanup(bank, monke
     bank.real_r.sorveglia(existing, bank.source, "Sorveglianza scelta dalla persona")
     bank.watches[existing] = str(bank.source)
 
-    def watch(identifier, path, name):
+    def watch(identifier, path, name=""):
         result = bank.real_r.sorveglia(identifier, path, name)
         bank.watches[result["id"]] = str(path)
         return result
@@ -264,6 +266,41 @@ def test_ancestor_and_child_symlinks_are_refused(bank):
     (bank.source / "linked").symlink_to(bank.disk, target_is_directory=True)
     with pytest.raises(b.Rifiuto, match="collegamenti"):
         b._inventario(bank.source)
+
+
+def test_protected_inventory_ignores_only_new_system_root_directories(bank):
+    b = bank.b
+    # This pre-existing name belongs to the source and must stay in inventory.
+    original = bank.source / ".Spotlight-V100"
+    original.mkdir()
+    (original / "personal.txt").write_text("synthetic source data")
+    nested = bank.source / "nested"
+    nested.mkdir()
+    before = b._inventario(bank.source)
+    created = bank.source / ".fseventsd"
+    created.mkdir()
+    (created / "events").write_bytes(b"synthetic system metadata")
+    (nested / ".fseventsd").mkdir()
+    (nested / ".fseventsd" / "personal.txt").write_text("synthetic nested data")
+
+    actual = b._inventario(bank.source, sistema_assenti=b.C.DIR_SISTEMA - before.keys())
+    assert ".fseventsd" not in actual and ".fseventsd/events" not in actual
+    assert actual[".Spotlight-V100/personal.txt"] == before[".Spotlight-V100/personal.txt"]
+    assert "nested/.fseventsd/personal.txt" in actual
+    assert ".fseventsd/events" in b._inventario(bank.source)  # No default exclusion.
+
+
+@pytest.mark.parametrize("kind", ["file", "symlink"])
+def test_system_root_name_never_hides_a_file_or_alias(bank, kind):
+    path = bank.source / ".fseventsd"
+    if kind == "file":
+        path.write_bytes(b"synthetic user file")
+        actual = bank.b._inventario(bank.source, sistema_assenti=bank.b.C.DIR_SISTEMA)
+        assert actual[".fseventsd"]["tipo"] == "file"
+    else:
+        path.symlink_to(bank.disk, target_is_directory=True)
+        with pytest.raises(bank.b.Rifiuto, match="collegamenti"):
+            bank.b._inventario(bank.source, sistema_assenti=bank.b.C.DIR_SISTEMA)
 
 
 def test_synthetic_preparation_does_not_overwrite_a_racing_file(bank, monkeypatch):
@@ -458,9 +495,10 @@ def test_close_failure_reports_unverified_state_and_cleans_watch(bank, monkeypat
     assert result["stato"] == "incompleto" and not bank.watches
 
 
-def test_rerun_accepts_only_its_known_metadata_and_folder_identity(bank):
+def test_rerun_accepts_only_its_known_metadata_and_folder_identity(bank, monkeypatch):
     b = bank.b
     first = b.esegui(bank.disk, KEY)
+    monkeypatch.setattr(b.R, "sorveglia", lambda *a, **k: pytest.fail("A protected rerun must use its existing folder ID"))
     second = b.esegui(bank.disk, KEY)
     assert first["id"] != second["id"] and first["cartella_id"] == second["cartella_id"] == bank.ident
     assert first["inventario"] == second["inventario"] and second["stato"] == "completo"

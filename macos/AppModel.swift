@@ -26,6 +26,8 @@ final class AppModel: ObservableObject {
     @Published var detail: EventItem?
     @Published var eventTotal = 0
     @Published var eventsTruncated = false
+    @Published var eventsKernelActive: Bool?
+    @Published var eventsKernelMessage = "La raccolta kernel non è ancora verificata per questa ricerca."
     @Published var selectedFolder = ""
     @Published var fileFilter = ""
     @Published var processFilter = ""
@@ -217,15 +219,18 @@ final class AppModel: ObservableObject {
         let rows = result["rows"] as? [Record] ?? []
         events = rows.enumerated().map { EventItem(id: "\($0.offset)-\($0.element.text("precedente"))", data: $0.element) }
         eventTotal = result.number("total"); eventsTruncated = result.flag("truncated")
+        eventsKernelActive = result["kernel_active"] as? Bool
+        let collection = result["kernel_collection"] as? Record ?? [:]
+        eventsKernelMessage = collection.text("message", fallback: "La raccolta kernel non è ancora verificata per questa ricerca.")
     }
 
     func watchFolder() {
         guard !fixtures, busy == nil, let path = chooseDirectory(title: "Sorveglia una cartella") else { return }
         let identifier = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         perform("Configurazione della sorveglianza…") {
-            _ = try await self.worker.request("registro.sorveglia", parameters: ["id": identifier, "percorso": path, "nome": URL(fileURLWithPath: path).lastPathComponent])
+            let result = try await self.worker.request("registro.sorveglia", parameters: ["id": identifier, "percorso": path]) as? Record ?? [:]
             try await self.refresh()
-            self.notice = "Cartella configurata. La raccolta è confermata solo quando il registro kernel è attivo e riconosce il suo ID."
+            self.notice = result.text("messaggio", fallback: "Cartella configurata.") + " La raccolta è confermata solo quando il registro kernel è attivo e riconosce il suo ID."
         }
     }
 
@@ -252,8 +257,13 @@ final class AppModel: ObservableObject {
         guard panel.runModal() == .OK, let path = panel.url?.path else { return }
         perform("Esportazione…") {
             var params = parameters; params["path"] = path
-            _ = try await self.worker.request(action, parameters: params)
+            let result = try await self.worker.request(action, parameters: params) as? Record ?? [:]
             self.notice = "Esportazione salvata in \(path)."
+            if action == "registro.export_csv" {
+                self.eventsKernelActive = result["kernel_active"] as? Bool
+                let collection = result["kernel_collection"] as? Record ?? [:]
+                self.eventsKernelMessage = collection.text("message", fallback: "La raccolta kernel non è ancora verificata per questa esportazione.")
+            }
         }
     }
 

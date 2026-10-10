@@ -110,20 +110,71 @@ class RegistroTests(unittest.TestCase):
         path.write_text(json.dumps({"versione": 1, "percorsi": {
             identifier: {"percorso": str(folder)} for identifier in ("old-a", "old-b")}}))
         R.annota("open", cartella="old-a", percorso=str(folder / "file"))
-        for function in (R.query, R.export_csv):
-            with self.assertRaisesRegex(ValueError, "più ID"):
+        for function in (R.query, R.export_csv, R.raccolta_kernel):
+            with self.assertRaisesRegex(R.ErroreRegistro, "più ID") as error:
                 function({"folder": str(folder)})
+            self.assertEqual(error.exception.code, "folder_ambiguous")
         self.assertEqual(len(R.query({"folder": "old-a"})), 1)
 
-    def test_reused_watch_reports_preserved_name_instead_of_silent_rename(self):
+    def test_reused_watch_renames_explicit_name_and_preserves_id(self):
         folder = self.base / "watched"
         folder.mkdir()
         R.sorveglia("original", folder, "Nome personale")
         result = R.sorveglia("new-request", folder, "Nome richiesto diverso")
-        self.assertEqual((result["id"], result["nome"]), ("original", "Nome personale"))
+        self.assertEqual((result["id"], result["nome"]), ("original", "Nome richiesto diverso"))
         self.assertTrue(result["riutilizzata"])
-        self.assertIn("ID e nome conservati", result["messaggio"])
-        self.assertEqual(R.elenco_sorveglianza()[0]["nome"], "Nome personale")
+        self.assertTrue(result["rinominata"])
+        self.assertIn("rinominata; ID conservato", result["messaggio"])
+        self.assertEqual(R.elenco_sorveglianza()[0]["nome"], "Nome richiesto diverso")
+        reused = R.sorveglia("third-request", folder)
+        self.assertEqual((reused["id"], reused["nome"]), ("original", "Nome richiesto diverso"))
+        self.assertFalse(reused["rinominata"])
+
+    def test_resolver_errors_are_typed_fixed_and_do_not_include_supplied_data(self):
+        secret_path = str(self.base / "PRIVATE-PATH-SYNTHETIC")
+        with self.assertRaises(R.ErroreRegistro) as error:
+            R.query({"folder": secret_path})
+        self.assertEqual(error.exception.code, "folder_not_configured")
+        self.assertEqual(error.exception.message, R.ErroreRegistro.MESSAGGI[error.exception.code])
+        self.assertNotIn("PRIVATE-PATH", str(error.exception))
+
+    def test_kernel_metadata_distinguishes_empty_stopped_unacknowledged_and_active(self):
+        folder = self.base / "watched"
+        folder.mkdir()
+        R.sorveglia("known", folder)
+        status = {"running": True, "healthy": True, "needs_fda": False,
+                  "schema_supported": True, "watched_ids": ["known"],
+                  "drop_detection_available": False, "dropped_events": None,
+                  "message": "PRIVATE-UNTRUSTED-STATUS"}
+        with mock.patch.object(R, "stato", return_value=status):
+            self.assertEqual(R.query({"folder": str(folder)}), [])
+            self.assertEqual(list(csv.DictReader(io.StringIO(R.export_csv({"folder": str(folder)})))), [])
+            active = R.raccolta_kernel({"folder": str(folder)})
+            self.assertTrue(active["kernel_active"])
+            self.assertTrue(active["kernel_collection"]["acknowledged"])
+            self.assertFalse(active["kernel_collection"]["coverage_guaranteed"])
+            self.assertNotIn("PRIVATE-UNTRUSTED", json.dumps(active))
+            for changes in ({"running": False}, {"healthy": False}, {"needs_fda": True},
+                            {"needs_fda": None}, {"schema_supported": False}, {"watched_ids": []}):
+                with self.subTest(changes=changes), mock.patch.object(R, "stato", return_value={**status, **changes}):
+                    inactive = R.raccolta_kernel({"folder": "known"})
+                    self.assertFalse(inactive["kernel_active"])
+                    self.assertFalse(inactive["kernel_collection"]["coverage_guaranteed"])
+                    self.assertFalse(R.sorveglia("reuse", folder)["raccolta_attiva"])
+                    self.assertFalse(R.elenco_sorveglianza()[0]["raccolta_attiva"])
+
+    def test_protected_mount_watch_is_refused_before_adding_separate_configuration(self):
+        folder = self.base / "protected"
+        folder.mkdir()
+        identifier = "a" * 32
+        (R.CASA / "cartelle.json").write_text(json.dumps({"versione": 1, "cartelle": {
+            identifier: {"id": identifier, "nome": "Protetta", "origine": str(folder),
+                         "montaggio": str(folder), "bundle": str(folder.parent / (folder.name + "-" + identifier + ".sparsebundle"))}}}))
+        with self.assertRaises(R.ErroreRegistro) as error:
+            R.sorveglia("separate-watch", folder)
+        self.assertEqual(error.exception.code, "protected_folder_watch")
+        self.assertFalse((R.CASA / "registro" / "sorveglianza.json").exists())
+        self.assertEqual(R.risolvi_cartella(str(folder)), identifier)
 
     def test_ancestry_pidversion_and_snapshot_uncertainty(self):
         a = R.Discendenza({99: {"processo": "/usr/local/bin/codex", "ppid": 1},
@@ -288,7 +339,7 @@ class RegistroTests(unittest.TestCase):
                 R.sorveglia("missing", self.base / "non-esiste")
             with self.assertRaises(ValueError):
                 R.rimuovi_sorveglianza("unknown")
-        with mock.patch.object(R, "stato", return_value={"running": True, "healthy": True, "watched_ids": ["first"]}):
+        with mock.patch.object(R, "stato", return_value={"running": True, "healthy": True, "needs_fda": False, "watched_ids": ["first"]}):
             self.assertTrue(R.sorveglia("third", folder)["raccolta_attiva"])
             self.assertTrue(R.elenco_sorveglianza()[0]["raccolta_attiva"])
 

@@ -106,6 +106,7 @@ def test_gui_checks_root_protected_bundle_before_loading_installer_plan():
 @pytest.mark.parametrize("exception_name,code,expected", [
     ("VolumeOccupato", "volume_busy", "terminale aperto dentro"),
     ("DiscoNonDisponibile", "disk_unavailable", "Collegalo"),
+    ("ImmagineDanneggiata", "damaged_image", "danneggiata o incompleta"),
 ])
 def test_busy_and_unavailable_disks_have_distinct_safe_worker_messages(W, monkeypatch, exception_name, code, expected):
     error = type(exception_name, (Exception,), {})
@@ -119,8 +120,11 @@ def test_busy_and_unavailable_disks_have_distinct_safe_worker_messages(W, monkey
     result = request(W, action, {"id": "fixture"})
     assert result["ok"] is False and result["code"] == code and expected in result["message"]
     assert "unsafe" not in json.dumps(result) and KEY.decode() not in json.dumps(result)
-    if code == "disk_unavailable":
+    if code in ("disk_unavailable", "damaged_image"):
         assert "Recupera" not in result["message"] and "Annulla" not in result["message"]
+    if code == "damaged_image":
+        assert "reinser" not in result["message"].lower()
+        assert "conserva" in result["message"].lower()
 
 
 @pytest.mark.parametrize("force", [False, True])
@@ -157,3 +161,20 @@ def test_gui_force_close_requires_explicit_second_button_confirmation():
     normal = swift_method("close")
     assert '"force"' not in normal
     assert 'ready.text("messaggio"' in swift_method("askKey")
+
+
+def test_registry_view_distinguishes_zero_events_from_inactive_or_unknown_collection():
+    app = (ROOT / "macos" / "AppModel.swift").read_text()
+    assert '@Published var eventsKernelActive: Bool?' in app
+    query = app.split('private func refreshEvents()', 1)[1].split('\n    func ', 1)[0]
+    assert 'eventsKernelActive = result["kernel_active"] as? Bool' in query
+    assert 'result["kernel_collection"] as? Record' in query
+    export = swift_method("export")
+    assert 'action == "registro.export_csv"' in export and 'result["kernel_active"] as? Bool' in export
+    view = (ROOT / "macos" / "Views.swift").read_text().split('struct RegistryView', 1)[1]
+    counter = view.split('Text("\\(model.eventTotal)', 1)[1].split('Button("Apri dettaglio")', 1)[0]
+    for state in ('"Raccolta kernel attiva"', '"Raccolta kernel inattiva"', '"Raccolta kernel da verificare"'):
+        assert state in counter
+    assert 'Text(model.eventsKernelMessage)' in view
+    watch = swift_method("watchFolder")
+    assert 'result.text("messaggio"' in watch and '"nome":' not in watch

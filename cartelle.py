@@ -20,12 +20,14 @@ import re
 import select
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
 import time
 import uuid
 from pathlib import Path
+from xml.parsers.expat import ExpatError
 
 # Timers import sibling registry modules from a sealed app bundle as well.
 sys.dont_write_bytecode = True
@@ -35,6 +37,7 @@ ARCHIVIO = CASA / "cartelle.json"
 HDIUTIL = "/usr/bin/hdiutil"
 DISKUTIL = "/usr/sbin/diskutil"
 DITTO = "/usr/bin/ditto"
+LSOF = "/usr/sbin/lsof"
 DIR_SISTEMA = {".fseventsd", ".Spotlight-V100", ".Trashes", ".DocumentRevisions-V100", ".TemporaryItems"}
 
 
@@ -53,9 +56,22 @@ class ChiaveErrata(Rifiuto):
 class VolumeOccupato(Rifiuto):
     """A normal detach could not close a volume that is still in use."""
 
+    def __init__(self, message: str, cartella_id: str | None = None, processi: list | None = None):
+        super().__init__(message, cartella_id)
+        self.processi = processi or []
+
 
 class DiscoNonDisponibile(Rifiuto):
     """The external image is currently unavailable; no recovery is needed."""
+
+
+class ImmagineDanneggiata(Rifiuto):
+    """The sparsebundle is incomplete or unreadable, before any key is checked."""
+
+
+MESSAGGIO_IMMAGINE = ("L'immagine è danneggiata o incompleta. Ricollega il disco e ripristina "
+                     "una copia integra del compartimento; conserva l'immagine attuale "
+                     "e non ripetere la migrazione sulla fonte.")
 
 
 def annota(evento: str, **metadati) -> None:
@@ -535,8 +551,130 @@ def _leggi_manifest(monte: Path, voce: dict) -> dict:
     return manifest
 
 
+def _file_bundle(directory: int, nome: str) -> int:
+    fd = os.open(nome, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+    try:
+        dati = os.fstat(fd)
+        if not stat.S_ISREG(dati.st_mode) or dati.st_nlink != 1 or not dati.st_mode & 0o444:
+            raise ValueError("unreadable regular file required")
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _valida_token(fd: int) -> None:
+    """Validate the encrypted-v2 header's declared extents, without a key.
+
+    The 76-byte big-endian header carries a data offset at byte 64 and the
+    count of 20-byte key-blob descriptors at byte 72. A sparsebundle token
+    contains this encryption header up to the data offset; the actual image
+    data lives in bands. These extents were checked against an existing
+    hdiutil-produced fixture; its total token size is deliberately not fixed.
+    """
+    dimensione = os.fstat(fd).st_size
+    prefisso = os.pread(fd, 12, 0)
+    if len(prefisso) != 12:
+        raise ValueError("truncated token header")
+    if prefisso[:8] != b"encrcdsa":
+        raise ValueError("invalid encrypted-token signature")
+    if struct.unpack_from(">I", prefisso, 8)[0] != 2:
+        raise Rifiuto("Il formato del token cifrato non è supportato. Conserva questa "
+                      "copia e verifica il compartimento con assistenza prima di aprirlo.")
+    header = os.pread(fd, 76, 0)
+    if len(header) != 76:
+        raise ValueError("truncated encrypted-v2 header")
+    blocco = struct.unpack_from(">I", header, 52)[0]
+    fine_header = struct.unpack_from(">Q", header, 64)[0]
+    numero = struct.unpack_from(">I", header, 72)[0]
+    fine_tabella = 76 + numero * 20
+    if (not blocco or blocco & (blocco - 1) or not numero
+            or fine_tabella > fine_header or fine_header > dimensione):
+        raise ValueError("incomplete encrypted-v2 extents")
+    # Bound the descriptor read independently of a tampered count. This is a
+    # resource limit, not a claimed fixed length of an encrypted token.
+    if numero > 4096:
+        raise Rifiuto("Il token cifrato supera i limiti di verifica. Conserva questa "
+                      "copia e verifica il compartimento con assistenza prima di aprirlo.")
+    tabella = os.pread(fd, numero * 20, 76)
+    if len(tabella) != numero * 20:
+        raise ValueError("incomplete encrypted-v2 key table")
+    for indice in range(numero):
+        _tipo, inizio, lunghezza = struct.unpack_from(">IQQ", tabella, indice * 20)
+        if not lunghezza or inizio < fine_tabella or inizio + lunghezza > fine_header:
+            raise ValueError("incomplete encrypted-v2 key blob")
+    # Read the whole declared token without retaining key-blob bytes. A short
+    # read or a concurrent truncation must never turn into a wrong-key error.
+    posizione = 0
+    while posizione < dimensione:
+        pezzo = os.pread(fd, min(65536, dimensione - posizione), posizione)
+        if not pezzo:
+            raise ValueError("token ended before EOF")
+        posizione += len(pezzo)
+    if os.fstat(fd).st_size != dimensione:
+        raise ValueError("token changed during validation")
+
+
+def _verifica_struttura_bundle(bundle: Path, cartella_id: str | None = None) -> None:
+    """Check image metadata, bands and the encryption token before a key prompt."""
+    directory = None
+    try:
+        _percorso(bundle)
+        directory = os.open(bundle, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        valido = False
+        for nome in ("Info.plist", "Info.bckup"):
+            try:
+                metadata = os.stat(nome, dir_fd=directory, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISREG(metadata.st_mode):
+                raise ValueError("regular metadata required")
+            try:
+                fd = _file_bundle(directory, nome)
+                try:
+                    if os.fstat(fd).st_size > 1048576:
+                        raise ValueError("image metadata too large")
+                    with os.fdopen(fd, "rb") as file:
+                        fd = None
+                        info = plistlib.load(file)
+                    if (isinstance(info, dict)
+                            and info.get("diskimage-bundle-type") == "com.apple.diskimage.sparsebundle"
+                            and type(info.get("band-size")) is int and info["band-size"] > 0
+                            and type(info.get("size")) is int and info["size"] > 0):
+                        valido = True
+                finally:
+                    if fd is not None:
+                        os.close(fd)
+            except (OSError, ValueError, ExpatError, plistlib.InvalidFileException):
+                # hdiutil can use the backup metadata if the primary plist is
+                # absent or corrupt. A symlink/special file is always refused.
+                continue
+        if not valido:
+            raise ValueError("no valid image metadata")
+        bands = os.open("bands", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                        dir_fd=directory)
+        os.close(bands)
+        fd = _file_bundle(directory, "token")
+        try:
+            _valida_token(fd)
+        finally:
+            os.close(fd)
+    except Rifiuto as errore:
+        # Path aliases are damaged metadata too. A recognised but unsupported
+        # encryption format keeps its distinct, safe message.
+        if directory is not None:
+            raise
+        raise ImmagineDanneggiata(MESSAGGIO_IMMAGINE, cartella_id) from errore
+    except (OSError, ValueError, struct.error) as errore:
+        raise ImmagineDanneggiata(MESSAGGIO_IMMAGINE, cartella_id) from errore
+    finally:
+        if directory is not None:
+            os.close(directory)
+
+
 def _verifica_chiave(bundle: Path, passphrase: bytes) -> None:
     """Check an encrypted image's password without attaching a device."""
+    _verifica_struttura_bundle(bundle)
     verifica = _corri([HDIUTIL, "isencrypted", str(bundle), "-plist"])
     cifrata = None
     if verifica.returncode == 0:
@@ -555,6 +693,7 @@ def _verifica_chiave(bundle: Path, passphrase: bytes) -> None:
     if risultato.returncode:
         if not bundle.is_dir():
             raise DiscoNonDisponibile("Il disco esterno non è disponibile. Collegalo e riprova ad aprire la cartella.")
+        _verifica_struttura_bundle(bundle)
         if (cifrata is True and risultato.returncode not in (
                 errno.ENOENT, errno.EIO, errno.EACCES, errno.ENODEV, errno.ENXIO,
                 errno.EINVAL, errno.ENOSPC, errno.EROFS, errno.ENOTSUP, errno.EBUSY,
@@ -573,11 +712,75 @@ def _attacca(bundle: Path, monte: Path, passphrase: bytes) -> None:
         raise Rifiuto("Il montaggio del volume non è stato confermato.")
 
 
+def _processi_occupanti(monte: Path) -> list[dict]:
+    """Read only lsof's process names and IDs, never paths or command arguments."""
+    processo = None
+    try:
+        # The local lsof manual documents +f -- for a filesystem and -Fpc0 for
+        # process ID and command name. The mount path stays one literal argv.
+        processo = subprocess.Popen([LSOF, "-nP", "-Fpc0", "+f", "--", str(monte)],
+                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL)
+        limite = time.monotonic() + 2
+        dati = bytearray()
+        while True:
+            rimasto = limite - time.monotonic()
+            if rimasto <= 0 or not select.select([processo.stdout], [], [], rimasto)[0]:
+                return []
+            pezzo = os.read(processo.stdout.fileno(), min(4096, 65537 - len(dati)))
+            if not pezzo:
+                break
+            dati.extend(pezzo)
+            if len(dati) > 65536:
+                return []
+        if processo.wait(timeout=max(0.001, limite - time.monotonic())) not in (0, 1):
+            return []
+        processi, visti, pid = [], set(), None
+        for campo in bytes(dati).split(b"\0"):
+            riga = campo.lstrip(b"\n")  # lsof separates its process sets with NL.
+            if riga.startswith(b"p"):
+                valore = riga[1:]
+                pid = int(valore) if valore.isdigit() and 0 < len(valore) <= 10 else None
+                if pid is not None and not 0 < pid <= 2147483647:
+                    pid = None
+            elif riga.startswith(b"c") and pid is not None and pid not in visti:
+                nome = riga[1:].decode("utf-8", "replace")
+                # Reject multiline/control-character tricks; only the bounded
+                # process name supplied by the kernel is allowed into output.
+                if not nome or len(nome) > 80 or any(not c.isprintable() for c in nome):
+                    continue
+                processi.append({"nome": nome, "pid": pid})
+                visti.add(pid)
+                if len(processi) == 12:
+                    break
+        return processi
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return []
+    finally:
+        if processo is not None:
+            if processo.poll() is None:
+                # This is our own short-lived diagnostic child, never a PID
+                # found by lsof or stored in the folder/timer registry.
+                processo.kill()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                processo.wait(timeout=1)
+            if processo.stdout is not None:
+                processo.stdout.close()
+
+
 def _stacca(monte: Path, force: bool = False) -> None:
     if type(force) is not bool:
         raise Rifiuto("La chiusura forzata richiede una scelta esplicita.")
     if _montato(monte):
-        _comando([HDIUTIL, "detach", str(monte), *(["-force"] if force else [])])
+        try:
+            _comando([HDIUTIL, "detach", str(monte), *(["-force"] if force else [])])
+        except VolumeOccupato as errore:
+            processi = _processi_occupanti(monte)
+            messaggio = str(errore)
+            if processi:
+                messaggio += " Processi rilevati: " + ", ".join(
+                    f"{p['nome']} (PID {p['pid']})" for p in processi) + "."
+            raise VolumeOccupato(messaggio, processi=processi) from None
     if _montato(monte):
         raise Rifiuto("Il volume è ancora montato. Nessuna chiusura forzata eseguita.")
 
@@ -722,9 +925,10 @@ def _prepara_apertura(v: dict, minutes: int) -> dict:
     monte = _percorso(v["montaggio"])
     aperta = _montato(monte)
     if not aperta:
-        bundle = _percorso(v["bundle"])
+        bundle = Path(v["bundle"])
         if not bundle.is_dir():
             raise DiscoNonDisponibile("Il disco esterno non è disponibile. Collegalo e riprova ad aprire la cartella.")
+        _verifica_struttura_bundle(bundle, v["id"])
         if not monte.is_dir():
             raise Rifiuto("Il punto di montaggio non è disponibile. Ripristina il percorso originale e riprova.")
         if any(monte.iterdir()):
