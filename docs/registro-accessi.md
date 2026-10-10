@@ -72,11 +72,15 @@ antenato può essere scrivibile dal gruppo admin: non basta verificarne il nome.
 L'installer rifiuta un runtime o librerie modificabili senza root; non modifica
 i permessi globali di Xcode o Applications.
 
-La provenienza del payload prima dell'installazione dipende dall'app che la
-persona autorizza. Il dialogo amministratore non rende a prova di modifiche
-preesistenti un'app posseduta dallo stesso UID. La protezione root descritta
-vale per la copia installata; non viene promessa una protezione di bootstrap
-equivalente a quella di una System Extension firmata.
+Il bootstrap amministratore usa una copia separata in
+`/Library/Application Support/ParatiaBootstrap/Paratia.app`. Verifica il bundle,
+ogni suo file e tutti gli antenati: proprietario root, nessuna scrittura per
+gruppo/altri o tramite ACL, nessun collegamento simbolico. Verifica anche la
+firma e le risorse sigillate e ripete il controllo subito prima del dialogo.
+La copia normale in `/Applications/Paratia.app` resta l'app d'uso quotidiano e
+la voce FDA; non si richiede di cambiare i permessi globali di `/Applications`.
+La copia di bootstrap è distinta da quella del servizio, sotto
+`/Library/Application Support/Paratia`, il cui parent è protetto con modo 0700.
 
 Il demone legge i registri dell'utente ottenuto da `pwd`, senza importare codice
 o accettare home/command arbitrary dal JSON. Apertura dei registri tramite
@@ -89,6 +93,45 @@ migrazione o dal recupero. I percorsi del collector sono sempre esclusi. Il bund
 cifrato, non prova accessi al testo in chiaro.
 
 ## Installazione e autorizzazioni ancora necessarie
+
+Dopo aver installato l'app normale in `/Applications`, chiudi tutte le copie
+di Paratia e prepara personalmente nel Terminale la copia di bootstrap:
+
+```sh
+sudo /bin/sh -c 'set -eu
+[ ! -L "/Library/Application Support/ParatiaBootstrap" ]
+[ -d "/Applications/Paratia.app" ]
+[ ! -L "/Applications/Paratia.app" ]
+/usr/bin/install -d -m 755 -o root -g wheel "/Library/Application Support/ParatiaBootstrap"
+/bin/chmod -N "/Library/Application Support/ParatiaBootstrap"
+paratia_bootstrap_stage=$(/usr/bin/mktemp -d "/Library/Application Support/ParatiaBootstrap/.prepara.XXXXXX")
+/usr/bin/ditto --noacl "/Applications/Paratia.app" "$paratia_bootstrap_stage/Paratia.app"
+/usr/bin/find "$paratia_bootstrap_stage/Paratia.app" ! -type d ! -type f -print > "$paratia_bootstrap_stage/percorsi-non-ordinari"
+[ ! -s "$paratia_bootstrap_stage/percorsi-non-ordinari" ]
+/usr/sbin/chown -R root:wheel "$paratia_bootstrap_stage/Paratia.app"
+/bin/chmod -R go-w "$paratia_bootstrap_stage/Paratia.app"
+/usr/bin/codesign --verify --deep --strict "$paratia_bootstrap_stage/Paratia.app"
+[ ! -L "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]
+if [ -e "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]; then
+    /bin/mv "/Library/Application Support/ParatiaBootstrap/Paratia.app" "$paratia_bootstrap_stage/precedente.app"
+fi
+/bin/mv "$paratia_bootstrap_stage/Paratia.app" "/Library/Application Support/ParatiaBootstrap/Paratia.app"
+/usr/bin/codesign --verify --deep --strict "/Library/Application Support/ParatiaBootstrap/Paratia.app"'
+```
+
+Il comando non modifica `/Applications` o i suoi permessi. Prepara la copia in
+un'area root con modo 0700, rifiuta link e file speciali prima di cambiare
+proprietario/permessi e verifica la firma prima di pubblicarla. Un bootstrap
+precedente resta nella cartella `.prepara` protetta. Solo se il comando termina
+senza errori (codice 0), apri
+`/Library/Application Support/ParatiaBootstrap/Paratia.app` **dal Finder** e usa
+**Installa il registro**. Anche i suoi antenati devono superare il controllo
+root e ACL; se il controllo fallisce, il dialogo resta bloccato.
+
+La copia conserva la firma dell'app normale. Cambiare proprietario e permessi
+non modifica il CDHash; il solo `chown` non cambia l'identità firmata. Il
+riconoscimento TCC fra le copie resta da verificare live. Dopo ogni nuova build,
+aggiorna anche la copia di bootstrap prima di reinstallare il servizio.
 
 `registro_installa.piano()` prepara gli argv e la plist senza installare nulla.
 Il pulsante **Installa il registro** consegna quel piano al dialogo amministratore
@@ -108,8 +151,8 @@ anche altri programmi. Il vecchio servizio avviato direttamente da Python deve
 essere reinstallato. `registro stato` indica `launch_mode`, `needs_reinstall`,
 `fda_entry` e `fda_regrant_after_build`.
 
-Le due copie dell'app mantengono la stessa firma verificata. Questa architettura
-mantiene l'eseguibile dell'app come padre del raccoglitore; il riconoscimento
+Le copie normale, di bootstrap e del servizio mantengono la stessa firma
+verificata. Questa architettura mantiene l'eseguibile dell'app come padre del raccoglitore; il riconoscimento
 dell'identità da parte di TCC e il permesso a eslogger restano da verificare live.
 Il servizio riprova con throttling dopo un errore; un heartbeat recente e sano
 è necessario per considerare la raccolta attiva.
@@ -138,26 +181,53 @@ anche `--file`, `--agente true|false|unknown` oppure il nome dell'agente
 
 `sorveglia(id, percorso, nome)` registra una cartella plaintext nel file separato
 `~/.paratia/registro/sorveglianza.json`; non la spaccia per un compartimento.
-`rimuovi_sorveglianza(id)` elimina questa richiesta. Il demone rilegge entrambi
-i registri ogni cinque secondi; `stato().watched_ids` permette al banco di
-attendere che il percorso sia effettivamente configurato prima degli accessi.
+La cartella deve esistere ed essere di proprietà dell'utente. Ripetere la
+richiesta per lo stesso percorso normalizzato conserva l'ID e il nome esistenti e
+restituisce `riutilizzata: true`. `rimuovi_sorveglianza(id)` elimina la richiesta;
+un ID sconosciuto produce un errore.
+
+`configurata: true` indica una richiesta salvata. `sorvegliata` e
+`raccolta_attiva` diventano vere soltanto con raccoglitore attivo e sano e ID
+confermato in `stato().watched_ids`. Il demone rilegge i registri ogni cinque
+secondi; il banco attende questa conferma prima degli accessi e conserva una
+richiesta dell'utente eventualmente riutilizzata. La conferma non prova la
+copertura di ogni accesso. Con raccolta ferma o non sana, `registro elenco` ed
+`esporta` avvisano su stderr anche se il risultato è vuoto; stdout conserva il
+formato JSON o CSV e gli eventi già presenti restano consultabili.
 
 `query(filters)` restituisce le due sorgenti con filtri `folder`, `file`,
 `process`, `agent`, `since`, `until`; ogni riga mantiene i dettagli e la sorgente.
+Un filtro `file` assoluto seleziona quel percorso o i suoi discendenti:
+`/a/b` comprende `/a/b/x`, ma esclude `/a/bc/x`. Vengono normalizzati slash,
+alias di percorso e Unicode NFC/NFD. Un filtro non assoluto cerca liberamente
+nel nome/percorso con normalizzazione Unicode e `casefold`, senza distinzione
+fra maiuscole e minuscole.
+
 `export_csv(filters)` protegge i valori da formula injection quando il CSV è
 aperto in un foglio di calcolo. `verifica()` controlla separatamente le due
 catene. `stato()` distingue installazione, processo attivo, salute, necessità di
 root/FDA, perdite e integrità del registro locale.
+
+I nuovi timestamp locali usano l'offset ISO con i due punti, per esempio
+`+02:00`. La lettura accetta anche gli offset storici `+0200` e `Z` con Python
+3.9, senza riscrivere le righe o alterare la catena di hash.
+
+Nel [banco di prova](banco-folder-test.md), `mdls` è informativo: Spotlight può
+usare una cache o non indicizzare un volume montato. Il suo risultato non
+determina l'esito della fase né garantisce un accesso osservabile dal kernel.
 
 Verifica sintetica ripetibile, senza root o FDA:
 
 ```sh
 python3 tests/test_registro.py
 python3 tests/test_fanale.py
+/Library/Developer/CommandLineTools/usr/bin/python3 -I -S -B strumenti/prova-registro-python39.py
 ```
 
 Copre segreti rimossi dai record, identità PID riutilizzate, discendenza incerta,
 esiti ES senza errno inventati, buchi e schema incompatibile, filtro di rinomina
 e collector, append concorrenti/manomissioni, query/CSV, registri ostili e
 sorveglianza plaintext separata. La preparazione dell'installer viene controllata
-senza invocare il percorso privilegiato.
+senza invocare il percorso privilegiato. La prova di fumo Python 3.9 usa eventi
+locali veri, query/CSV del worker e il banco in una home temporanea; salute kernel
+e immagini disco sono simulate, senza CLI degli agenti o Desktop personale.

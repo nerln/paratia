@@ -9,22 +9,34 @@ e `prove` vuoti e gli orari a `null`.
 
 La destinazione prevista è una cartella scelta sulla SSD **AppsAndFiles**.
 Il nome del volume descrive la destinazione; il banco verifica il disco scelto
-al momento dell'avvio. La verifica temporanea separata è descritta nello
+prima del campo della chiave e di nuovo al momento dell'avvio. Sono ammesse
+le sottocartelle del volume esterno fisico; immagini disco e volumi interni
+vengono rifiutati. La verifica temporanea separata è descritta nello
 [stato di ottobre 2026](stato-2026-10.md).
 
 ## Avvio dalla GUI
 
-1. In **Impostazioni**, premi **Installa il registro…** e decidi nel dialogo
-   amministratore di macOS. Poi premi **Apri Accesso completo al disco**,
+1. Prepara la copia bootstrap protetta da root in
+   `/Library/Application Support/ParatiaBootstrap/Paratia.app`, come descritto
+   nella [guida GUI](gui-mac.md#impostazioni): vengono verificati questa copia,
+   tutti gli antenati e ogni file letto dal bootstrap, inclusi permessi e ACL.
+   Apri la copia bootstrap e, nelle sue **Impostazioni**, premi
+   **Installa il registro…** e decidi nel dialogo amministratore di macOS.
+   Chiudi il bootstrap e riapri l'app quotidiana in `/Applications/Paratia.app`.
+   Da questa app premi **Apri Accesso completo al disco**,
    aggiungi e abilita `/Applications/Paratia.app`. Dopo una nuova build ad hoc,
-   rimuovi e aggiungi di nuovo la voce e reinstalla il registro. Non abilitare
+   rimuovi e aggiungi di nuovo la voce, aggiorna il bootstrap e reinstalla il
+   registro. La copia del servizio resta in
+   `/Library/Application Support/Paratia/Paratia.app`. Non abilitare
    Python 3.9. Il registro deve risultare attivo e
    sano; anche la catena locale deve essere verificabile. I dettagli sono in
    [Registro degli accessi](registro-accessi.md).
 2. In **Banco di prova**, premi **Scegli destinazione…** e seleziona una
    cartella sulla SSD AppsAndFiles. Premi **Controlla le condizioni**: questa
-   anteprima elenca soltanto i metadati di `~/Desktop/folder-test`. Se macOS
-   richiede l'accesso al Desktop, decidi nel suo dialogo.
+   anteprima controlla il disco e lo stato del registro e legge soltanto i
+   metadati di `~/Desktop/folder-test`. Se macOS richiede l'accesso al Desktop,
+   decidi nel suo dialogo. La GUI ricontrolla queste condizioni prima del campo
+   della chiave.
 3. Usa una cartella vuota. Se contiene file personali o non riconosciuti,
    spostali tu prima della prova. Il banco rifiuta la loro migrazione. Crea
    soltanto `LEGGIMI-SINTETICO.txt`, `campione.bin`, `grande.bin` e
@@ -40,11 +52,12 @@ al momento dell'avvio. La verifica temporanea separata è descritta nello
    tramite stdin; non entra negli argomenti dei processi, nell'ambiente, nello
    storico, nel registro o negli export.
 
-Prima di creare i file, il banco controlla la salute del registro, registra
-una sorveglianza con un identificatore nuovo e attende che il demone la
-riconosca. Dopo la protezione attende anche il riconoscimento del
-compartimento. Un'identificazione rimasta da una prova precedente non vale
-come conferma della nuova sorveglianza.
+Prima di creare i file, il banco controlla la salute del registro e attende
+che il demone confermi la sorveglianza della cartella. Se esiste già una
+sorveglianza sullo stesso percorso, ne riutilizza l'identificatore, conserva il
+nome e la mantiene alla fine; altrimenti ne crea una per questa prova e rimuove
+soltanto quella.
+Dopo la protezione attende anche il riconoscimento del compartimento.
 
 ## Le quattro fasi
 
@@ -64,6 +77,10 @@ La shell esegue un helper che chiama `open` e `fstat`, senza leggere i byte.
 L'helper conserva l'errno effettivo dell'operazione fallita, quando presente.
 `mdls` interroga `kMDItemFSSize`: il suo exit code viene registrato, ma può
 rispondere usando metadati in cache e quindi non produrre un'apertura kernel.
+Spotlight può anche non indicizzare un volume riaperto da hdiutil e restituire
+un errore. È una sonda informativa: il suo risultato non determina l'esito
+della fase. Shell, Codex e Claude Code restano tutte obbligatorie, con misure
+reali e i riscontri kernel richiesti nelle fasi aperte.
 
 Codex avvia l'helper come figlio della propria CLI tramite
 `codex sandbox -C … -- …`. Claude Code espone il server `claude mcp serve`:

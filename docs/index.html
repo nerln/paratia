@@ -216,14 +216,19 @@ paratia finder</code></pre>
 
 <p>The native app for macOS 13+ brings protected folders, access history,
 labels, a four-phase test bank and settings into one window. Protect an existing
-folder on an external disk, choose its key in the app, and open or close it
-there. Migration verifies the copy before removing the source and keeps recovery
+folder on a physical external disk, choose its key in the app, and open or close it
+there. The app verifies a destination subfolder's actual volume before asking
+for the key; internal disks and disk images are refused. Migration verifies
+the copy before removing the source and keeps recovery
 actions available after an interruption.</p>
 
 <p>Use <strong>Sorveglia una cartella…</strong> to watch a folder you own,
 including an unencrypted one. Review or remove watches, filter events by folder,
 file, process, agent and time, and export CSV. A saved watch is shown separately
-from its acknowledgement by an active daemon.</p>
+from its acknowledgement by an active daemon. Repeated requests reuse the ID
+and label; inactive collection produces a warning in CLI queries and exports.
+Absolute file filters match the exact path or its descendants, so
+<code>/a/b</code> excludes <code>/a/bc</code>.</p>
 
 <pre><code>paratia registro sorveglia ~/Documenti/progetto
 paratia registro elenco --cartella ~/Documenti/progetto
@@ -233,16 +238,23 @@ paratia registro smetti ~/Documenti/progetto</code></pre>
 <p>The registry distinguishes local Paratia annotations from observed kernel
 events. An open event does not prove that bytes were read; failed accesses may
 have no kernel event. The bank displays four phases with times, counts, measured
-probe results and any kernel matches. The human Desktop bank has not run.</p>
+probe results and any kernel matches. Spotlight's <code>mdls</code> probe is
+informative; missing indexing does not fail a phase. Shell and both agents
+still require their measurements and open-phase kernel matches. The human
+Desktop bank has not run.</p>
 
 <p>Build the app with <code>python3 strumenti/build-app.py --render-fixtures</code>.
-After installing it, use <strong>Impostazioni → Installa il registro…</strong>
-and the macOS administrator dialog. The daemon is prepared to launch the native
+After installing it, follow the GUI guide's single manual administrator command
+to prepare <code>/Library/Application Support/ParatiaBootstrap/Paratia.app</code>.
+Open that separate copy and use <strong>Impostazioni → Installa il registro…</strong>
+and the macOS administrator dialog. The bootstrap verifies root ownership,
+write permissions, ACLs, all ancestors and sealed resources before authorization;
+it does not change <code>/Applications</code> permissions. The daemon launches the native
 binary in a signed, root-protected app copy, keeping Python and eslogger as
 children. Enable <strong>/Applications/Paratia.app</strong> in Full Disk Access;
 remove and re-add that entry after every new ad hoc build and reinstall the
-registry. Do not enable Python 3.9. The new launcher still awaits compilation
-and live TCC verification.</p>
+registry after refreshing the bootstrap copy. Do not enable Python 3.9.
+The Giro 2 changes still require a new build and live TCC verification.</p>
 
 <p>Read the <a href="https://github.com/nerln/paratia/blob/master/docs/gui-mac.md">GUI guide</a>,
 <a href="https://github.com/nerln/paratia/blob/master/docs/registro-accessi.md">registry limits</a>

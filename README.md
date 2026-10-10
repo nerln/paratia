@@ -110,7 +110,9 @@ keeps recovery actions visible. Timed closure retries a busy mount without force
 In **Registro**, use **Sorveglia una cartella…** to choose any supported folder
 you own, including an unencrypted one. Remove watches, filter events by folder,
 file, process, agent and time, and export CSV. Configured watches and daemon
-acknowledgements are shown separately. The CLI offers the same operations:
+acknowledgements are shown separately: saving a watch does not mean collection
+is active. Repeating a path keeps its ID and name; nonexistent folders and unknown
+removals are refused. The CLI offers the same operations:
 
 ```sh
 paratia registro sorveglia ~/Documenti/progetto
@@ -120,10 +122,18 @@ paratia registro esporta --cartella ~/Documenti/progetto
 paratia registro smetti ~/Documenti/progetto
 ```
 
+`elenco` and `esporta` warn on stderr when collection is stopped or unhealthy,
+including empty results. An absolute `--file /a/b` matches that path and its
+descendants, excluding `/a/bc`; paths normalize slashes and NFC/NFD Unicode.
+Relative text uses case-insensitive `casefold` matching. New log timestamps use
+colon-separated offsets; legacy offsets remain readable with Python 3.9.
+
 The registry keeps metadata from Paratia operations and observed kernel events,
 with distinct sources. An open event does not prove a byte read; missing events
 do not prove that no access occurred. **Banco di prova** displays four phases,
-counts, times, measured access results and any matching kernel evidence.
+counts, times, measured access results and any matching kernel evidence. Its
+`mdls` probe is informational: Spotlight caches and unindexed mounted images
+do not determine the phase outcome.
 
 Build locally with Apple Command Line Tools:
 
@@ -132,13 +142,51 @@ python3 strumenti/build-app.py --render-fixtures
 open -n build/Paratia.app --args --launch-check
 ```
 
-The app signs ad hoc and is not notarized. After installing it in `/Applications`,
-use **Impostazioni → Installa il registro…** and the macOS administrator dialog.
+The app signs ad hoc and is not notarized. Keep the normal app in `/Applications`.
+Close all copies of Paratia and run this yourself in Terminal to prepare a
+separate root-owned bootstrap copy:
+
+```sh
+sudo /bin/sh -c 'set -eu
+[ ! -L "/Library/Application Support/ParatiaBootstrap" ]
+[ -d "/Applications/Paratia.app" ]
+[ ! -L "/Applications/Paratia.app" ]
+/usr/bin/install -d -m 755 -o root -g wheel "/Library/Application Support/ParatiaBootstrap"
+/bin/chmod -N "/Library/Application Support/ParatiaBootstrap"
+paratia_bootstrap_stage=$(/usr/bin/mktemp -d "/Library/Application Support/ParatiaBootstrap/.prepara.XXXXXX")
+/usr/bin/ditto --noacl "/Applications/Paratia.app" "$paratia_bootstrap_stage/Paratia.app"
+/usr/bin/find "$paratia_bootstrap_stage/Paratia.app" ! -type d ! -type f -print > "$paratia_bootstrap_stage/percorsi-non-ordinari"
+[ ! -s "$paratia_bootstrap_stage/percorsi-non-ordinari" ]
+/usr/sbin/chown -R root:wheel "$paratia_bootstrap_stage/Paratia.app"
+/bin/chmod -R go-w "$paratia_bootstrap_stage/Paratia.app"
+/usr/bin/codesign --verify --deep --strict "$paratia_bootstrap_stage/Paratia.app"
+[ ! -L "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]
+if [ -e "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]; then
+    /bin/mv "/Library/Application Support/ParatiaBootstrap/Paratia.app" "$paratia_bootstrap_stage/precedente.app"
+fi
+/bin/mv "$paratia_bootstrap_stage/Paratia.app" "/Library/Application Support/ParatiaBootstrap/Paratia.app"
+/usr/bin/codesign --verify --deep --strict "/Library/Application Support/ParatiaBootstrap/Paratia.app"'
+```
+
+The command leaves `/Applications` permissions unchanged. It stages the copy
+in a root-only directory, refuses links and special files before ownership or
+permission changes, and verifies its signature before publication. Previous
+copies remain in the protected `.prepara` directory. Only after exit code 0,
+open `/Library/Application Support/ParatiaBootstrap/Paratia.app` **from Finder**
+for **Impostazioni → Installa il registro…** and the macOS administrator dialog.
+
+Before the dialog, the bootstrap checks its signature, every bundle member and
+all ancestors for root ownership and absence of group/other or ACL write access.
+It retains the same signature as the normal app; ownership changes preserve
+CDHash. TCC recognition across copies still needs live verification. Refresh
+the bootstrap copy after every new build before reinstalling the service.
+
 The daemon launches a native executable in a root-protected copy of the signed
-app, which keeps Python and eslogger as children. In Full Disk Access, enable
+app at `/Library/Application Support/Paratia/Paratia.app`, separate from the
+bootstrap copy; it keeps Python and eslogger as children. In Full Disk Access, enable
 **`/Applications/Paratia.app`**; remove and re-add it after every new ad hoc
 build, and reinstall the registry copy. Do not enable Python 3.9.
-The new native launcher still needs compilation and live TCC verification.
+Privileged installation and live TCC/kernel verification remain pending.
 
 See the [GUI guide](docs/gui-mac.md), [registry limits](docs/registro-accessi.md)
 and [October 2026 implementation and verification status](docs/stato-2026-10.md).
@@ -151,6 +199,11 @@ paratia put OPENAI_KEY    # value typed, not echoed, never on a command line
 paratia ls
 paratia lock
 ```
+
+`paratia status` also lists open protected folders and unresolved migrations.
+The gate directs you to `paratia cartella chiudi-tutte` for those folders and
+`paratia lock` for the main compartment; locking the latter leaves folder
+compartments open.
 
 Declaring a verb, so an agent can use a key it cannot read. Edit `verbi.json`
 inside the compartment while it is open:
@@ -293,13 +346,16 @@ python3 tests/test_gate.py
 python3 tests/test_fanale.py
 python3 tests/test_specchio.py
 python3 tests/test_zone.py
+/Library/Developer/CommandLineTools/usr/bin/python3 -I -S -B strumenti/prova-registro-python39.py
 ```
 
 Tests cover migration and recovery, worker IPC, watches, registry metadata and
 installer rollback fixtures. The temporary bank runs the worker and four real
 shell metadata probes with simulated registry health; it asserts that keys do
-not enter JSON, logs, process arguments or environment. A separate native macOS
-script uses hdiutil; its run is still pending. These tests do not certify live
+not enter JSON, logs, process arguments or environment. The Python 3.9 smoke
+uses actual worker queries and CSV exports in a temporary home, with simulated
+kernel health and disk images. A separate native macOS script uses hdiutil with
+temporary fixtures. These tests do not certify live
 TCC permissions or kernel coverage. Counts and commands are recorded in the
 [verification report](docs/stato-2026-10.md).
 

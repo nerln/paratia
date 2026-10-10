@@ -5,7 +5,10 @@ Sbloccare il disco che contiene lo sparsebundle non apre il compartimento.
 Da chiuso, il percorso originale è un punto di montaggio vuoto: i file stanno
 solo nell'immagine cifrata. Da aperto, sono leggibili dai processi dell'utente.
 
-La destinazione va scelta su un disco esterno fisico. Non sono ammessi percorsi
+La destinazione va scelta su un disco esterno fisico, anche in una sua
+sottocartella. Prima di chiedere la chiave, GUI e CLI verificano il volume
+effettivo del percorso; dischi interni e immagini disco, incluso un volume
+con protocollo `Disk Image`, vengono rifiutati. Non sono ammessi percorsi
 sincronizzati con il cloud, destinazioni annidate nella fonte, collegamenti
 simbolici, hard link, file speciali o volumi montati dentro la fonte.
 
@@ -41,11 +44,22 @@ o in un file. L'app la richiede con un campo sicuro. Non usa il portachiavi.
 Una passphrase distinta da quella del disco è una scelta dell'utente: Paratia
 non legge la chiave del disco per confrontarle.
 
+Una chiave sbagliata è distinta dagli altri errori disco: la GUI invita a
+reinserirla, il worker restituisce `wrong_key` e la CLI restituisce un errore
+JSON con `errore: "chiave_errata"`. Gli errori non riportano gli stream del
+comando di sistema né la chiave.
+
 Ogni apertura avvia un timer da 1 a 1440 minuti. Il timer identifica quella
 specifica apertura, quindi un timer vecchio non chiude una successiva
-riapertura. Se il volume è occupato, ritenta la chiusura senza forzarla: il tempo
-impostato non è una garanzia di chiusura al secondo in presenza di documenti
+riapertura. Una chiusura manuale riuscita invalida il token del timer, che
+controlla il registro ogni 0,25 secondi e termina senza segnali a PID.
+Se il volume è occupato, il timer resta attivo e ritenta la chiusura senza
+forzarla: il tempo impostato non è una garanzia di chiusura al secondo in presenza di documenti
 ancora aperti.
+
+Aprire una cartella già aperta lo segnala prima della richiesta della chiave e
+non avvia un secondo timer. Chiudere una cartella già chiusa restituisce il suo
+stato senza scrivere un evento duplicato.
 
 L'hook esistente continua a rifiutare ogni chiamata mentre un compartimento è
 montato. Lo stesso file gestisce `SessionStart` per chiudere i compartimenti:
@@ -53,6 +67,11 @@ deve essere collegato a questo evento nell'harness. Un hook non installato
 non protegge quella sessione. Il registro delle cartelle e l'hook sono
 modificabili da processi con lo stesso UID; la cifratura da chiuso resta il
 confine che non dipende dalla cooperazione dell'agente.
+
+Per installare il registro, la [guida GUI](gui-mac.md#impostazioni) descrive la
+copia bootstrap protetta in `/Library/Application Support/ParatiaBootstrap/Paratia.app`
+e la copia separata del servizio. L'app quotidiana e la voce Accesso completo
+al disco restano `/Applications/Paratia.app`.
 
 ## Prova nativa
 

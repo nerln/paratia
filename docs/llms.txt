@@ -20,15 +20,31 @@ folder, including an unencrypted one. `registro sorveglianza` lists requests;
 and `registro esporta` accept --cartella (ID or exact configured path), --file,
 --processo, --agente true|false|unknown or an agent name, --da and --a. Configuration is not proof
 of collection: healthy daemon state and watched_ids acknowledgement are separate.
+The directory must exist; requesting the same normalized path reuses its ID
+and label. Removing an unknown ID fails. Query/CSV warn on stderr when collection
+is inactive, including with empty results. Absolute --file filters match exactly
+or below a slash boundary with NFC/NFD normalization; relative filters are
+case-insensitive free searches. Local timestamps and legacy +0200 offsets work
+with the app's Python 3.9 worker.
 
 The LaunchDaemon is prepared to run the native Paratia binary from a signed,
 root-protected app copy under /Library/Application Support/Paratia. That parent
 remains alive with Python and eslogger as children. The human installs it from
-Impostazioni > Installa il registro using the macOS administrator dialog.
+Impostazioni > Installa il registro using the macOS administrator dialog from
+the separate bootstrap copy at
+/Library/Application Support/ParatiaBootstrap/Paratia.app. The manual command
+in gui-mac.md prepares that copy from /Applications/Paratia.app; it does not
+change /Applications permissions. Existing ancestors /, /Library and
+/Library/Application Support were verified root-owned with mode 0755.
+The app checks all ancestors, all bundle files, write ACLs and the signature
+before loading the installation plan or showing an administrator dialog.
+The normal app and a build copy cannot perform this bootstrap.
 Full Disk Access must name /Applications/Paratia.app, never Python 3.9.
 After every new ad hoc build, the human removes/re-adds that app entry and
-reinstalls the registry. Do not alter TCC or supply administrator credentials.
-The new native launcher still awaits compilation and live TCC verification.
+refreshes the bootstrap copy, then reinstalls the registry. Ownership changes
+preserve CDHash; signature identity and TCC propagation still need live checks.
+Do not alter TCC or supply administrator credentials. The Giro 2 native changes
+still await the supervisor's build and live verification.
 
 Registry records contain metadata only. Paratia annotations and eslogger events
 retain separate sources. An open event does not prove bytes were read; failed
@@ -40,6 +56,9 @@ registry, acknowledged watches, a chosen external destination and a GUI key.
 CLI vendor probes require separate explicit consent and invoke no models.
 Temporary automated bank tests simulate registry health, disable vendor CLI
 probes and keep kernel matches empty; never present those results as live data.
+mdls is advisory because Spotlight may cache metadata or leave images unindexed;
+shell and both agent probes retain their required checks and open-phase kernel
+matches. The bank preserves an existing user watch.
 See gui-mac.md, registro-accessi.md, banco-folder-test.md and stato-2026-10.md.
 
 
@@ -61,7 +80,10 @@ user, including you. EVERY tool call is denied until it closes — an unrelated
 read of /etc/hosts is denied too, because the check is on mount state, not on
 paths.
 
-Do: run `paratia lock`. It is the one command allowed through.
+Do: run `paratia cartella chiudi-tutte` for protected folders and `paratia lock`
+for the core compartment. Both exact commands are allowed through, as is
+`paratia status --json`. Status lists protected folders that remain open even
+when the core compartment is closed; it reports uncertainty for unreadable state.
 
 Do not: look for another way to proceed. There isn't one. Hunting for one is the
 behaviour this exists to stop, and the hook is deterministic — it is not a
@@ -224,8 +246,9 @@ agent session, and the `--forza` override exists for screenshots, not for you.
 
 Yours, inside a session:
 
-    paratia status              mounted or not, which verbs exist when open
-    paratia lock                close it
+    paratia status              core state and all open protected folders
+    paratia lock                close the core compartment
+    paratia cartella chiudi-tutte close protected folders
     paratia broker <verb>       use a secret without seeing it
     paratia attest              check the sealed policy files still match
     paratia esposizione         what a second account would and would not protect

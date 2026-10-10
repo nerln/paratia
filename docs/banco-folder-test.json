@@ -17,6 +17,7 @@
   "prove": [],
   "autorizzazioni_live_verificate": false,
   "prerequisiti": [
+    "Copia di bootstrap root in /Library/Application Support/ParatiaBootstrap/Paratia.app preparata manualmente, con tutti gli antenati protetti",
     "Installazione del registro autorizzata nel dialogo amministratore macOS",
     "Accesso completo al disco per /Applications/Paratia.app, da riconcedere dopo una nuova build ad hoc, e registro attivo e sano",
     "Accesso al Desktop se richiesto da macOS",
@@ -34,10 +35,10 @@
     "L'inventario e i probe usano metadati; il banco rifiuta la migrazione di file personali non riconosciuti.",
     "La migrazione copia e verifica soltanto i file sintetici accettati per la prova.",
     "I figli CLI e la loro classificazione kernel restano da verificare sulla macchina.",
-    "mdls può rispondere da cache: la copertura kernel non è garantita.",
+    "mdls è informativo: cache o mancata indicizzazione del volume non determinano l'esito della fase né garantiscono copertura kernel.",
     "Un'apertura per lettura non prova che i byte siano stati letti.",
     "Un tentativo fallito non ha sempre una notifica kernel; errno viene conservato soltanto se misurato.",
-    "Riscontri assenti o probe non misurati mantengono la prova incompleta.",
+    "Riscontri obbligatori assenti o probe obbligatori non misurati mantengono la prova incompleta.",
     "La chiave e i contenuti dei file non vengono inclusi nello storico, nel registro o negli export."
   ]
 }
