@@ -2,8 +2,89 @@ import Foundation
 import Darwin
 
 enum NativeInstall {
+    static let bootstrapBundlePath = "/Library/Application Support/ParatiaBootstrap/Paratia.app"
+    static let preparationCommand = """
+    sudo /bin/sh -c 'set -eu
+    [ ! -L "/Library/Application Support/ParatiaBootstrap" ]
+    [ -d "/Applications/Paratia.app" ]
+    [ ! -L "/Applications/Paratia.app" ]
+    /usr/bin/install -d -m 755 -o root -g wheel "/Library/Application Support/ParatiaBootstrap"
+    /bin/chmod -N "/Library/Application Support/ParatiaBootstrap"
+    paratia_bootstrap_stage=$(/usr/bin/mktemp -d "/Library/Application Support/ParatiaBootstrap/.prepara.XXXXXX")
+    /usr/bin/ditto --noacl "/Applications/Paratia.app" "$paratia_bootstrap_stage/Paratia.app"
+    /usr/bin/find "$paratia_bootstrap_stage/Paratia.app" ! -type d ! -type f -print > "$paratia_bootstrap_stage/percorsi-non-ordinari"
+    [ ! -s "$paratia_bootstrap_stage/percorsi-non-ordinari" ]
+    /usr/sbin/chown -R root:wheel "$paratia_bootstrap_stage/Paratia.app"
+    /bin/chmod -R go-w "$paratia_bootstrap_stage/Paratia.app"
+    /usr/bin/codesign --verify --deep --strict "$paratia_bootstrap_stage/Paratia.app"
+    [ ! -L "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]
+    if [ -e "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]; then
+        /bin/mv "/Library/Application Support/ParatiaBootstrap/Paratia.app" "$paratia_bootstrap_stage/precedente.app"
+    fi
+    /bin/mv "$paratia_bootstrap_stage/Paratia.app" "/Library/Application Support/ParatiaBootstrap/Paratia.app"
+    /usr/bin/codesign --verify --deep --strict "/Library/Application Support/ParatiaBootstrap/Paratia.app"'
+    """
+    // The bootstrap imports catena before installing these fixed daemon assets.
+    // The complete bundle is checked too: the installer reads it while copying.
+    private static let bootstrapFiles = [
+        "Contents/Info.plist", "Contents/MacOS/Paratia", "Contents/_CodeSignature/CodeResources",
+        "Contents/Resources/python/registro_installa.py", "Contents/Resources/python/catena.py",
+        "Contents/Resources/python/registro.py", "Contents/Resources/python/registro_daemon.py"
+    ]
+
+    private static func protectionError(_ path: String) -> AppError {
+        AppError(message: "Installazione amministratore bloccata: apri la copia bootstrap protetta, distinta dall'app normale e dal servizio (\(path)). Chiudi Paratia ed esegui tu questo unico comando nel Terminale:\n\n\(preparationCommand)\n\nSe il comando termina senza errori, apri \(bootstrapBundlePath) dal Finder e usa Installa il registro. Il comando non modifica /Applications: l'app normale e la voce Accesso completo al disco restano /Applications/Paratia.app. Eventuali copie precedenti sono conservate nella cartella .prepara sotto ParatiaBootstrap. Se la nuova copia o un suo antenato non è protetto da root, oppure un ACL concede scrittura, il dialogo resta bloccato: non vengono applicate eccezioni ai controlli.")
+    }
+
+    private static func requireProtected(_ path: URL) throws {
+        guard path.path.withCString({ ParatiaRootProtectedAncestors($0) }) == 1 else {
+            throw protectionError(path.path)
+        }
+    }
+
+    static func validateBootstrap(bundle: URL) throws {
+        guard bundle.path == bootstrapBundlePath else { throw protectionError(bundle.path) }
+        try requireProtected(bundle)
+        for relative in bootstrapFiles {
+            let file = bundle.appendingPathComponent(relative)
+            try requireProtected(file)
+            let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+            guard attributes[.type] as? FileAttributeType == .typeRegular else { throw protectionError(file.path) }
+        }
+        var readFailure: URL?
+        guard let entries = FileManager.default.enumerator(at: bundle, includingPropertiesForKeys: [], options: [], errorHandler: { path, _ in
+            readFailure = path
+            return false
+        }) else { throw protectionError(bundle.path) }
+        var count = 0
+        while let file = entries.nextObject() as? URL {
+            count += 1
+            guard count <= 10_000, file.path.hasPrefix(bundle.path + "/") else { throw protectionError(file.path) }
+            try requireProtected(file)
+        }
+        if let path = readFailure { throw protectionError(path.path) }
+        // Verify the sealed resources before any bundle Python executes as root.
+        // Verification uses no signing identity and never accesses a keychain.
+        let verifier = Process()
+        verifier.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        verifier.arguments = ["--verify", "--deep", "--strict", bundle.path]
+        verifier.environment = ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin"]
+        verifier.standardInput = FileHandle.nullDevice
+        verifier.standardOutput = FileHandle.nullDevice
+        verifier.standardError = FileHandle.nullDevice
+        do { try verifier.run(); verifier.waitUntilExit() } catch {
+            throw AppError(message: "La firma di Paratia non può essere verificata. Chiedi al supervisore di ricostruire e reinstallare l'app prima di autorizzare il registro.")
+        }
+        guard verifier.terminationReason == .exit, verifier.terminationStatus == 0 else {
+            throw AppError(message: "La firma o le risorse di Paratia non sono integre. Chiedi al supervisore di ricostruire e reinstallare l'app prima di autorizzare il registro.")
+        }
+    }
+
     static func validate(plan: Record) throws -> [String] {
-        guard let resource = Bundle.main.resourceURL?.appendingPathComponent("python"),
+        let bundle = URL(fileURLWithPath: Bundle.main.bundlePath, isDirectory: true)
+        try validateBootstrap(bundle: bundle)
+        let resource = bundle.appendingPathComponent("Contents/Resources/python", isDirectory: true)
+        guard
               let argv = plan["argv"] as? [String], argv.count == 9,
               argv[1] == "-I", argv[2] == "-S",
               argv[3] == resource.appendingPathComponent("registro_installa.py").path,
@@ -31,6 +112,8 @@ enum NativeInstall {
     static func execute(plan: Record) async throws -> Record {
         let argv = try validate(plan: plan)
         return try await Task.detached(priority: .userInitiated) {
+            // Recheck in the execution task immediately before the admin dialog.
+            try validateBootstrap(bundle: URL(fileURLWithPath: Bundle.main.bundlePath, isDirectory: true))
             var pointers = argv.dropFirst().map { strdup($0) }
             defer { pointers.forEach { free($0) } }
             pointers.append(nil)

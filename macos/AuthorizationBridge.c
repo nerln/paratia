@@ -6,10 +6,12 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 int ParatiaRootProtected(const char *path) {
     struct stat info;
-    if (lstat(path, &info) || info.st_uid != 0 || (info.st_mode & 0022) || S_ISLNK(info.st_mode)) return 0;
+    if (!path || lstat(path, &info) || info.st_uid != 0 || (info.st_mode & 0022) ||
+        !(S_ISREG(info.st_mode) || S_ISDIR(info.st_mode))) return 0;
     acl_t acl = acl_get_file(path, ACL_TYPE_EXTENDED);
     if (!acl) return errno == ENOENT || errno == ENOTSUP;
     acl_entry_t entry;
@@ -31,6 +33,25 @@ int ParatiaRootProtected(const char *path) {
     return 1;
 }
 
+int ParatiaRootProtectedAncestors(const char *path) {
+    char current[PATH_MAX];
+    if (!path || path[0] != '/' || strlen(path) >= sizeof(current)) return 0;
+    if (strstr(path, "//") || strstr(path, "/./") || strstr(path, "/../")) return 0;
+    size_t size = strlen(path);
+    if (size > 1 && path[size - 1] == '/') return 0;
+    const char *last = strrchr(path, '/');
+    if (!last || !strcmp(last, "/.") || !strcmp(last, "/..")) return 0;
+    strcpy(current, path);
+    while (1) {
+        if (ParatiaRootProtected(current) != 1) return 0;
+        if (!strcmp(current, "/")) return 1;
+        char *slash = strrchr(current, '/');
+        if (!slash) return 0;
+        if (slash == current) current[1] = '\0';
+        else *slash = '\0';
+    }
+}
+
 int32_t ParatiaAuthorizedInstall(const char *executable, char *const arguments[], FILE **output) {
     AuthorizationRef authorization = NULL;
     OSStatus result = AuthorizationCreate(NULL, kAuthorizationEmptyEnvironment, kAuthorizationFlagDefaults, &authorization);
@@ -50,4 +71,3 @@ int32_t ParatiaAuthorizedInstall(const char *executable, char *const arguments[]
     AuthorizationFree(authorization, kAuthorizationFlagDestroyRights);
     return result;
 }
-
