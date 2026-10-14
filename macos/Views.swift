@@ -78,7 +78,7 @@ struct FoldersView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                PageHeading(title: tr("Le tue cartelle protette"), subtitle: tr("Da chiuse, i file restano nell'immagine cifrata anche quando il disco esterno è sbloccato."))
+                PageHeading(title: tr("Le tue cartelle protette"), subtitle: tr("Da chiuse, i file restano nell'immagine cifrata anche quando il disco è sbloccato: nessun programma, nessun agente li legge."))
                 HStack {
                     Button { model.protectFolder() } label: { Label(tr("Proteggi una cartella"), systemImage: "plus") }.buttonStyle(.borderedProminent)
                     Button { model.closeAll() } label: { Label(tr("Chiudi tutte"), systemImage: "lock.fill") }.disabled(!model.folders.contains(where: { $0.state == "aperta" || $0.isIncomplete }))
@@ -89,7 +89,7 @@ struct FoldersView: View {
                     VStack(spacing: 12) {
                         Image(systemName: "lock.rectangle.stack").font(.system(size: 44)).foregroundStyle(.secondary)
                         Text(tr("Nessuna cartella protetta")).font(.title2.weight(.medium))
-                        Text(tr("Scegli una cartella e una destinazione sul disco esterno. La chiave la scegli tu.")).foregroundStyle(.secondary)
+                        Text(tr("Scegli una cartella: resta dov'è, e il suo contenuto viene cifrato sullo stesso disco. La chiave la scegli tu.")).foregroundStyle(.secondary)
                     }.frame(maxWidth: .infinity).padding(50)
                 }
                 ForEach(model.folders) { folder in
@@ -140,6 +140,7 @@ struct FolderCard: View {
                         Button(tr("Chiudi")) { model.close(folder) }.buttonStyle(.borderedProminent)
                         Button(tr("Forza chiusura…"), role: .destructive) { model.forceClose(folder) }
                     } else {
+                        Button(tr("Togli la protezione…")) { model.removeProtection(folder) }
                         Button(tr("Apri…")) { model.askKey(folder) }.buttonStyle(.borderedProminent)
                     }
                 }.font(.callout).disabled(model.busy != nil || model.fixtures)
@@ -252,9 +253,9 @@ struct RegistryView: View {
             }
             if model.registry.flag("needs_update") {
                 HStack {
-                    Label(model.registry.text("update_message", fallback: tr("Aggiorna il registro e verifica la build installata.")), systemImage: "arrow.triangle.2.circlepath").font(.callout)
+                    Label(model.registry.text("update_message", fallback: tr("Aggiorna il registro e verifica la build installata.")), systemImage: "arrow.triangle.2.circlepath").font(.callout).foregroundStyle(.secondary)
                     Spacer()
-                    Button(tr("Passi per aggiornare…")) { model.section = .settings }
+                    Button(tr("Come aggiornarlo…")) { model.section = .settings }
                 }
             }
             RegistryHealthDetails(model: model, record: model.registry)
@@ -294,6 +295,10 @@ struct RegistryHealthDetails: View {
                 Label(reason.text("message"), systemImage: "exclamationmark.circle")
                     .font(.caption).foregroundStyle(.orange)
             }
+            ForEach(Array(model.notices(record).enumerated()), id: \.offset) { _, notice in
+                Label(notice.text("message"), systemImage: "info.circle")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -302,10 +307,10 @@ struct RegistryUpdateSteps: View {
     @ObservedObject var model: AppModel
     var body: some View {
         if model.registry.flag("needs_update") {
-            GroupBox(tr("Aggiorna il registro")) {
+            GroupBox(tr("Aggiornamento facoltativo del registro")) {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(model.registry.text("update_message", fallback: tr("Aggiorna il registro e verifica la build installata."))).font(.callout)
-                    Text(tr("Segui questi passi nell'ordine indicato.")).font(.callout)
+                    Text(tr("Non è urgente: il registro funziona anche così. Quando vuoi, segui questi passi nell'ordine indicato.")).font(.callout)
                     ForEach(Array(model.registryUpdateSteps.enumerated()), id: \.offset) { index, step in
                         Text("\(index + 1). \(step)").font(.callout).textSelection(.enabled)
                     }
@@ -421,16 +426,12 @@ struct BankView: View {
                 PageHeading(title: tr("Prima, chiusa, aperta, richiusa"), subtitle: tr("Il banco usa la cartella di prova sul Desktop e conserva gli esiti reali di ogni fase."))
                 Banner(text: tr("A cosa serve: è una prova facoltativa, per vedere con i tuoi occhi che la protezione funziona. Paratia protegge una cartella di prova e controlla quattro momenti: prima della protezione i file si leggono; con la cartella chiusa nessun programma li legge; riaperta tornano leggibili; richiusa spariscono di nuovo. Per ogni momento mostra anche cosa ha visto il registro. Per usare Paratia non serve."), icon: "questionmark.circle", color: .accentColor)
                 Banner(text: tr("I tuoi file vengono esaminati solo attraverso metadati. I file sintetici vengono creati soltanto se la cartella di prova è vuota."), icon: "doc.text", color: .blue)
-                HStack {
-                    Text(model.bankDestination.isEmpty ? tr("Destinazione sul disco esterno da scegliere") : model.bankDestination).font(.callout).textSelection(.enabled)
-                    Spacer()
-                    Button(tr("Scegli destinazione…")) { if let p = model.chooseDirectory(title: tr("Scegli la destinazione del banco sul disco esterno")) { model.bankDestination = p } }
-                }
+                Banner(text: tr("Non serve nessuna chiave: la prova ne crea una usa e getta che resta in memoria, e alla fine rimette folder-test com'era. Ci vuole circa un minuto."), icon: "key", color: .green)
                 Toggle(tr("Autorizzo le CLI reali, incluse eventuali richieste del portachiavi"), isOn: $model.realAgents)
                 Text(tr("Codex e Claude Code avviano processi figli per la prova, senza chiamare un modello. Le CLI possono chiedere autenticazione o accesso al portachiavi: decidi nei dialoghi di macOS. Un rifiuto degli hook resta un esito reale.")).font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Button(tr("Controlla le condizioni")) { model.prepareBank() }
-                    Button(tr("Esegui la sequenza…")) { model.runBank() }.buttonStyle(.borderedProminent)
+                    Button(tr("Esegui la prova")) { model.runBank() }.buttonStyle(.borderedProminent)
                     Spacer()
                     Button(tr("Esporta JSON…")) { model.export("banco.export_json", title: tr("Esporta lo storico del banco"), extension: "json") }
                     Button(tr("Esporta CSV…")) { model.export("banco.export_csv", title: tr("Esporta lo storico del banco"), extension: "csv") }
@@ -497,7 +498,7 @@ struct BankView: View {
         return conteggioFile(record.number("file"), byteCount(record.number("byte")))
     }
     private func bankState(_ state: String) -> String {
-        ["non-eseguito": tr("Prova da eseguire"), "vuota": tr("Cartella vuota"), "contiene-file": tr("La cartella contiene dati"),
+        ["non-eseguito": tr("Prova da eseguire"), "vuota": tr("Cartella vuota"), "contiene-file": tr("La cartella contiene dati"), "sintetici": tr("File sintetici della prova"),
          "permesso-desktop": tr("Accesso al Desktop da autorizzare"), "aperta": tr("Cartella aperta"), "chiusa": tr("Cartella chiusa"),
          "completo": tr("Sequenza verificata"), "incompleto": tr("Sequenza con riscontri mancanti"), "in-corso": tr("Prova in corso"),
          "fallito": tr("Prova non completata"), "migrazione-incompleta": tr("Migrazione da recuperare"),
@@ -572,6 +573,7 @@ struct SettingsView: View {
                 GroupBox(tr("Registro kernel")) {
                     VStack(alignment: .leading, spacing: 12) {
                         Label(model.registry.flag("running") && model.registry.flag("healthy") ? tr("Registro attivo") : tr("Autorizzazione o verifica necessaria"), systemImage: model.registry.flag("healthy") ? "checkmark.circle" : "exclamationmark.circle")
+                            .foregroundStyle(model.registry.flag("healthy") ? Color.green : .orange)
                         Text(model.registry.text("message", fallback: tr("Installa il servizio del registro e autorizza /Applications/Paratia.app.")))
                         RegistryHealthDetails(model: model, record: model.registry)
                         DisclosureGroup(tr("Prepara la copia per installare il registro")) {

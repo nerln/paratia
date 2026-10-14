@@ -66,7 +66,7 @@ def test_wrong_key_has_distinct_safe_worker_category(W, monkeypatch):
     assert KEY.decode() not in json.dumps(result) and "unsafe" not in json.dumps(result)
 
 
-def test_invalid_destination_explains_physical_disk_requirement_without_key(W, monkeypatch):
+def test_unknown_refusal_explains_what_a_valid_folder_is_without_key(W, monkeypatch):
     class Rifiuto(Exception):
         pass
 
@@ -74,8 +74,8 @@ def test_invalid_destination_explains_physical_disk_requirement_without_key(W, m
         raise Rifiuto("unsafe diagnostic: " + KEY.decode())
 
     monkeypatch.setattr(W, "_load", lambda name: SimpleNamespace(prepara_protezione=fail))
-    result = request(W, "cartelle.prepara_protezione", {"origine": "/fixture/source", "dove": "/fixture/disk-image"})
-    assert result["code"] == "refused" and "immagini disco non sono accettati" in result["message"]
+    result = request(W, "cartelle.prepara_protezione", {"origine": "/fixture/source"})
+    assert result["code"] == "refused" and "non sincronizzata con il cloud" in result["message"]
     assert KEY.decode() not in json.dumps(result)
 
 
@@ -87,14 +87,17 @@ def swift_method(name):
 
 
 def test_gui_checks_destination_and_open_state_before_creating_key_requests():
-    protect = swift_method("protectFolder")
+    protect = swift_method("prepareProtection")
     assert protect.index('worker.request("cartelle.prepara_protezione"') < protect.index("KeyRequest(")
+    assert "chooseDirectory(" in swift_method("protectFolder").split("prepareProtection(", 1)[0]
     opening = swift_method("askKey").split('perform(tr("Controllo dello stato della cartella…"))', 1)[1]
     assert opening.index('worker.request("cartelle.prepara_apertura"') < opening.index('ready.flag("gia_aperta")')
     assert opening.index('ready.flag("gia_aperta")') < opening.index("return") < opening.index("KeyRequest(")
     assert opening.index('guard ready.flag("pronto")') < opening.index("KeyRequest(")
     bank = swift_method("runBank")
-    assert bank.index('worker.request("banco.anteprima"') < bank.index("KeyRequest(")
+    # The bench asks no key: it checks the conditions, then runs with a one-time key.
+    assert "KeyRequest(" not in bank
+    assert bank.index('worker.request("banco.anteprima"') < bank.index('worker.request("banco.run"')
 
 
 def test_gui_checks_root_protected_bundle_before_loading_installer_plan():
@@ -246,7 +249,7 @@ def test_gui_shows_ordered_update_steps_only_for_a_known_build_mismatch():
     assert 'Versione del servizio: non ancora verificata.' in settings
     registry = view.split('struct RegistryView:', 1)[1].split('struct RegistryHealthDetails:', 1)[0]
     assert 'Label(model.registry.text("update_message"' in registry
-    assert 'Button(tr("Passi per aggiornare…")) { model.section = .settings }' in registry
+    assert 'Button(tr("Come aggiornarlo…")) { model.section = .settings }' in registry
 
 
 def test_gui_refresh_invalidates_old_query_health_without_discarding_history_or_requerying():

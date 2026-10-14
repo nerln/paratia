@@ -55,9 +55,10 @@ RESOURCE_ROOT = Path(__file__).resolve().parent
 # Required fields, optional fields. No user input selects a module or callable.
 SCHEMAS = {
     "cartelle.elenco": (set(), set()),
-    "cartelle.prepara_protezione": ({"origine", "dove"}, {"minutes"}),
+    "cartelle.prepara_protezione": ({"origine"}, {"dove", "minutes"}),
     "cartelle.prepara_apertura": ({"id"}, {"minutes"}),
-    "cartelle.proteggi": ({"origine", "dove"}, {"minutes"}),
+    "cartelle.proteggi": ({"origine"}, {"dove", "minutes"}),
+    "cartelle.togli": ({"id"}, set()),
     "cartelle.apri": ({"id"}, {"minutes"}),
     "cartelle.chiudi": ({"id"}, {"force"}),
     "cartelle.chiudi_tutte": (set(), set()),
@@ -78,7 +79,7 @@ SCHEMAS = {
     "etichette.piano": (set(), set()),
     "banco.anteprima": (set(), {"path", "dove"}),
     "banco.storico": (set(), set()),
-    "banco.run": ({"dove", "agenti_reali"}, {"minutes"}),
+    "banco.run": ({"agenti_reali"}, {"dove", "minutes"}),
     "banco.export_json": ({"path"}, set()),
     "banco.export_csv": ({"path"}, set()),
     "hooks.stato": (set(), set()),
@@ -86,7 +87,9 @@ SCHEMAS = {
     "hooks.applica": (set(), set()),
     "hooks.ripristina": ({"path"}, set()),
 }
-KEY_ACTIONS = {"cartelle.proteggi", "cartelle.apri", "cartelle.recupera", "banco.run"}
+KEY_ACTIONS = {"cartelle.proteggi", "cartelle.apri", "cartelle.recupera", "cartelle.togli"}
+# Without a key the bench makes its own one-time key, so nobody has to type one.
+OPTIONAL_KEY_ACTIONS = {"banco.run"}
 FILTERS = {"folder", "file", "process", "agent", "since", "until"}
 REGISTRY_ERRORS = {
     "folder_not_configured": _t("La cartella non è configurata nel registro. Scegli una cartella dall'elenco o aggiungi una sorveglianza."),
@@ -189,7 +192,7 @@ def _validate(action, params, key):
     required, optional = SCHEMAS[action]
     if not isinstance(params, dict) or not required <= params.keys() or not params.keys() <= required | optional:
         raise _invalid_params()
-    if action in KEY_ACTIONS:
+    if action in KEY_ACTIONS or (action in OPTIONAL_KEY_ACTIONS and key):
         if not key:
             raise RequestError("missing_key", _t("Inserisci la chiave nel campo sicuro dell'app."))
         if not isinstance(key, bytes) or not 12 <= len(key) <= MAX_KEY or any(c in key for c in (b"\0", b"\n", b"\r")):
@@ -346,15 +349,17 @@ def dispatch(action, params, key=b""):
     if group == "cartelle":
         module = _load("cartelle")
         if verb == "prepara_protezione":
-            return module.prepara_protezione(params["origine"], params["dove"], minutes=params.get("minutes", 15))
+            return module.prepara_protezione(params["origine"], params.get("dove"), minutes=params.get("minutes", 15))
         if verb == "prepara_apertura":
             return module.prepara_apertura(params["id"], minutes=params.get("minutes", 15))
         if verb == "proteggi":
-            return module.proteggi(params["origine"], params["dove"], key, minutes=params.get("minutes", 15))
+            return module.proteggi(params["origine"], params.get("dove"), key, minutes=params.get("minutes", 15))
         if verb == "apri":
             return module.apri(params["id"], key, minutes=params.get("minutes", 15))
         if verb == "recupera":
             return module.recupera(params["id"], key)
+        if verb == "togli":
+            return module.togli_protezione(params["id"], key)
         if verb == "chiudi":
             return module.chiudi(params["id"], **({"force": params["force"]} if "force" in params else {}))
         if verb == "annulla":
@@ -390,7 +395,7 @@ def dispatch(action, params, key=b""):
     if group == "banco":
         module = _load("banco", optional=True)
         if verb == "run":
-            return _function(module, "esegui")(params["dove"], key, minutes=params.get("minutes", 15), agenti_reali=params["agenti_reali"])
+            return _function(module, "esegui")(params.get("dove"), key or None, minutes=params.get("minutes", 15), agenti_reali=params["agenti_reali"])
         if verb == "anteprima":
             return _function(module, "anteprima")(**params)
         if verb == "export_csv":
@@ -452,7 +457,7 @@ def _failure(exc, action):
     elif type(exc).__name__ == "VolumeOccupato":
         code, message = "volume_busy", _t("La cartella è in uso da un'app o da un terminale aperto dentro: chiudili e riprova. Nell'app puoi scegliere Forza chiusura… e confermare; le modifiche non salvate possono andare perse.")
     elif type(exc).__name__ == "DiscoNonDisponibile":
-        code, message = "disk_unavailable", _t("Il disco esterno non è disponibile. Collegalo e riprova prima di inserire la chiave.")
+        code, message = "disk_unavailable", _t("Il disco con l'immagine cifrata non è disponibile. Collegalo e riprova prima di inserire la chiave.")
     elif isinstance(exc, PermissionError):
         code, message = "permission_required", _t("macOS ha negato l'accesso. Controlla i permessi della cartella e le autorizzazioni in Privacy e sicurezza, poi riprova.")
     elif isinstance(exc, FileNotFoundError):
@@ -464,15 +469,15 @@ def _failure(exc, action):
     elif type(exc).__name__ == "Rifiuto":
         code = "refused"
         if action == "cartelle.prepara_protezione":
-            message = _t("La cartella o la destinazione non è pronta. Scegli una fonte valida e una cartella su un disco esterno fisico: i dischi interni e le immagini disco non sono accettati.")
+            message = _t("La cartella non è pronta per la protezione. Scegli una cartella esistente, non sincronizzata con il cloud e non già protetta.")
         elif action == "cartelle.prepara_apertura":
             message = _t("La cartella non è pronta per l'apertura. Aggiorna lo stato; se la migrazione è incompleta usa Recupera o Annulla migrazione.")
         elif action.startswith("cartelle."):
             message = _t("L'operazione è stata rifiutata per proteggere i dati. Controlla la chiave, lo stato della cartella e il disco scelto; chiudi i file in uso e riprova.")
         elif action == "banco.anteprima":
-            message = _t("La destinazione o il banco non è pronto. Scegli una cartella su un disco esterno fisico: i dischi interni e le immagini disco non sono accettati.")
+            message = _t("Il banco non è pronto. Controlla che folder-test sia vuota o contenga solo i file sintetici della prova.")
         elif action.startswith("banco."):
-            message = _t("Il banco non può procedere. Verifica il registro, Accesso completo al disco e il disco esterno prima di riprovare.")
+            message = _t("Il banco non può procedere. Verifica che il registro sia attivo nelle Impostazioni, poi riprova.")
         elif action.startswith("hooks."):
             message = _t("Gli hook non possono essere configurati. Verifica il piano, le impostazioni degli agenti e il runtime Apple dei Command Line Tools: Python 3.9 o successivo, protetto da root con la sua libreria standard.")
         else:

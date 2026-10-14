@@ -38,7 +38,6 @@ final class AppModel: ObservableObject {
     @Published var until = Date()
     @Published var showHidden = false
     @Published var minutes = 15
-    @Published var bankDestination = ""
     @Published var realAgents = false
     @Published var language: String = UserDefaults.standard.string(forKey: Localizzazione.chiaveImpostazione) ?? "sistema"
     let fixtures: Bool
@@ -106,6 +105,12 @@ final class AppModel: ObservableObject {
 
     func healthReasons(_ record: Record) -> [Record] {
         (record["health_reasons"] as? [Record] ?? []).filter {
+            !($0["message"] as? String ?? "").isEmpty
+        }
+    }
+
+    func notices(_ record: Record) -> [Record] {
+        (record["notices"] as? [Record] ?? []).filter {
             !($0["message"] as? String ?? "").isEmpty
         }
     }
@@ -178,15 +183,52 @@ final class AppModel: ObservableObject {
     func protectFolder() {
         guard !fixtures, busy == nil else { return }
         guard let source = chooseDirectory(title: tr("Scegli la cartella da proteggere"),
-                                           message: tr("Passo 1 di 2: la cartella da cifrare. Dopo la verifica il suo contenuto passa nell'immagine cifrata.")),
-              let destination = chooseDirectory(title: tr("Scegli la destinazione sul disco esterno"),
-                                                message: tr("Passo 2 di 2: dove salvare l'immagine cifrata. Serve una cartella su un disco esterno fisico, diversa dalla cartella da proteggere e fuori da essa."),
-                                                startAt: "/Volumes", canCreate: true) else { return }
+                                           message: tr("La cartella resta dov'è. Il suo contenuto viene cifrato sullo stesso disco; chiusa, nessun programma lo legge.")) else { return }
+        prepareProtection(source, destination: nil)
+    }
+
+    /// One folder; the image goes on the same disk unless the person picks another place.
+    func prepareProtection(_ source: String, destination: String?) {
+        var parameters: Record = ["origine": source, "minutes": minutes]
+        if let destination { parameters["dove"] = destination }
         perform(tr("Controllo della cartella e del disco…")) {
-            _ = try await self.worker.request("cartelle.prepara_protezione", parameters: ["origine": source, "dove": destination, "minutes": self.minutes])
-            self.keyRequest = KeyRequest(action: "cartelle.proteggi", title: tr("Proteggi %@", "\(URL(fileURLWithPath: source).lastPathComponent)"),
-                                        parameters: ["origine": source, "dove": destination, "minutes": self.minutes], confirm: true)
+            let ready = try await self.worker.request("cartelle.prepara_protezione", parameters: parameters) as? Record ?? [:]
+            let name = URL(fileURLWithPath: source).lastPathComponent
+            let alert = NSAlert()
+            alert.messageText = tr("Proteggere «%@»?", name)
+            alert.informativeText = tr("Il contenuto passa in un'immagine cifrata e la copia in chiaro viene eliminata solo dopo la verifica: non resta nessuna copia doppia. La cartella resta dov'è: chiusa è vuota, aperta con la chiave mostra di nuovo i file.") + "\n\n" + tr("Immagine cifrata: %@", ready.text("dove", fallback: ""))
+            alert.addButton(withTitle: tr("Continua"))
+            alert.addButton(withTitle: tr("Annulla"))
+            alert.addButton(withTitle: tr("Altra posizione…"))
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:
+                self.keyRequest = KeyRequest(action: "cartelle.proteggi", title: tr("Proteggi %@", name),
+                                            parameters: parameters, confirm: true)
+            case .alertThirdButtonReturn:
+                // After this check ends: perform() runs one operation at a time.
+                DispatchQueue.main.async {
+                    if let other = self.chooseDirectory(title: tr("Dove salvare l'immagine cifrata"),
+                                                        message: tr("Facoltativo: una cartella su un disco fisico, del Mac o collegato, fuori dalla cartella da proteggere."),
+                                                        startAt: "/Volumes", canCreate: true) {
+                        self.prepareProtection(source, destination: other)
+                    }
+                }
+            default:
+                return
+            }
         }
+    }
+
+    func removeProtection(_ folder: FolderItem) {
+        guard !fixtures, busy == nil else { return }
+        let alert = NSAlert()
+        alert.messageText = tr("Togliere la protezione da «%@»?", folder.name)
+        alert.informativeText = tr("Con la chiave, i file tornano nella cartella come file normali, leggibili da tutti i programmi. Dopo la verifica l'immagine cifrata viene eliminata.")
+        alert.addButton(withTitle: tr("Continua"))
+        alert.addButton(withTitle: tr("Annulla"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        keyRequest = KeyRequest(action: "cartelle.togli", title: tr("Togli la protezione da %@", folder.name),
+                                parameters: ["id": folder.id], confirm: false)
     }
 
     func askKey(_ folder: FolderItem, recovery: Bool = false) {
@@ -211,7 +253,7 @@ final class AppModel: ObservableObject {
 
     func submitKey(_ request: KeyRequest, key: Data) {
         keyRequest = nil
-        perform(request.action == "cartelle.proteggi" ? tr("Migrazione e verifica in corso…") : tr("Operazione in corso…")) {
+        perform(request.action == "cartelle.proteggi" ? tr("Migrazione e verifica in corso…") : request.action == "cartelle.togli" ? tr("Ripristino e verifica in corso…") : tr("Operazione in corso…")) {
             var sensitive = key
             defer { sensitive.resetBytes(in: 0..<sensitive.count) }
             let result = try await self.worker.request(request.action, parameters: request.parameters, key: sensitive)
@@ -362,25 +404,26 @@ final class AppModel: ObservableObject {
     }
 
     func prepareBank() {
-        guard !bankDestination.isEmpty else { error = tr("Scegli prima la destinazione sul disco esterno."); return }
         perform(tr("Controllo delle condizioni per il banco…")) {
-            self.bankPreview = try await self.worker.request("banco.anteprima", parameters: ["dove": self.bankDestination]) as? Record ?? [:]
+            self.bankPreview = try await self.worker.request("banco.anteprima") as? Record ?? [:]
         }
     }
 
     func runBank() {
         guard !fixtures, busy == nil else { return }
         guard registry.flag("running"), registry.flag("healthy") else {
-            error = tr("Il banco richiede un registro kernel attivo e sano. Completa prima le autorizzazioni nelle Impostazioni."); return
+            error = tr("Il banco richiede il registro attivo. Controlla lo stato nelle Impostazioni."); return
         }
-        guard !bankDestination.isEmpty else { error = tr("Scegli una destinazione sul disco esterno."); return }
-        perform(tr("Controllo del disco e delle condizioni del banco…")) {
-            self.bankPreview = try await self.worker.request("banco.anteprima", parameters: ["dove": self.bankDestination]) as? Record ?? [:]
+        perform(tr("Prova in corso: protezione, chiusura, riapertura e richiusura di folder-test…")) {
+            self.bankPreview = try await self.worker.request("banco.anteprima") as? Record ?? [:]
             guard !self.bankPreview.flag("richiede_autorizzazione") else {
-                throw AppError(message: tr("Completa le autorizzazioni del registro e del Desktop prima di inserire la chiave."))
+                throw AppError(message: tr("Il registro o il Desktop non sono pronti: controlla le Impostazioni e riprova."))
             }
-            self.keyRequest = KeyRequest(action: "banco.run", title: tr("Avvia il banco di prova"),
-                                        parameters: ["dove": self.bankDestination, "minutes": self.minutes, "agenti_reali": self.realAgents], confirm: true)
+            // No key from the person: the bench makes a one-time key and restores folder-test at the end.
+            let result = try await self.worker.request("banco.run", parameters: ["minutes": self.minutes, "agenti_reali": self.realAgents])
+            self.captureWarnings(result)
+            if self.warning == nil { self.notice = tr("Prova terminata. Consulta gli esiti e le eventuali fasi in attesa.") }
+            try await self.refresh()
         }
     }
 
@@ -451,7 +494,7 @@ final class AppModel: ObservableObject {
 
     private func captureWarnings(_ result: Any) {
         let records = (result as? [Record]) ?? ((result as? Record).map { [$0] } ?? [])
-        let warnings = records.compactMap { $0["avviso_registro"] as? String }
+        let warnings = records.flatMap { record in ["avviso_registro", "avviso_bundle"].compactMap { record[$0] as? String } }
         if !warnings.isEmpty { warning = warnings.joined(separator: "\n") }
     }
 
