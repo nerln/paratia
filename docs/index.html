@@ -3,408 +3,420 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>paratia, a deny list is a list of the paths somebody thought of</title>
-<meta name="description" content="Watertight compartments for a machine that runs coding agents: an encrypted store agents cannot read, a guard that checks mount state instead of matching paths, and a provenance check for requests that arrive from another agent.">
-<link rel="alternate" type="text/plain" href="llms.txt" title="llms.txt">
+<meta name="color-scheme" content="light dark">
+<title>paratia, encrypted folders for coding agents</title>
+<meta name="description" content="paratia keeps the folders you choose encrypted, so that a coding agent cannot read them while they are locked, and keeps an access log of the files you watch. For macOS.">
 <meta property="og:title" content="paratia">
-<meta property="og:description" content="A deny list is a list of the paths somebody thought of. This is not one.">
+<meta property="og:description" content="Encrypted folders for coding agents, a gate for their tool calls, and an access log. For macOS.">
 <meta property="og:type" content="website">
+<meta property="og:image" content="https://nerln.github.io/paratia/immagini/paratia-icona.png">
+<link rel="canonical" href="https://nerln.github.io/paratia/">
+<link rel="icon" type="image/png" sizes="64x64" href="immagini/paratia-icona-64.png">
+<link rel="apple-touch-icon" sizes="180x180" href="immagini/paratia-icona-180.png">
+<link rel="alternate" type="text/plain" href="llms.txt" title="llms.txt">
 <style>
   :root {
-    --bg: #fbfaf8;
-    --text: #1a1a1a;
-    --muted: #5f5f5f;
-    --border: #e3e0da;
-    --accent: #1d4e6b;
-    --code-bg: #f2efe9;
-    --term-bg: #141a20;
-    --term-text: #d6e0e5;
-    --term-muted: #7d919a;
-    --term-accent: #6fbdd3;
-    --warn: #8a4b1f;
+    --bg: #f4f2ec;
+    --surface: #fdfcf8;
+    --ink: #15262a;
+    --muted: #4a5d5f;
+    --petrol: #1f4f52;
+    --copper: #8e4a1c;
+    --copper-tint: #f5e6da;
+    --line: #dcd8cc;
+    --hero: #1f4f52;
+    --hero-ink: #f4f2ec;
+    --hero-copper: #f0b88a;
+    --on-hero: #15262a;
+    --btn: #1f4f52;
+    --btn-ink: #fdfcf8;
+    --shadow: 0 1px 2px rgba(21, 38, 42, .06), 0 10px 28px rgba(21, 38, 42, .08);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #14161a;
-      --text: #e8e6e3;
-      --muted: #a0a0a0;
-      --border: #2b2f36;
-      --accent: #7fc3e0;
-      --code-bg: #1c2027;
-      --term-bg: #0d1116;
-      --term-text: #d6e0e5;
-      --term-muted: #6d818a;
-      --term-accent: #6fbdd3;
-      --warn: #d99a63;
+      --bg: #0e1d1f;
+      --surface: #15292c;
+      --ink: #e6efec;
+      --muted: #a7bcb8;
+      --petrol: #8fd0c9;
+      --copper: #eeb07f;
+      --copper-tint: #33241b;
+      --line: #2b4649;
+      --hero: #1a3f42;
+      --hero-ink: #e6efec;
+      --hero-copper: #f0b88a;
+      --on-hero: #15262a;
+      --btn: #8fd0c9;
+      --btn-ink: #0e1d1f;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 12px 30px rgba(0, 0, 0, .3);
     }
   }
+
   * { box-sizing: border-box; }
   body {
     margin: 0;
     background: var(--bg);
-    color: var(--text);
-    font: 17px/1.65 ui-serif, Georgia, "Times New Roman", serif;
-    -webkit-text-size-adjust: 100%;
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
+    font-size: 1.0625rem;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    overflow-wrap: break-word;
   }
-  .wrap { max-width: 43rem; margin: 0 auto; padding: 3.5rem 1.4rem 5rem; }
-  h1 { font-size: 2.6rem; margin: 0 0 .2rem; letter-spacing: -.02em; }
-  h2 {
-    font-size: 1.05rem; margin: 3rem 0 .8rem; letter-spacing: .06em;
-    text-transform: uppercase; color: var(--muted); font-weight: 600;
+  .wrap { max-width: 60rem; margin: 0 auto; padding: 0 1rem; }
+  h1, h2, h3, h4 {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", system-ui, sans-serif;
+    line-height: 1.2;
   }
-  h3 { font-size: 1.15rem; margin: 2rem 0 .4rem; }
-  p { margin: 0 0 1.1rem; }
-  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
-  .lede { font-size: 1.22rem; color: var(--muted); margin: 0 0 2rem; }
-  code, pre, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
-  code { background: var(--code-bg); padding: .1em .35em; border-radius: 3px; font-size: .88em; }
-  pre {
-    background: var(--term-bg); color: var(--term-text); padding: 1.1rem 1.2rem;
-    border-radius: 6px; overflow-x: auto; font-size: .85rem; line-height: 1.6;
-  }
-  pre code { background: none; padding: 0; font-size: 1em; }
-  pre .c { color: var(--term-muted); }
-  pre .p { color: var(--term-accent); }
-  blockquote {
-    margin: 1.6rem 0; padding: .1rem 0 .1rem 1.2rem;
-    border-left: 3px solid var(--border); color: var(--muted); font-style: italic;
-  }
-  table { border-collapse: collapse; width: 100%; font-size: .93rem; margin: 1.4rem 0; }
-  th, td { text-align: left; padding: .6rem .7rem; border-bottom: 1px solid var(--border); vertical-align: top; }
-  th { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
-  .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  figure { margin: 1.6rem 0; }
-  figure img {
-    display: block; width: 100%; height: auto;
-    border: 1px solid var(--border); border-radius: 4px;
-  }
-  figcaption {
-    font-size: .88rem; color: var(--muted); margin-top: .5rem;
-    line-height: 1.5;
-  }
-  /* The three labels, coloured as the finder colours them, so the prose and the
-     screenshots agree without the reader having to work out that they match. */
-  .tag-r, .tag-z, .tag-p {
+  h1 { font-size: 3rem; font-weight: 700; letter-spacing: -.02em; line-height: 1.05; margin: 0 0 .8rem; }
+  h2 { font-size: 1.6rem; font-weight: 650; letter-spacing: -.01em; color: var(--petrol); margin: 0 0 1rem; }
+  h3 { font-size: 1.2rem; font-weight: 650; color: var(--petrol); margin: 2rem 0 1rem; }
+  h4 { font-size: 1.1rem; font-weight: 650; margin: 0 0 .6rem; }
+  p { margin: 0 0 1rem; }
+  section { margin-top: 3.5rem; }
+  a { color: var(--petrol); text-underline-offset: 3px; text-decoration-thickness: 1px; overflow-wrap: anywhere; }
+  a:focus-visible { outline: 3px solid var(--copper); outline-offset: 3px; border-radius: 4px; }
+  code {
     font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-    font-size: .8em; padding: .04em .38em; border-radius: 100px;
-    border: 1px solid currentColor; white-space: nowrap;
+    background: var(--copper-tint); color: var(--ink);
+    padding: .08em .35em; border-radius: 5px; font-size: .88em;
+    overflow-wrap: anywhere;
   }
-  .tag-r { color: #8a2f2f; }
-  .tag-z { color: var(--accent); }
-  .tag-p { color: #3d6b3d; }
+  ul { padding-left: 1.2rem; margin: 0 0 1rem; }
+  li { margin-bottom: .55rem; }
+  li:last-child { margin-bottom: 0; }
+  .eyebrow {
+    font-size: .76rem; text-transform: uppercase; letter-spacing: .09em;
+    font-weight: 700; color: var(--copper); margin: 0 0 .5rem;
+  }
+
+  /* top bar */
+  .topbar {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+    gap: .2rem 1rem; padding-top: .5rem;
+  }
+  .brand {
+    display: inline-flex; align-items: center; gap: .55rem; min-height: 44px;
+    font-weight: 700; font-size: 1.05rem; color: var(--ink); text-decoration: none;
+  }
+  .brand img { width: 28px; height: 28px; border-radius: 7px; }
+  .topbar nav { display: flex; flex-wrap: wrap; gap: 0 .9rem; }
+  .topbar nav a {
+    display: inline-flex; align-items: center; min-height: 44px;
+    color: var(--muted); text-decoration: none; font-size: .95rem;
+  }
+  .topbar nav a:hover { color: var(--ink); text-decoration: underline; }
+
+  /* hero: the petrol panel of the icon */
+  .hero {
+    margin-top: 1rem;
+    background: var(--hero); color: var(--hero-ink);
+    border-radius: 24px; padding: 2rem 1.25rem 2.2rem;
+    display: grid; gap: 1.5rem; align-items: center;
+  }
+  .hero-icon { width: 112px; height: 112px; display: block; }
+  .hero .eyebrow { color: var(--hero-copper); }
+  .hero p { margin: 0 0 1rem; }
+  .hero .lede { font-size: 1.16rem; line-height: 1.55; }
+  .hero .gloss { font-size: .98rem; color: var(--hero-ink); opacity: .92; }
+  .hero .meta { font-size: .95rem; margin-bottom: 1.4rem; }
+  .actions { display: flex; flex-wrap: wrap; gap: .6rem; }
+  .btn {
+    display: inline-flex; align-items: center; min-height: 44px;
+    padding: .55rem 1.1rem; border-radius: 999px;
+    font-weight: 600; font-size: .95rem; line-height: 1.2; text-decoration: none;
+  }
+  .btn-primary { background: var(--btn); color: var(--btn-ink); }
+  .hero .btn-primary { background: var(--hero-copper); color: var(--on-hero); }
+  .btn-ghost { border: 1px solid var(--petrol); color: var(--petrol); }
+  .hero .btn-ghost { border-color: var(--hero-ink); color: var(--hero-ink); }
+  .hero a { color: var(--hero-ink); }
+  .btn:hover { filter: brightness(1.06); }
+  @media (min-width: 46rem) {
+    .hero { grid-template-columns: 9.5rem 1fr; padding: 2.8rem 3rem; gap: 2.4rem; }
+    .hero-icon { width: 144px; height: 144px; }
+    h1 { font-size: 3.6rem; }
+  }
+
+  /* cards: soft surfaces, as in the app */
+  .cards { display: grid; gap: 1rem; }
+  @media (min-width: 52rem) {
+    .cards.two { grid-template-columns: 1fr 1fr; align-items: start; }
+  }
+  .card {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 16px; padding: 1.35rem;
+    box-shadow: var(--shadow); min-width: 0;
+  }
+  .card h3 { margin: 0 0 .9rem; font-size: 1.2rem; }
+  .card h4 { margin: 0 0 .9rem; }
+  .card p:last-child { margin-bottom: 0; }
+  .half + .half { margin-top: 2.4rem; }
+
+  /* app captures */
+  .shots { display: grid; gap: 2.2rem; }
+  @media (min-width: 46rem) {
+    .shots { grid-template-columns: 1fr 1fr; gap: 2.4rem 1.6rem; }
+  }
+  .shot { margin: 0; min-width: 0; }
+  .shot.wide { grid-column: 1 / -1; }
+  .shot a.zoom { display: block; }
+  .shot img {
+    display: block; width: 100%; height: auto;
+    border: 1px solid var(--line); border-radius: 12px;
+    background: var(--surface); box-shadow: var(--shadow);
+  }
+  .shot figcaption { margin: .85rem 0 .2rem; color: var(--muted); font-size: .97rem; line-height: 1.5; }
+  .shot figcaption strong { color: var(--ink); }
+  .full {
+    display: inline-flex; align-items: center; min-height: 44px;
+    font-weight: 600; font-size: .95rem;
+  }
   @media (prefers-color-scheme: dark) {
-    .tag-r { color: #e08a83; }
-    .tag-p { color: #8fbf8f; }
+    .shot img { filter: brightness(.96); }
   }
-  .note {
-    border: 1px solid var(--border); border-left: 3px solid var(--warn);
-    padding: 1rem 1.2rem; margin: 1.8rem 0; font-size: .95rem;
-  }
-  .note strong { color: var(--warn); }
+
+  /* limits */
+  .limits-card { padding: 1.25rem 1.35rem 1.25rem 1.35rem; }
+  .limits-card ol { margin: 0; padding-left: 2.6rem; }
+  .limits-card li { margin-bottom: .9rem; padding-left: .2rem; }
+  .limits-card li:last-child { margin-bottom: 0; }
+  .limits-card li::marker { color: var(--copper); font-weight: 700; }
+
+  /* links */
+  .links { list-style: none; padding: 0; margin: 0 0 1.4rem; }
+  .links li { padding: .8rem 0; border-bottom: 1px solid var(--line); margin: 0; }
+  .links li:last-child { border-bottom: 0; }
+  .links a { font-weight: 600; }
+  .links span { display: block; color: var(--muted); font-size: .95rem; }
+
+  .name-block { color: var(--muted); }
   footer {
-    margin-top: 4rem; padding-top: 1.4rem; border-top: 1px solid var(--border);
-    color: var(--muted); font-size: .9rem;
+    margin-top: 4rem; padding: 1.5rem 0 2.6rem;
+    border-top: 1px solid var(--line);
+    color: var(--muted); font-size: .92rem;
   }
-  ul { padding-left: 1.2rem; }
-  li { margin-bottom: .5rem; }
+  footer a { color: var(--muted); }
 </style>
 </head>
 <body>
 <div class="wrap">
 
-<h1>paratia</h1>
-<p class="lede">A deny list is a list of the paths somebody thought of. This is not one.</p>
+<header class="topbar">
+  <a class="brand" href="./"><img src="immagini/paratia-icona-64.png" width="28" height="28" alt="">paratia</a>
+  <nav aria-label="Page sections">
+    <a href="#problem">The problem</a>
+    <a href="#how">How it works</a>
+    <a href="#app">Mac app</a>
+    <a href="#install">Install</a>
+    <a href="#limits">Limits</a>
+  </nav>
+</header>
 
-<p>Watertight bulkheads are what stop a flooded compartment from taking the ship.
-They do not ask the water where it is going.</p>
+<main id="main">
 
-<h2>The problem</h2>
+<section class="hero" aria-labelledby="top">
+  <img class="hero-icon" src="immagini/paratia-icona.png" width="144" height="144" alt="paratia icon: a light folder with a steel watertight door and a copper wheel, on a petrol green rounded square">
+  <div>
+    <p class="eyebrow">Command line tool and macOS app</p>
+    <h1 id="top">paratia</h1>
+    <p class="lede">paratia keeps the folders you choose encrypted, so that a coding agent cannot read them while they are locked. It also keeps a log of who opens or changes the files you watch.</p>
+    <p class="gloss">A coding agent is an AI program that edits files and runs commands on your machine.</p>
+    <p class="meta">Runs on macOS. Licensed under GPL-3.0.</p>
+    <div class="actions">
+      <a class="btn btn-primary" href="https://github.com/nerln/paratia">Source on GitHub</a>
+      <a class="btn btn-ghost" href="#install">Install</a>
+    </div>
+  </div>
+</section>
 
-<p>You want a file a coding agent cannot read. The usual answer is to write that
-down &mdash; a line in a config, a path in a deny list, a sentence in a skill. All
-three live in the same place the agent&rsquo;s instructions live, so a model that
-misreads them gets past all three. Worse, none of them is tested by the thing it
-claims to stop: the agent runs as you, so it holds your read bit on every file
-you own.</p>
+<section id="problem" aria-labelledby="h-problem">
+  <h2 id="h-problem">The problem, in two halves</h2>
+  <p>A coding agent runs with your permissions, so it can read every file your account can read.</p>
+  <div class="cards two">
+    <article class="card">
+      <p class="eyebrow">Half one</p>
+      <h3>A file the agent cannot read</h3>
+      <p>The usual answer is to write the rule down: a line in a configuration file, a path on a deny list (a list of paths the agent may not touch), or a sentence in a skill (a set of instructions the agent loads for one kind of task). All three sit where the agent's own instructions sit, so a model that misreads them gets past all three. A web page can carry an instruction too, and the agent may fetch that page in the middle of a task.</p>
+      <p>A deny list only covers the spellings someone thought of. The path <code>/Volumes/vault/token</code> can be on the list. The command <code>cat "$(printf '/Volumes/va''ult/token')"</code> reads the same file, and the list does not match it. There is no end to the spellings, so every list is incomplete.</p>
+    </article>
+    <article class="card">
+      <p class="eyebrow">Half two</p>
+      <h3>Capabilities that compose</h3>
+      <p>Two agents from different vendors each follow their own policy, and nobody enforces a policy over the pair. An agent under a restriction can ask a second agent, which was never under that rule, to do what the first one may not. Together the two can do what neither may do alone.</p>
+      <p>A <a href="https://arxiv.org/abs/2607.07097">preprint on arXiv (2607.07097)</a> measures this effect. It reports compliance on harmful scenarios from 8.9% to 38.9%. It finds Gemini the safest model under direct prompts, and the most amplified under a Claude planner.</p>
+    </article>
+  </div>
+</section>
 
-<p><code>/Volumes/vault/token</code> is on your list.
-<code>cat "$(printf '/Volumes/va''ult/token')"</code> is not, and never will be.
-Spellings are unbounded, so the list is always incomplete, and its incompleteness
-is invisible until it matters.</p>
+<section id="how" aria-labelledby="h-how">
+  <h2 id="h-how">What paratia does about each half</h2>
+  <p>Half one needs files the agent cannot read, and a check on the actions the agent asks to take that does not depend on what the agent says. Half two needs a rule for what one agent may ask of another.</p>
 
-<h2>What this does instead</h2>
+  <div class="half">
+    <h3>Half one: a file the agent cannot read</h3>
+    <div class="cards two">
+      <article class="card">
+        <h4>Protected folders</h4>
+        <p>A protected folder is an encrypted disk image, a file that macOS mounts as a volume when you open it. The cipher is AES-256, a standard encryption method, and each folder has its own passphrase. While a folder is locked, its files are ciphertext: scrambled bytes that need the passphrase to read. That holds for every process at every privilege level, including root, the system administrator account.</p>
+        <p>The passphrase exists only in your head. Setup asks for it twice and writes it nowhere, so there is nothing for an agent to find. If you lose it, the contents are gone.</p>
+        <p>An open folder is an ordinary volume, readable by your processes. A timer closes it after a delay you choose, from 1 to 1440 minutes. If the folder is busy, the timer retries and never forces the close. Forcing a close is a separate action with a confirmation step, because it can lose unsaved changes.</p>
+      </article>
+      <article class="card">
+        <h4>Moving an existing folder</h4>
+        <p>You can protect a folder that already exists. Its encrypted copy goes on an external physical disk, because internal disks and disk images are refused. paratia copies the data and checks it. It then closes and reopens the image to check the copy again, and only after a confirmed second close does it remove the original.</p>
+        <p>The source must stay still during the move, so close the documents and apps that can change it before you start. If the move is interrupted, the app keeps the recovery steps visible.</p>
+      </article>
+      <article class="card">
+        <h4>Gate</h4>
+        <p>The gate is a PreToolUse hook, a check the agent's program runs before each tool call (an action the agent asks to take, such as running a command). While an encrypted folder is open, the gate denies the tool calls of the sessions that run it. It asks the kernel, the part of macOS that manages the hardware, one question: is the volume mounted? It never looks at a path, so there is no spelling to get around.</p>
+        <p>The gate has a few exceptions: commands that close or inspect folders. They count only when they run the root-protected copy of the program. The rule is coarse on purpose. It checks one fact, whether the volume is mounted, and that fact does not depend on how a command is written.</p>
+      </article>
+      <article class="card">
+        <h4>Broker</h4>
+        <p>The broker runs a fixed command with a secret filled in by paratia. The commands it may run, called verbs (named commands), are declared inside the encrypted folder, where the agent can neither read nor change them. The agent names a verb and reads the output. It never holds the secret and never chooses the command.</p>
+      </article>
+    </div>
+  </div>
 
-<h3>It removes the plaintext rather than hiding the path</h3>
-<p>Secrets live in an AES-256 image. Locked, the bytes on disk are ciphertext, and
-that holds against every process at every privilege level &mdash; this program
-included. The passphrase is in your head and in no file, so there is nothing for
-an agent to find.</p>
+  <div class="half">
+    <h3>Half two: capabilities that compose</h3>
+    <div class="cards two">
+      <article class="card">
+        <h4>Delegation</h4>
+        <p>When one agent asks another for help, the hook reads the session transcript, the record the agent's program writes and the model does not control. If the last speaker is another agent, the hook takes the human-only actions off the table for that turn. Those actions are computer use, the browser, the simulator, paratia itself, security (the macOS command for keychains), sudo (the command for administrator actions), and osascript (the macOS command that runs AppleScript).</p>
+      </article>
+      <article class="card">
+        <h4>SSH bridge</h4>
+        <p>SSH is a secure remote login. The bridge connects two machines that run agent sessions. Its login can run one program and nothing else, so its holder cannot open a shell, a port, an agent or a terminal. The bridge computes the origin of each message from the transcript, so the caller cannot supply it. It also limits how many times a message can be passed on, and it keeps a log in which each entry carries a fingerprint of the one before it, so an edit shows.</p>
+      </article>
+    </div>
+  </div>
+</section>
 
-<h3>It asks the kernel one question</h3>
-<p>While the compartment is open, a pre-tool-use hook denies <em>every</em> agent
-tool call. It never looks at a path. It asks whether the volume is mounted, and
-there is no way to spell your way around a bit the kernel owns. Coarse on
-purpose: coarse is what makes it hold.</p>
+<section id="log" aria-labelledby="h-log">
+  <h2 id="h-log">A record of who touched what</h2>
+  <p>The access log records who opened and who changed the files in the folders you watch. You can watch any folder you own, encrypted or not.</p>
+  <div class="cards two">
+    <article class="card">
+      <h3>What is recorded</h3>
+      <p>Each event keeps the path, the process and its user, the app responsible where it can be identified, and the process ID (PID). It also says whether the actor looks like a coding agent, with the evidence behind that guess. The log stores metadata only. It keeps no file contents, no transcripts, no command arguments and no environment variables.</p>
+      <p>Opening a path shows who looked at it. Writing, creating, renaming, deleting (unlink) and truncating show who changed it. You can filter by folder, file, process, agent and time, and export the result as CSV, a plain-text table format.</p>
+      <p>The agent name comes from the program's executable and its signature. No authenticated proof of the vendor's identity backs it.</p>
+    </article>
+    <article class="card">
+      <h3>Two sources, kept apart</h3>
+      <p>The app's own operations, such as opening or closing a protected folder, form one source. Kernel events form the other. They come from eslogger, a command-line tool from Apple that reads Endpoint Security, the macOS framework that reports file and process events to security tools. Apple does not present eslogger as a stable interface.</p>
+      <p>Each source is a chain: every entry carries a fingerprint (a hash) of the one before it, so an edit inside a chain breaks verification. The app's records belong to your account, so a program running as you can rewrite them. The kernel log is a root-owned file, and your account has read access to it only. Cutting entries off the end is not detected without an outside checkpoint.</p>
+    </article>
+  </div>
+</section>
 
-<h3>It separates hiding-from from hiding-for</h3>
-<p>A <strong>compartment</strong> hides secrets <em>from</em> the session. A
-<strong>zone</strong> hides work from everyone who is <em>not</em> the session.
-Conflating them gives you a workspace nobody can work in &mdash; an agent that
-cannot read the repository cannot work on the repository.</p>
+<section id="app" aria-labelledby="h-app">
+  <h2 id="h-app">The Mac app</h2>
+  <p>The app needs macOS 13 or later. It has five sections. Their names are in Italian, as they appear in the app, and each one is glossed here.</p>
+  <ul>
+    <li><strong>Cartelle</strong> (folders): protected folders, their state, their timers and their migrations.</li>
+    <li><strong>Registro</strong> (log): the access log, its filters and CSV export, and whether kernel collection is active.</li>
+    <li><strong>Etichette</strong> (labels): decisions about what to protect. A label records a decision and moves nothing.</li>
+    <li><strong>Banco di prova</strong> (test bench): four phases, before, closed, open and closed again, each with its check result and any kernel evidence.</li>
+    <li><strong>Impostazioni</strong> (settings): log service updates, hook setup and privacy permissions. Administrator passwords stay in macOS dialogs.</li>
+  </ul>
+  <p>The captures show a preview with synthetic sample data, as the banner at the top of each one says. No real operation ran.</p>
 
-<h3>It gives the agent a de-identified copy</h3>
-<p>For the folder an agent must read that happens to be full of other
-people&rsquo;s names, <code>specchio</code> builds a second tree: same structure,
-same prose, identifiers replaced by stable tokens whose key and reversal table
-live inside the compartment. The thing that would undo the work is the thing the
-agent cannot open.</p>
+  <div class="shots">
+    <figure class="shot wide">
+      <a class="zoom" href="immagini/app-cartelle.png"><img src="immagini/app-cartelle.png" width="1240" height="860" loading="lazy" alt="Cartelle screen with two sample folders: one closed, with a green lock, and one open, with an orange padlock and a timer set to 15 minutes."></a>
+      <figcaption><strong>Cartelle.</strong> Each protected folder shows its state, its size and its timer. A busy folder is retried, and forcing it closed needs a separate confirmation.</figcaption>
+      <a class="full" href="immagini/app-cartelle.png">Open full size (1240 by 860 pixels)</a>
+    </figure>
 
-<div class="note">
-<p><strong>Pseudonymised, not anonymous.</strong> Under GDPR Recital 26 that
-distinction is not pedantic: pseudonymised data is still personal data. A
-reversal table exists here on purpose. Calling it anonymisation would be false in
-the specific way that gets people fined, so the tool says so on every run.</p>
-</div>
+    <figure class="shot">
+      <a class="zoom" href="immagini/app-registro.png"><img src="immagini/app-registro.png" width="1240" height="860" loading="lazy" alt="Registro screen titled 'Chi ha aperto cosa' (who opened what), with a sample folder that the collector refused and one event row, a folder closed by paratia."></a>
+      <figcaption><strong>Registro.</strong> The sample folder was refused by the collector, and the app shows the reason. Collection status sits beside the event count, including when there are zero events.</figcaption>
+      <a class="full" href="immagini/app-registro.png">Open full size (1240 by 860 pixels)</a>
+    </figure>
 
-<h3>It gives you somewhere to write down what belongs where</h3>
-<p>The compartment answers <em>how</em>. It does not answer <em>what</em>, and on a
-disk with three hundred thousand files that is the part that actually stops
-people. <code>paratia finder</code> serves one page to your own browser: walk the
-tree, mark a folder <span class="tag-r">riservato</span>,
-<span class="tag-z">zona:&lt;name&gt;</span> or <span class="tag-p">pubblico</span>,
-and read what that would move before anything moves.</p>
+    <figure class="shot">
+      <a class="zoom" href="immagini/app-etichette.png"><img src="immagini/app-etichette.png" width="1240" height="860" loading="lazy" alt="Etichette screen with two sample folders: one labeled riservato in red, and one labeled pubblico in grey."></a>
+      <figcaption><strong>Etichette.</strong> A label records a decision. Protection starts when you protect the folder.</figcaption>
+      <a class="full" href="immagini/app-etichette.png">Open full size (1240 by 860 pixels)</a>
+    </figure>
 
-<figure>
-  <img src="immagini/finder.png" alt="The paratia finder in a browser: a folder listing with riservato, zona and pubblico labels, and a panel below headed The plan showing three moves with their sizes and destinations." loading="lazy" width="2480" height="1240">
-  <figcaption>Names, sizes and labels. Never file contents &mdash; a tool that
-  reads your files to help you decide which files should be unreadable has
-  argued itself out of a job.</figcaption>
-</figure>
+    <figure class="shot">
+      <a class="zoom" href="immagini/app-banco.png"><img src="immagini/app-banco.png" width="1240" height="860" loading="lazy" alt="Banco di prova screen titled 'Prima, chiusa, aperta, richiusa' (before, closed, open, closed again), showing a sample run whose first phase has missing kernel evidence, marked in orange."></a>
+      <figcaption><strong>Banco di prova.</strong> Each phase shows its check result next to the kernel evidence it found. Missing evidence is marked as missing.</figcaption>
+      <a class="full" href="immagini/app-banco.png">Open full size (1240 by 860 pixels)</a>
+    </figure>
 
-<p>A label on a folder carries to everything under it until a nearer label says
-otherwise, so a <span class="tag-p">pubblico</span> subfolder carves an exception
-out of a <span class="tag-r">riservato</span> parent without a rule that says so.
-The plan honours the carve-out and so does the copy.</p>
+    <figure class="shot">
+      <a class="zoom" href="immagini/app-impostazioni.png"><img src="immagini/app-impostazioni.png" width="1240" height="860" loading="lazy" alt="Impostazioni screen with six numbered steps for updating the log service, and a notice that authorization or verification is needed."></a>
+      <figcaption><strong>Impostazioni.</strong> Numbered steps update the log service. Administrator passwords and privacy permissions stay in the macOS dialogs.</figcaption>
+      <a class="full" href="immagini/app-impostazioni.png">Open full size (1240 by 860 pixels)</a>
+    </figure>
+  </div>
+</section>
 
-<figure>
-  <img src="immagini/finder-eredita.png" alt="Inside a folder marked riservato: three files each showing an inherited riservato label in a dashed outline, with no remove button, because the label belongs to the parent." loading="lazy" width="2480" height="940">
-  <figcaption>Inherited labels are dashed and cannot be removed from the child.
-  The label belongs to the folder above.</figcaption>
-</figure>
+<section id="install" aria-labelledby="h-install">
+  <h2 id="h-install">Install</h2>
+  <ul>
+    <li><strong>Command line tool:</strong> macOS and Python 3.11 or later. It uses no third-party packages.</li>
+    <li><strong>Mac app:</strong> macOS 13 or later. You build it from the repository with Apple's Command Line Tools (the free developer tools from Apple) and rsvg-convert, a tool that converts SVG images. The app is signed ad hoc, which means it carries a local signature and no developer identity. It is not notarized, so Apple's automated check has not run on it.</li>
+    <li>Keep the app in <code>/Applications</code>.</li>
+  </ul>
+  <p>The README has the exact commands for both.</p>
+  <p>The gate needs the session hook, a check registered in the agent's settings. Without the hook, an encrypted folder still works. The gate does not cover that session.</p>
+  <p>The app shows the planned changes to the Claude Code and Codex hook settings before it applies them. It keeps backups of the files it changes and keeps the settings already there. Codex hooks must be approved by hand in the Codex app's hook manager.</p>
+  <p>Kernel events come from a system service. You install it by running a preparation command yourself in Terminal, then approving an administrator dialog in macOS. The app also needs Full Disk Access, a macOS privacy permission. After each new build, remove the app's entry and add it again, then reinstall the service. The steps are in the <a href="https://github.com/nerln/paratia/blob/master/docs/gui-mac.md">GUI guide</a>.</p>
+  <p><a class="btn btn-primary" href="https://github.com/nerln/paratia#install">Installation steps in the README</a></p>
+</section>
 
-<div class="note">
-<p><strong>A label is a plan, not a boundary.</strong> The store is a JSON file in
-your home directory, owned by your uid, which is the uid the agent runs as: it can
-read it and it can rewrite it. Wiring it into the gate as a deny rule would buy
-nothing either, for the reason this whole page is about &mdash; a rule about paths
-is a rule about spellings. What protects bytes is
-<code>paratia etichetta applica</code>, which copies them into the compartment or a
-zone, where the cipher does the work. The label is the decision; the move is the
-mechanism. This tool keeps those two words apart on purpose, and it never deletes
-your original.</p>
-</div>
+<section id="limits" aria-labelledby="h-limits">
+  <h2 id="h-limits">Limits</h2>
+  <p>The project documents these limits. Read them before you rely on a guarantee.</p>
+  <div class="card limits-card">
+    <ol>
+      <li>While a folder is locked, its files are ciphertext. While it is open, it is an ordinary volume, and a secret an agent read while it was open stays in the model's context. Replace anything an agent has seen.</li>
+      <li>While a folder is open, the gate denies the tool calls of the sessions that run it. An agent cannot work in those sessions until you close the folder.</li>
+      <li>On a Mac with one account, the gate is tamper-evident, not tamper-proof. Tamper-evident means that a change leaves a trace. An agent running as you can rewrite your policy files and your agent settings, including which hook runs. <code>paratia seal</code> and <code>paratia attest</code> report such changes afterwards. They do not prevent them. The protection that does not depend on the agent's cooperation is the encryption while the folder is locked.</li>
+      <li>The gate covers only the sessions that run its hook. Other agent programs, such as Cursor and Aider, enforce their own hooks or none. Everything here is local to one machine: an agent with network access and an API credential can reach a model with none of these hooks.</li>
+      <li>Delegation is checked on the Claude side only. A conversation that starts on the Codex side stays unrestricted until Codex runs its half of the check.</li>
+      <li>The access log is not a complete history. An open event does not prove that a byte was read. Kernel collection does not report every access or every failed attempt, writes made only through memory mapping are not reported, and mounts and unmounts do not appear in the kernel log. Coverage of every access is not guaranteed.</li>
+      <li>A label records a decision and protects nothing by itself. It is a JSON file (a plain-text data format) in your home directory, and the agent's account can rewrite it. Protection comes from encrypting the files.</li>
+      <li>Removing the original after a move is not a secure erase. Backups, APFS snapshots (saved states of the disk that macOS keeps) and cloud copies made earlier keep their versions, and the physical blocks of an SSD (solid-state disk) are not wiped.</li>
+      <li>Some measurements are still open. As of October 2026, the live run of the test bench has not been executed. Idle CPU use and event delay must be measured again after a new build is installed.</li>
+    </ol>
+  </div>
+</section>
 
-<pre><code><span class="c"># mark, then look before anything moves</span>
-paratia etichetta segna ~/Documenti/contratti --come riservato
-paratia etichetta segna ~/dev/tesi --come zona:tesi
-paratia etichetta piano
+<section id="read" aria-labelledby="h-read">
+  <h2 id="h-read">Read more</h2>
+  <ul class="links">
+    <li><a href="https://github.com/nerln/paratia">github.com/nerln/paratia</a><span>The source, the README and the install steps.</span></li>
+    <li><a href="llms.txt">Agent manual (llms.txt)</a><span>The operating manual for coding agents.</span></li>
+  </ul>
+  <p>The documents below are in Italian.</p>
+  <ul class="links">
+    <li><a href="https://github.com/nerln/paratia/blob/master/docs/architettura.md">architettura.md</a><span>The nine mechanisms and what each one guarantees.</span></li>
+    <li><a href="https://github.com/nerln/paratia/blob/master/docs/gui-mac.md">gui-mac.md</a><span>The Mac app, section by section.</span></li>
+    <li><a href="https://github.com/nerln/paratia/blob/master/docs/cartelle-blindate.md">cartelle-blindate.md</a><span>Protected folders: moving, passphrases, timers and closing.</span></li>
+    <li><a href="https://github.com/nerln/paratia/blob/master/docs/registro-accessi.md">registro-accessi.md</a><span>The access log: events, sources and limits.</span></li>
+    <li><a href="https://github.com/nerln/paratia/blob/master/docs/confini.md">confini.md</a><span>A second account for agents, and the two cases where it buys nothing.</span></li>
+    <li><a href="https://github.com/nerln/paratia/blob/master/docs/ponte-ssh.md">ponte-ssh.md</a><span>The SSH bridge, and the part it cannot do.</span></li>
+    <li><a href="https://github.com/nerln/paratia/blob/master/docs/stato-2026-10.md">stato-2026-10.md</a><span>Implementation and verification status, October 2026.</span></li>
+    <li><a href="https://github.com/nerln/paratia/tree/master/docs/ricerca">ricerca/</a><span>The research the design comes from.</span></li>
+  </ul>
+</section>
 
-<span class="c"># or do it in a browser, on any of the three operating systems</span>
-paratia finder</code></pre>
+<section id="name" aria-labelledby="h-name">
+  <h2 id="h-name">About the name</h2>
+  <p class="name-block">A <em>paratia stagna</em> is a watertight bulkhead: a wall across a ship that keeps one flooded compartment from taking the rest of the ship.</p>
+</section>
 
-<h2>The Mac app and access history</h2>
-
-<p>The native app for macOS 13+ brings protected folders, access history,
-labels, a four-phase test bank and settings into one window. Protect an existing
-folder on a physical external disk, choose its key in the app, and open or close it
-there. Before asking for the key, the app follows an APFS volume's physical
-stores or an exFAT volume's parent to the physical whole disk; internal disks
-and disk images are refused. A disconnected disk is reported before key entry,
-and reopening an open folder reports that its timer remains unchanged.
-Migration verifies
-the copy before removing the source and keeps recovery
-actions available after an interruption. A damaged bundle is reported before
-checking the key; keep it and restore an intact copy. A busy volume asks you to close the app
-or terminal using it. <strong>Forza chiusura…</strong> requires confirmation
-about unsaved changes; closing a temporary migration mount still requires recovery.</p>
-
-<p>Use <strong>Sorveglia una cartella…</strong> to watch a folder you own,
-including an unencrypted one. Review or remove watches, filter events by folder,
-file, process, agent and time, and export CSV. A saved watch is shown separately
-from its acknowledgement by an active daemon. Repeated requests reuse the ID
-and report the effective name; an explicit <code>--nome Nuovo</code> renames the
-watch without changing its ID. A protected folder's mount uses its existing ID.
-CLI and worker queries and exports accept
-the same folder ID or exact configured path; an unknown path produces an error.
-Inactive collection produces a warning in CLI queries and exports. The app
-shows kernel collection status beside the event count, including zero events;
-active status does not guarantee coverage of every access.
-Refused IDs stay visible with a readable collector reason, including on
-protected-folder cards; one invalid entry does not hide valid watches.
-On an external physical, non-system disk mounted <code>noowners</code>, the
-collector accepts an owned, validated user configuration instead of treating
-the directory's unreliable UID as proof of ownership. This permits collection;
-it does not establish file ownership or separation between accounts on that disk.
-Absolute file filters match the exact path or its descendants, so
-<code>/a/b</code> excludes <code>/a/bc</code>.</p>
-
-<pre><code>paratia registro sorveglia ~/Documenti/progetto
-paratia registro elenco --cartella ~/Documenti/progetto
-paratia registro esporta --cartella ~/Documenti/progetto
-paratia registro smetti ~/Documenti/progetto</code></pre>
-
-<p>The registry distinguishes local Paratia annotations from observed kernel
-events. An open event does not prove that bytes were read; failed accesses may
-have no kernel event. The bank displays four phases with times, counts, measured
-probe results and any kernel matches. Spotlight's <code>mdls</code> probe is
-informative; missing indexing does not fail a phase. Shell and both agents
-still require their measurements and open-phase kernel matches. The human
-Desktop bank has not run.</p>
-
-<p>Registry and Settings show readable health reasons, event latency and received
-lines per second. Time since the last received event is shown separately:
-silence is not proof of collector delay. Query and CSV metadata retain these
-measurements, even for zero results. The default subscription includes
-<code>open close write create rename unlink mount unmount truncate exec fork exit</code>,
-excluding the high-volume <code>lookup</code> and <code>mmap</code> events; historical
-records remain readable. A raw-byte prefilter skips unrelated file events
-before JSON parsing, handles watched-root aliases and escaped or normalized
-paths, and keeps exec/fork/exit for ancestry. Sequence checks include skipped
-lines, preserving reported dropped-event detection.</p>
-
-<p>Build the app with <code>python3 strumenti/build-app.py --render-fixtures</code>;
-the output is <code>build.noindex/Paratia.app</code>, with an icon rendered from
-the repository SVG and converted using <code>iconutil</code>.
-After installing it, follow the GUI guide's single manual administrator command
-to prepare <code>/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app</code>.
-Open that separate copy and use <strong>Impostazioni → Installa il registro…</strong>
-and the macOS administrator dialog. The bootstrap verifies root ownership,
-write permissions, ACLs, all ancestors and sealed resources before authorization;
-it does not change <code>/Applications</code> permissions. After the new copy is
-verified, the command removes the old bootstrap app and root-owned staging
-directories. The <code>.noindex</code> parent excludes the bootstrap from Spotlight.
-The daemon launches the native
-binary in a signed, root-protected app copy, keeping Python and eslogger as
-children. Enable <strong>/Applications/Paratia.app</strong> in Full Disk Access;
-remove and re-add that entry after every new ad hoc build and reinstall the
-registry after refreshing the bootstrap copy. Do not enable Python 3.9.
-The supervisor published Giro 4 (<code>f54b403</code>) and Eugenio installed app,
-bootstrap and service and completed Full Disk Access. On 14 October 2026,
-03:40–03:46 Europe/Madrid, the supervisor confirmed live zsh create/write,
-cat and ls open/close, Claude access marked as agent, Finder, Spotlight and
-Open/Save-panel events. That run also exposed excessive CPU, delayed events and
-reported drops. Giro 6 was published (<code>91914a0</code>) and installed, but its
-registry installation failed and left the service unloaded. Giro 7 waits for
-launchd removal, retries race errors and shows the installer message and code,
-including rollback failure. It awaits a new build, reinstallation/FDA refresh
-and live performance verification; synthetic throughput does not establish
-the live idle-CPU and latency targets.</p>
-
-<p>When the installed service requires an update, Registry links to Settings,
-which displays the steps in order: close the app, refresh the bootstrap, install
-from that copy, close it, remove/re-add the normal app's Full Disk Access entry,
-then reopen and verify the service, acknowledged IDs and a new eslogger event.
-A differing build identity and an unavailable installed identity produce
-distinct messages; an unknown identity is not called a verified difference.</p>
-
-<p>While a compartment is open, the gate allows <code>paratia cartella chiudi &lt;id&gt;</code>,
-<code>paratia cartella chiudi-tutte</code>, <code>paratia cartella elenco</code>,
-<code>paratia lock</code>, <code>paratia status</code> and <code>paratia status --json</code>.
-These exceptions require the root-protected bootstrap CLI, all its Python
-resources and ancestors, and an isolated protected Apple runtime. Equivalent
-absolute paths and <code>~/.local/bin/paratia</code> must resolve to that copy.
-The writable repository has no exception: close from Paratia or Finder.
-This blocks importing a module altered while the folder was closed through a
-later exempt status/close call; user-owned harness settings remain mutable.</p>
-
-<p>Read the <a href="https://github.com/nerln/paratia/blob/master/docs/gui-mac.md">GUI guide</a>,
-<a href="https://github.com/nerln/paratia/blob/master/docs/registro-accessi.md">registry limits</a>
-and <a href="https://github.com/nerln/paratia/blob/master/docs/stato-2026-10.md">October 2026 verification report</a>.
-The app is signed ad hoc and is not notarized.</p>
-
-<h2>Where it came from</h2>
-
-<p>The reason the guard exists in this shape is a measurement. Two coding agents
-from different vendors, wired together by a local bridge on one laptop, form a
-system neither vendor&rsquo;s authorization layer describes. Nothing crosses
-between them but a sentence: no token, no credential that could be attenuated in
-transit.</p>
-
-<p>Blocked from a capability, an agent routed the request to its peer in 23 of 28
-trials, on the first turn, with nothing in its instructions pointing that way.
-Whether the peer complied was decided almost entirely by which vendor it was.
-And in the conditions where the system held, the thing holding it was a sentence
-a model produced about who was asking &mdash; written in no policy file, enforced
-by no runtime.</p>
-
-<p>Then the telemetry, which is the part that surprised us:</p>
-
-<blockquote>Provenance is not missing. It is built, in detail, and correctly
-&mdash; parent thread, nesting depth, agent path &mdash; and it stops exactly
-where each vendor&rsquo;s own product stops.</blockquote>
-
-<p>Of 59 programmatically launched sessions on one side, 38 are recorded as having
-originated with a <em>user</em>. The provenance layer has already been built. It
-has only ever been pointed inward.</p>
-
-<p>The paper, the transcripts and the audit tool are in the repository.</p>
-
-<h2>What each layer is actually worth</h2>
-
-<div class="scroll">
-<table>
-<thead><tr><th>Mechanism</th><th>Holds against</th><th>Honest limit</th></tr></thead>
-<tbody>
-<tr><td>AES-256 image, locked</td><td>every process at every privilege level</td><td>only while locked</td></tr>
-<tr><td>Passphrase only in your head</td><td>any agent, unconditionally</td><td>you type it by hand, every time</td></tr>
-<tr><td>Mount-state invariant</td><td>base64, quoting, symlinks, <code>sh -c</code></td><td>only sessions running the hook</td></tr>
-<tr><td>Zone</td><td>another account, a stolen disk, the cloud copy</td><td><strong>not</strong> the session working inside it</td></tr>
-<tr><td>Provenance gate</td><td>one agent asking a second for what it may not do</td><td>one-sided until both harnesses run it</td></tr>
-<tr><td>Forced command over SSH</td><td>a bridge key becoming a shell</td><td>lives on the far machine, so you must install it there</td></tr>
-<tr><td>Seal and attest</td><td>nothing. It reports</td><td>detection, never prevention</td></tr>
-<tr><td>Label</td><td>nothing. It records a decision</td><td>a file the agent can rewrite. <code>applica</code> is what protects the bytes</td></tr>
-</tbody>
-</table>
-</div>
-
-<p>Two of those are tamper-<em>evident</em> rather than tamper-proof: an agent
-running as you can rewrite your policy and harness settings, including which
-hook runs. Root-protected bootstrap resources resist that UID and are required
-for open-folder exemptions. Your harness configuration remains mutable.</p>
-
-<h2>Install</h2>
-
-<pre><code><span class="c"># the command</span>
-pipx install git+https://github.com/nerln/paratia.git
-
-<span class="c"># check this machine, then make the compartment in YOUR terminal</span>
-paratia doctor
-paratia init
-
-<span class="c"># what a second account would and would not protect here</span>
-paratia esposizione</code></pre>
-
-<p>macOS, Python 3.11+, no third-party packages. The app can review and connect
-the hooks using root-protected Apple Command Line Tools Python 3.9+.
-Activation and harness trust remain your choice after reviewing the plan.</p>
-
-<h2>Read before trusting it</h2>
-
-<ul>
-<li><a href="https://github.com/nerln/paratia/blob/master/docs/architettura.md">architettura.md</a> &mdash; nine mechanisms and what each one actually guarantees</li>
-<li><a href="https://github.com/nerln/paratia/blob/master/docs/confini.md">confini.md</a> &mdash; where a second account buys nothing, and why <code>noowners</code> voids it silently</li>
-<li><a href="https://github.com/nerln/paratia/blob/master/docs/ponte-ssh.md">ponte-ssh.md</a> &mdash; two machines, and the key that cannot open a shell</li>
-<li><a href="llms.txt">llms.txt</a> &mdash; the operating manual for an agent using this instead of a person</li>
-</ul>
-
-<h2>Name</h2>
-
-<p>A <em>paratia stagna</em> is a watertight bulkhead. It is not a lock and it
-inspects nothing. It is a wall in a place chosen so that what gets through it
-cannot reach what matters.</p>
+</main>
 
 <footer>
-<p><a href="https://github.com/nerln/paratia">github.com/nerln/paratia</a> &middot; GPL-3.0 &middot; Eugenio Nerelli</p>
+  <p><a href="https://github.com/nerln/paratia">github.com/nerln/paratia</a> · GPL-3.0</p>
 </footer>
 
 </div>
