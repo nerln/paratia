@@ -83,15 +83,9 @@ def healthy_state(**extra):
 
 
 @pytest.mark.parametrize("extra,code", [
-    ({"event_lag_seconds": 180}, "event_delay"),
-    ({"dropped_events": 6, "last_dropped_at": time.time()}, "dropped_events"),
-    ({"watch_status": [{"id": "second", "status": "rejected", "reason_code": "owner_mismatch"}]}, "rejected_watches"),
-    ({"watch_status": [{"id": None, "status": "rejected", "reason_code": "invalid_entry"}]}, "rejected_watches"),
-    ({"watched_ids": []}, "no_watched_folders"),
     ({"running": False}, "not_running"),
     ({"needs_fda": True}, "needs_fda"),
     ({"schema_supported": False}, "schema_unsupported"),
-    ({"healthy": False}, "diagnostics"),
 ])
 def test_every_unhealthy_cause_has_a_readable_safe_reason(R, monkeypatch, extra, code):
     monkeypatch.setattr(R, "_servizio_installato", lambda uid: (True, "app"))
@@ -100,6 +94,24 @@ def test_every_unhealthy_cause_has_a_readable_safe_reason(R, monkeypatch, extra,
     assert not status["healthy"]
     assert code in {reason["code"] for reason in status["health_reasons"]}
     assert all(reason["message"] for reason in status["health_reasons"])
+
+
+@pytest.mark.parametrize("extra,code", [
+    ({"event_lag_seconds": 180}, "event_delay"),
+    ({"dropped_events": 6, "last_dropped_at": time.time()}, "dropped_events"),
+    ({"watch_status": [{"id": "second", "status": "rejected", "reason_code": "owner_mismatch"}]}, "rejected_watches"),
+    ({"watch_status": [{"id": None, "status": "rejected", "reason_code": "invalid_entry"}]}, "rejected_watches"),
+    ({"watched_ids": []}, "no_watched_folders"),
+    ({"healthy": False}, "diagnostics"),
+])
+def test_a_working_registry_reports_problems_as_notices_not_blocks(R, monkeypatch, extra, code):
+    monkeypatch.setattr(R, "_servizio_installato", lambda uid: (True, "app"))
+    write_state(R, healthy_state(**extra))
+    status = R.stato()
+    assert status["healthy"] and status["health_reasons"] == []
+    assert code in {reason["code"] for reason in status["notices"]}
+    assert all(reason["message"] for reason in status["notices"])
+    assert "avvisi" in status["message"]
 
 
 def test_loss_older_than_ten_minutes_keeps_the_total_but_not_the_health_block(R, monkeypatch):
@@ -111,12 +123,12 @@ def test_loss_older_than_ten_minutes_keeps_the_total_but_not_the_health_block(R,
     assert status["healthy"] and status["health_reasons"] == []
 
 
-def test_loss_inside_the_window_blocks_health_with_the_cumulative_count(R, monkeypatch):
+def test_loss_inside_the_window_is_a_notice_with_the_cumulative_count(R, monkeypatch):
     monkeypatch.setattr(R, "_servizio_installato", lambda uid: (True, "app"))
     write_state(R, healthy_state(dropped_events=6, last_dropped_at=time.time() - 590))
     status = R.stato()
-    reasons = {reason["code"]: reason["message"] for reason in status["health_reasons"]}
-    assert not status["healthy"] and "dropped_events" in reasons
+    reasons = {reason["code"]: reason["message"] for reason in status["notices"]}
+    assert status["healthy"] and "dropped_events" in reasons
     assert "negli ultimi 10 minuti" in reasons["dropped_events"]
     assert status["dropped_events"] == 6
 
@@ -206,11 +218,11 @@ def test_anonymous_file_rejection_has_visible_specific_reason_once(R, monkeypatc
                 "message": "RAW_PRIVATE_PAYLOAD"}
     write_state(R, healthy_state(watch_status=[rejected, rejected]))
     status = R.stato()
-    reasons = status["health_reasons"]
+    reasons = status["notices"]
     assert len([value for value in reasons if value["code"] == "watch_config_unreadable"]) == 1
     assert any("file di configurazione" in value["message"] for value in reasons)
     assert "RAW_PRIVATE_PAYLOAD" not in json.dumps(reasons)
-    assert not status["healthy"]
+    assert status["healthy"]
 
 
 @pytest.mark.parametrize("warning", ["folder_absent", "volume_validation_timeout"])
@@ -256,7 +268,9 @@ def test_build_identity_comparison_and_minimal_ordered_update_steps(
     assert status["needs_update"] is required
     assert status["build_comparison"] == comparison
     if required:
-        assert status["needs_reinstall"] and not status["healthy"]
+        # A service from an older build still records: the update is advice.
+        assert not status["needs_reinstall"] and status["healthy"]
+        assert "build_outdated" in {reason["code"] for reason in status["notices"]}
         assert len(status["update_steps"]) == 6
         steps = status["update_steps"]
         assert "Chiudi" in steps[0] and "ParatiaBootstrap.noindex/Paratia.app" in steps[1]
@@ -266,6 +280,32 @@ def test_build_identity_comparison_and_minimal_ordered_update_steps(
         assert "eslogger" in steps[5]
     if comparison == "unavailable":
         assert "diversa" not in status["update_message"]
+
+
+@pytest.mark.parametrize("same_code", [True, False])
+def test_service_code_fingerprint_decides_the_update_not_the_app_cdhash(R, monkeypatch, tmp_path, same_code):
+    app = tmp_path / "python"
+    app.mkdir()
+    for nome in R.CODICE_SERVIZIO:
+        (app / nome).write_text("# " + nome)
+    servizio = R.impronta_servizio(app)
+    if not same_code:
+        (app / "registro.py").write_text("# changed")
+    monkeypatch.setattr(R, "APP_PYTHON", app)
+    monkeypatch.setattr(R, "_servizio_installato", lambda uid: (True, "app"))
+    monkeypatch.setattr(R, "_cdhash_app", lambda path: "b" * 40)
+    write_state(R, healthy_state(installed_cdhash="a" * 40, servizio_impronta=servizio))
+    status = R.stato()
+    assert status["build_comparison"] == ("equal" if same_code else "different")
+    assert status["needs_update"] is (not same_code)
+    assert status["healthy"] and status["health_reasons"] == []
+
+
+def test_service_fingerprint_needs_every_service_file(R, tmp_path):
+    assert R.impronta_servizio(tmp_path) is None
+    for nome in R.CODICE_SERVIZIO:
+        (tmp_path / nome).write_text(nome)
+    assert len(R.impronta_servizio(tmp_path)) == 64
 
 
 def test_cdhash_is_read_only_and_limited_to_fixed_paratia_paths(R, monkeypatch):

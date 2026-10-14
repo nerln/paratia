@@ -23,6 +23,7 @@ def _t(testo, **valori):
 import csv
 import datetime
 import fcntl
+import hashlib
 import io
 import importlib.util
 import json
@@ -164,6 +165,26 @@ class Discendenza:
         # Account labels are a bounded session snapshot. Audit-token UID and
         # PID/pidversion remain authoritative and are never inferred from names.
         self.nomi_uid = {}
+        self.terminati = set()
+
+    def pota(self):
+        """Forget exited processes, except those a living process descends from."""
+        tenere = set()
+        for identita in self.processi:
+            if identita in self.terminati:
+                continue
+            corrente, passi = identita, 0
+            while corrente and corrente not in tenere and passi < 256:
+                tenere.add(corrente)
+                nodo = self.processi.get(corrente)
+                if not nodo:
+                    break
+                if nodo.get("responsible"):
+                    tenere.add(nodo["responsible"])
+                corrente, passi = nodo.get("parent"), passi + 1
+        for identita in self.terminati - tenere:
+            self.processi.pop(identita, None)
+        self.terminati &= tenere
 
     def ricorda(self, p):
         identita = _identita(p)
@@ -176,6 +197,8 @@ class Discendenza:
     def aggiorna(self, tipo, msg, evento):
         p = msg.get("process", {})
         self.ricorda(p)
+        if tipo == "exit" and _identita(p):
+            self.terminati.add(_identita(p))
         if tipo in ("fork", "exec"):
             target = evento.get("child" if tipo == "fork" else "target", {})
             self.ricorda(target)
@@ -407,7 +430,10 @@ class Osservatore:
         self.schema_fatale = self.schema_fatale or any(r.get("motivo") == "schema-eslogger-non-supportato" for r in records)
         records = self.aggiorna_sequenze(msg) + records
         if len(self.discendenza.processi) > 50000:
+            self.discendenza.pota()
+        if len(self.discendenza.processi) > 50000:
             self.discendenza.processi.clear()
+            self.discendenza.terminati.clear()
             records.insert(0, _diagnostico("cache-discendenza-azzerata"))
             self.sano = False
         return self._scrivi(records)
@@ -1153,6 +1179,7 @@ def raccolta_kernel(filters=None):
         "dropped_events": _intero(salute.get("dropped_events")),
         "last_dropped_at": _numero_finito(salute.get("last_dropped_at")),
         "watch_status": watched, "health_reasons": salute.get("health_reasons", []),
+        "notices": salute.get("notices", []),
         "event_lag_seconds": _numero_finito(salute.get("event_lag_seconds")),
         "last_event_received_at": _numero_finito(salute.get("last_event_received_at")),
         "last_event_age_seconds": _numero_finito(salute.get("last_event_age_seconds")),
@@ -1336,26 +1363,54 @@ def _cdhash_app(app):
         return None
 
 
+CODICE_SERVIZIO = ("catena.py", "messaggi.py", "registro.py", "registro_daemon.py")
+APP_PYTHON = Path("/Applications/Paratia.app/Contents/Resources/python")
+
+
+def impronta_servizio(cartella):
+    """sha256 over the code the service runs; None if a file is unreadable.
+
+    The daemon computes it on its own root-owned copy, the GUI on the app's:
+    a rebuild that leaves this code unchanged does not ask for an update.
+    """
+    h = hashlib.sha256()
+    for nome in CODICE_SERVIZIO:
+        try:
+            dati = (Path(cartella) / nome).read_bytes()
+        except OSError:
+            return None
+        h.update(nome.encode("ascii") + b"\0" + len(dati).to_bytes(8, "big") + dati)
+    return h.hexdigest()
+
+
 def _identita_build(value):
     return value.lower() if isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]{40,64}", value) else None
 
 
 def _aggiornamento_build(dati, installed):
+    """Compare the service's code with the app's. An update is advice, never a block."""
     previous = _identita_build(dati.get("installed_cdhash"))
     current = _cdhash_app("/Applications/Paratia.app") if installed else None
-    comparison = "different" if previous and current and previous != current else (
-        "equal" if previous and current else "unavailable")
+    servizio = dati.get("servizio_impronta")
+    servizio = servizio if isinstance(servizio, str) and re.fullmatch(r"[0-9a-f]{64}", servizio) else None
+    codice = impronta_servizio(APP_PYTHON) if installed and servizio else None
+    if servizio and codice:
+        # Same service code: a rebuilt GUI does not need a new service.
+        comparison = "different" if servizio != codice else "equal"
+    else:
+        comparison = "different" if previous and current and previous != current else (
+            "equal" if previous and current else "unavailable")
     # The older collector has no identity field. Its root-only service bundle
-    # cannot be inspected by this user's GUI: request an update honestly rather
+    # cannot be inspected by this user's GUI: suggest an update honestly rather
     # than pretending to have compared two hashes.
-    required = (comparison == "different" or (installed and previous is None))
-    message = (_t("Il servizio installato appartiene a una build diversa da /Applications/Paratia.app.")
+    required = (comparison == "different" or (installed and previous is None and servizio is None))
+    message = (_t("Il servizio del registro viene da una versione precedente. Continua a funzionare: aggiornalo quando vuoi, serve la password di amministratore.")
                if comparison == "different" else
                _t("Identità della build installata non disponibile: aggiorna il registro per verificarla.")
                if required else
                _t("Il servizio e l'app normale appartengono alla stessa build.") if comparison == "equal" else
                _t("Non è possibile confrontare le identità delle build. Verifica la nuova app normale prima di aggiornare."))
-    return {"installed_cdhash": previous, "app_cdhash": current,
+    return {"installed_cdhash": previous, "app_cdhash": current, "servizio_impronta": servizio,
             "build_comparison": comparison, "needs_update": required if installed else False,
             "update_message": message, "update_steps": list(PASSI_AGGIORNAMENTO)}
 
@@ -1464,6 +1519,11 @@ def _modo_firma_app():
     return None
 
 
+# Only these mean the registry is not recording. Losses, delays, a service from
+# an older build or a rejected folder are notices: the registry still works.
+BLOCCANTI = {"not_running", "needs_fda", "stale_state", "schema_unsupported"}
+
+
 def stato():
     uid = os.getuid()
     dati = {}
@@ -1517,7 +1577,9 @@ def stato():
         reasons.insert(0, {"code": "stale_state", "message": _t("Lo stato del raccoglitore non è recente o non è leggibile.")})
     if result["needs_update"]:
         reasons.append({"code": "build_outdated", "message": result["update_message"]})
-        result["needs_reinstall"] = True
-    result["health_reasons"] = reasons
-    result["healthy"] = result["healthy"] and not reasons
+    result["health_reasons"] = [r for r in reasons if r["code"] in BLOCCANTI]
+    result["notices"] = [r for r in reasons if r["code"] not in BLOCCANTI]
+    result["healthy"] = bool(result["running"] and result["needs_fda"] is False and not result["health_reasons"])
+    if result["healthy"]:
+        result["message"] = _t("Registro attivo, con avvisi: leggili sotto.") if result["notices"] else _t("Registro attivo.")
     return result

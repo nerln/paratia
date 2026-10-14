@@ -385,7 +385,8 @@ def main(argv=None):
                     "drop_detection_available": False, "watched_ids": [v["id"] for v in osservatore.protetti],
                     "watch_status": [], "schema_supported": None,
                     "diagnostic_counts": {}, **flusso.metriche(),
-                    "installed_cdhash": R._cdhash_app(SUPPORT / "Paratia.app")}
+                    "installed_cdhash": R._cdhash_app(SUPPORT / "Paratia.app"),
+                    "servizio_impronta": R.impronta_servizio(SUPPORT)}
     applica_configurazione(R, osservatore, flusso, informazioni, configurazione, sink)
     informazioni["health_reasons"] = R.motivi_salute(informazioni)
     scrivi_stato(stato, informazioni)

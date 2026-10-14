@@ -477,7 +477,8 @@ def test_worker_reused_watch_explicitly_renames_with_original_id(isolated_app, f
 
 
 @pytest.mark.parametrize("change,active", [
-    ({}, True), ({"running": False}, False), ({"healthy": False}, False),
+    # The collector's own unhealthy flag is a notice: collection is still active.
+    ({}, True), ({"running": False}, False), ({"healthy": False}, True),
     ({"needs_fda": None}, False), ({"needs_fda": True}, False),
     ({"schema_supported": False}, False), ({"watched_ids": []}, False),
     ({"heartbeat": 0}, False),

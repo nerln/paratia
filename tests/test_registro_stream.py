@@ -441,3 +441,46 @@ def test_synthetic_mixed_stream_exceeds_conservative_throughput_floor():
     assert result["lines_per_second"] >= 10000, result
     assert result["filtered_lines"] == 9500 and result["parsed_lines"] == 500
     assert result["written_records"] == 400 and result["dropped_events"] == 0
+
+
+def lifetime(pid, sequence, kind):
+    msg = message(sequence=sequence, kind=kind)
+    msg["process"] = {**msg["process"], "audit_token": {"pid": pid, "pidversion": 1, "euid": os.getuid()}}
+    if kind == "exec":
+        msg["event"]["exec"]["target"] = {**msg["process"], "executable": {"path": "/bin/cat"}}
+    return msg
+
+
+def test_a_busy_mac_forgets_exited_processes_instead_of_resetting_the_ancestry(monkeypatch):
+    records = []
+    observer = R.Osservatore([{"id": "watch", "origine": ROOT}], records.append)
+    sequence = 0
+    for pid in range(1000, 1000 + 60000):
+        for kind in ("exec", "exit"):
+            sequence += 1
+            observer.ricevi(lifetime(pid, sequence, kind))
+    living = lifetime(99999, sequence + 1, "exec")
+    observer.ricevi(living)
+    assert observer.sano is True
+    assert not [r for r in records if r.get("motivo") == "cache-discendenza-azzerata"]
+    assert (99999, 1) in observer.discendenza.processi  # A living process keeps its lineage.
+    assert len(observer.discendenza.processi) <= 50001
+
+
+def test_pruning_keeps_the_exited_shell_between_an_agent_and_its_child():
+    d = R.Discendenza()
+    agent = {"audit_token": {"pid": 10, "pidversion": 1}, "executable": {"path": "/usr/local/bin/codex"},
+             "parent_audit_token": {"pid": 1, "pidversion": 1}}
+    shell = {"audit_token": {"pid": 11, "pidversion": 1}, "executable": {"path": "/bin/zsh"},
+             "parent_audit_token": {"pid": 10, "pidversion": 1}}
+    child = {"audit_token": {"pid": 12, "pidversion": 1}, "executable": {"path": "/usr/bin/python3"},
+             "parent_audit_token": {"pid": 11, "pidversion": 1}}
+    gone = {"audit_token": {"pid": 13, "pidversion": 1}, "executable": {"path": "/bin/ls"},
+            "parent_audit_token": {"pid": 11, "pidversion": 1}}
+    for p in (agent, shell, child, gone):
+        d.ricorda(p)
+    d.aggiorna("exit", {"process": shell}, {})
+    d.aggiorna("exit", {"process": gone}, {})
+    d.pota()
+    assert (11, 1) in d.processi and (13, 1) not in d.processi
+    assert d.classifica(child)["agente"] is True
