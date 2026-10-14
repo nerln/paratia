@@ -56,6 +56,39 @@ def test_cli_configured_watch_stays_inactive_until_healthy_ack(cli, capsys):
     assert json.loads(capsys.readouterr().out)["raccolta_attiva"] is True
 
 
+def test_cli_state_reports_observed_delay_rate_and_readable_reasons(cli, capsys):
+    _, _, _, state = cli
+    state.update(event_lag_seconds=3.2, last_event_received_at=123,
+                 last_event_age_seconds=1.5, lines_per_second=42000,
+                 health_reasons=[{"code": "event_delay", "message": "Gli eventi sono in ritardo."}])
+    assert invoke(cli, ["stato"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["event_lag_seconds"] == 3.2 and result["lines_per_second"] == 42000
+    assert result["last_event_age_seconds"] == 1.5
+    assert result["health_reasons"][0]["code"] == "event_delay"
+
+
+def test_cli_sorveglianza_reports_refusal_per_id_and_preserves_other_watch(cli, capsys):
+    _, r, folder, state = cli
+    invoke(cli, ["sorveglia", str(folder), "--id", "first"])
+    capsys.readouterr()
+    other = folder.parent / "other-safe-watch"
+    other.mkdir()
+    invoke(cli, ["sorveglia", str(other), "--id", "second"])
+    capsys.readouterr()
+    state.update(running=True, healthy=False, watched_ids=["first"], watch_status=[
+        {"id": "first", "status": "confirmed"},
+        {"id": "second", "status": "rejected", "reason_code": "owner_mismatch", "message": "RAW_PRIVATE_MESSAGE"},
+    ])
+    assert invoke(cli, ["sorveglianza"]) == 0
+    result = {row["id"]: row for row in json.loads(capsys.readouterr().out)}
+    assert result["first"]["raccolta"] == "confermata"
+    assert result["second"]["raccolta"] == "rifiutata"
+    assert "rifiutata dal raccoglitore" in result["second"]["message"].lower()
+    assert "RAW_PRIVATE_MESSAGE" not in result["second"]["message"]
+    assert len(r.leggi_sorveglianza(r.CASA / "registro" / "sorveglianza.json", os.getuid())) == 2
+
+
 @pytest.mark.parametrize("verb", ["elenco", "esporta"])
 def test_empty_cli_output_warns_that_collection_is_stopped(cli, capsys, verb):
     assert invoke(cli, [verb]) == 0

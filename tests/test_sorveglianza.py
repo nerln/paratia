@@ -86,7 +86,9 @@ def test_listing_is_metadata_only_and_watch_does_not_encrypt_or_move(R, folder, 
     assert "raccolta non attiva" in result["messaggio"]
     assert rows == [{"id": "documenti-1", "nome": "Documenti di prova", "origine": str(folder),
                      "percorso": str(folder), "tipo": "sorveglianza", "esiste": True,
-                     "configurata": True, "raccolta_attiva": False}]
+                     "configurata": True, "raccolta_attiva": False,
+                     "raccolta": "configurata", "reason_code": None,
+                     "message": "Cartella configurata; conferma del raccoglitore ancora assente."}]
     assert CONTENT.decode() not in json.dumps(rows)
     assert CONTENT not in watch_file(R).read_bytes()
     assert (folder / "sintetico.txt").read_bytes() == CONTENT
@@ -125,7 +127,8 @@ def test_listing_projects_validated_metadata_from_user_configuration(R, folder):
         "password": KEY.decode(), "stato": "protetta", "healthy": True,
     }}}), encoding="utf-8")
     row = R.elenco_sorveglianza()[0]
-    assert set(row) == {"id", "nome", "origine", "percorso", "tipo", "esiste", "configurata", "raccolta_attiva"}
+    assert set(row) == {"id", "nome", "origine", "percorso", "tipo", "esiste", "configurata", "raccolta_attiva",
+                        "raccolta", "reason_code", "message"}
     assert row["configurata"] is True and row["raccolta_attiva"] is False
     assert row["nome"] == "Nome umano"
     assert CONTENT.decode() not in json.dumps(row)
@@ -135,10 +138,6 @@ def test_listing_projects_validated_metadata_from_user_configuration(R, folder):
 
 @pytest.mark.parametrize("data", [
     {"versione": 2, "percorsi": {}}, {"versione": 1, "percorsi": []},
-    {"versione": 1, "percorsi": {"../escape": {"percorso": "/"}}},
-    {"versione": 1, "percorsi": {"id": []}},
-    {"versione": 1, "percorsi": {"id": {"percorso": "relative"}}},
-    {"versione": 1, "percorsi": {"id": {"percorso": "/"}}},
 ])
 def test_listing_refuses_invalid_user_store_without_rewriting(R, data):
     p = watch_file(R)
@@ -148,6 +147,35 @@ def test_listing_refuses_invalid_user_store_without_rewriting(R, data):
     with pytest.raises(ValueError):
         R.elenco_sorveglianza()
     assert p.read_bytes() == before
+
+
+@pytest.mark.parametrize("entry", [[], {"percorso": "relative"}, {"percorso": "/"}])
+def test_listing_retains_rejected_entry_without_invalidating_valid_watch(R, folder, entry):
+    R.sorveglia("valida", folder)
+    p = watch_file(R)
+    dati = json.loads(p.read_text())
+    dati["percorsi"]["rifiutata"] = entry
+    p.write_text(json.dumps(dati))
+    before = p.read_bytes()
+    rows = {v["id"]: v for v in R.elenco_sorveglianza()}
+    assert rows["valida"]["raccolta"] == "configurata"
+    assert rows["rifiutata"]["raccolta"] == "rifiutata"
+    assert rows["rifiutata"]["raccolta_attiva"] is False
+    assert p.read_bytes() == before
+
+
+def test_collector_rejection_is_visible_after_configuring_and_in_cli_listing(R, folder, monkeypatch):
+    salute = {"running": True, "healthy": True, "needs_fda": False, "watched_ids": ["watch"],
+              "watch_status": [{"id": "watch", "status": "rejected", "reason_code": "owner_mismatch",
+                                "message": "PRIVATE-CONTENTS-MUST-NOT-APPEAR"}]}
+    monkeypatch.setattr(R, "stato", lambda: salute)
+    result = R.sorveglia("watch", folder)
+    row = R.elenco_sorveglianza()[0]
+    assert result["raccolta_attiva"] is row["raccolta_attiva"] is False
+    assert result["raccolta"] == row["raccolta"] == "rifiutata"
+    assert "Rifiutata dal raccoglitore:" in result["messaggio"]
+    assert row["reason_code"] == "owner_mismatch"
+    assert "PRIVATE-CONTENTS" not in json.dumps([result, row])
 
 
 def test_listing_refuses_corrupt_oversized_or_wrong_owner_store(R, folder, monkeypatch):
@@ -254,6 +282,8 @@ def isolated_app(tmp_path):
     with (app / "registro.py").open("a", encoding="utf-8") as output:
         output.write("\nSYSTEM = Path(" + repr(str(base / "collector" / "logs")) + ")\n")
         output.write("SUPPORT = Path(" + repr(str(base / "collector" / "support")) + ")\n")
+        output.write("_servizio_installato = lambda uid: (True, 'app')\n")
+        output.write("_cdhash_app = lambda *args: 'a' * 40\n")
     env = dict(os.environ, HOME=str(home), PARATIA_HOME=str(home / ".paratia"))
     return {"app": app, "home": home, "state": home / ".paratia", "env": env}
 
@@ -372,6 +402,27 @@ def test_worker_watch_list_remove_use_real_backend_routes(isolated_app, folder):
     assert (folder / "sintetico.txt").read_bytes() == CONTENT
 
 
+def test_cli_and_worker_show_collector_rejection_with_fixed_reason(isolated_app, folder):
+    assert cli(isolated_app, "sorveglia", str(folder), "--id", "watch-rejected").returncode == 0
+    status = isolated_app["home"].parent / "collector" / "logs" / str(os.getuid()) / "stato.json"
+    status.parent.mkdir(parents=True)
+    status.write_text(json.dumps({"heartbeat": time.time(), "running": True, "healthy": False,
+                                  "needs_fda": False, "schema_supported": True,
+                                  "installed_cdhash": "a" * 40, "watched_ids": [],
+                                  "watch_status": [{"id": "watch-rejected", "status": "rejected",
+                                                    "reason_code": "noowners_volume_unverified",
+                                                    "message": CONTENT.decode()}]}))
+    listed = cli(isolated_app, "sorveglianza")
+    assert listed.returncode == 0
+    rows = json.loads(listed.stdout)
+    assert rows[0]["raccolta"] == "rifiutata"
+    assert rows[0]["reason_code"] == "noowners_volume_unverified"
+    assert "Rifiutata dal raccoglitore:" in rows[0]["message"]
+    assert CONTENT.decode() not in listed.stdout
+    response = worker(isolated_app, "registro.elenco_sorveglianza", {})
+    assert response["ok"] and response["result"] == rows
+
+
 @pytest.mark.parametrize("configured", ["watch", "protected"])
 def test_worker_query_and_csv_resolve_folder_path_with_real_backend(isolated_app, folder, monkeypatch, configured):
     monkeypatch.setenv("PARATIA_HOME", str(isolated_app["state"]))
@@ -436,6 +487,7 @@ def test_worker_empty_query_and_export_show_scoped_collection_metadata(isolated_
     status.parent.mkdir(parents=True)
     status.write_text(json.dumps({"heartbeat": time.time(), "running": True, "healthy": True,
                                   "needs_fda": False, "schema_supported": True,
+                                  "installed_cdhash": "a" * 40,
                                   "watched_ids": ["watch-1"], "message": "PRIVATE-UNTRUSTED-STATUS", **change}))
     filters = {"folder": str(folder)}
     response = worker(isolated_app, "registro.query", {"filters": filters})
