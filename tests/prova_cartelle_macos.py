@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Disposable native migration check; the production external-disk guard is tested separately."""
+"""Disposable native check: protect on the same disk, reopen, close, remove protection."""
 from __future__ import annotations
 
 import importlib.util
@@ -21,11 +21,9 @@ def prova() -> dict:
     C = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = C
     spec.loader.exec_module(C)
-    # This disposable test uses internal temporary storage, never the real bank.
-    C._esterno = lambda path: None
-    source, disk = base / "source", base / "temporary-disk"
+    # Internal temporary storage, never the real bank; the image goes on the same disk.
+    source = base / "source"
     source.mkdir()
-    disk.mkdir()
     (source / "subfolder").mkdir()
     (source / "synthetic.txt").write_text("DATI SINTETICI PARATIA.\n")
     (source / "subfolder" / "binary.bin").write_bytes(bytes(range(256)) * 1024)
@@ -55,21 +53,29 @@ def prova() -> dict:
     C._verifica = verify_with_diagnostics
     key = secrets.token_urlsafe(48).encode()
     try:
-        entry = C.proteggi(source, disk, key, 1)
+        entry = C.proteggi(source, None, key, 1)
         assert entry["stato"] == "chiusa"
+        assert Path(entry["bundle"]).parent == C.CASA / "compartimenti.noindex"
         assert not (source / "synthetic.txt").exists()
         assert C.elenco()[0]["file"] == 3
         assert C.elenco()[0]["byte"] == C._totali(expected)[1]
         entry = C.apri(entry["id"], key, 1)
         assert entry["stato"] == "aperta"
         C._verifica(source, expected, entry.get("metadir"))
+        (source / "added-while-open.txt").write_text("SCRITTO A CARTELLA APERTA.\n")
         C.chiudi(entry["id"])
         assert not (source / "synthetic.txt").exists()
         assert C.elenco()[0]["stato"] == "chiusa"
-        return {"dati": "sintetici", "destinazione": "temporanea interna, solo test",
+        tolta = C.togli_protezione(entry["id"], key)
+        assert tolta["stato"] == "non-protetta" and not Path(entry["bundle"]).exists()
+        assert (source / "added-while-open.txt").read_text() == "SCRITTO A CARTELLA APERTA.\n"
+        (source / "added-while-open.txt").unlink()
+        C._verifica(source, expected)
+        assert C.elenco() == []
+        return {"dati": "sintetici", "destinazione": "stesso disco, cartella nascosta",
                 "migrazione": True, "verifica_hash_conteggi_byte": True,
                 "xattr_resource_fork": True, "timer_confermato": True,
-                "riapertura": True, "stato_finale": "chiusa"}
+                "riapertura": True, "protezione_tolta": True, "stato_finale": "file normali"}
     finally:
         key = b""
         for entry in C.elenco():

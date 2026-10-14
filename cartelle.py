@@ -232,8 +232,9 @@ def _punto_montaggio(dove: Path) -> Path:
         raise Rifiuto(_t("Impossibile individuare il volume della destinazione.")) from e
 
 
-def _esterno(dove: Path) -> None:
-    rifiuto = _t("Scegli una cartella su un disco esterno fisico; le immagini disco non sono ammesse.")
+def _disco_fisico(dove: Path) -> None:
+    """Accept a physical disk, internal or external; refuse disk images and virtual disks."""
+    rifiuto = _t("Scegli una cartella su un disco fisico, del Mac o collegato: le immagini disco non sono ammesse.")
     cache = {}
 
     def info(percorso):
@@ -275,8 +276,10 @@ def _esterno(dove: Path) -> None:
             fisico(dispositivo(parent), (*antenati, percorso))
             return
         intero = dati.get("DeviceIdentifier", percorso)
+        # Apple silicon reports its internal SSD as "Unknown", never as "Physical".
+        interno_apple = dati.get("Internal") is True and dati.get("VirtualOrPhysical") == "Unknown"
         if (not isinstance(intero, str) or not re.fullmatch(r"disk[0-9]+", intero)
-                or dati.get("VirtualOrPhysical") != "Physical" or dati.get("Internal") is not False):
+                or not (dati.get("VirtualOrPhysical") == "Physical" or interno_apple)):
             raise Rifiuto(rifiuto)
 
     fisico(str(_punto_montaggio(dove)))
@@ -344,7 +347,7 @@ def _montato(p: Path) -> bool:
 def _pubblica(voce: dict) -> dict:
     v = dict(voce)
     v.pop("timer", None)
-    if v["stato"] not in ("migrazione", "migrazione-incompleta", "annullata", "recuperata"):
+    if v["stato"] not in ("migrazione", "migrazione-incompleta", "annullata", "recuperata", "non-protetta"):
         v["stato"] = "aperta" if _montato(Path(v["montaggio"])) else "chiusa"
     return v
 
@@ -380,7 +383,17 @@ def _libc():
     return lib
 
 
+# macOS writes these itself: provenance on whatever an app creates or changes,
+# macl on folders a person picked in a dialog. They are not the person's data,
+# they cannot be copied faithfully, and they differ on the encrypted volume.
+XATTR_DI_SISTEMA = {"com.apple.provenance", "com.apple.macl"}
+
+
 def _nomi_xattr(p: Path) -> list[str]:
+    return [nome for nome in _tutti_xattr(p) if nome not in XATTR_DI_SISTEMA]
+
+
+def _tutti_xattr(p: Path) -> list[str]:
     if sys.platform != "darwin":
         return os.listxattr(p, follow_symlinks=False) if hasattr(os, "listxattr") else []
     lib = _libc()
@@ -707,7 +720,7 @@ def _verifica_chiave(bundle: Path, passphrase: bytes) -> None:
     risultato = _corri(argv, passphrase)
     if risultato.returncode:
         if not bundle.is_dir():
-            raise DiscoNonDisponibile(_t("Il disco esterno non è disponibile. Collegalo e riprova ad aprire la cartella."))
+            raise DiscoNonDisponibile(_t("Il disco con l'immagine cifrata non è disponibile. Collegalo e riprova ad aprire la cartella."))
         _verifica_struttura_bundle(bundle)
         if (cifrata is True and risultato.returncode not in (
                 errno.ENOENT, errno.EIO, errno.EACCES, errno.ENODEV, errno.ENXIO,
@@ -817,31 +830,69 @@ def _origine_libera(origine: Path, r: dict) -> None:
         raise Rifiuto(_t("La fonte è già un punto di montaggio."))
 
 
-def prepara_protezione(origine: str | Path, dove: str | Path, minutes: int = 15) -> dict:
-    """Check the operator's choices before any passphrase is requested."""
+def _esistente(p: Path) -> Path:
+    while not p.exists() and p.parent != p:
+        p = p.parent
+    return p
+
+
+def posizione_predefinita(fonte: Path) -> Path:
+    """The encrypted image stays on the folder's own disk, in a hidden directory.
+
+    On the disk that holds Paratia's home it goes under ~/.paratia; on any
+    other disk at the root of that disk. Never inside the folder itself.
+    """
+    if fonte.stat().st_dev == _esistente(CASA).stat().st_dev:
+        return CASA / "compartimenti.noindex"
+    return _punto_montaggio(fonte) / ".paratia-compartimenti.noindex"
+
+
+def prepara_protezione(origine: str | Path, dove: str | Path | None = None, minutes: int = 15) -> dict:
+    """Check the operator's choices before any passphrase is requested.
+
+    Without ``dove`` the image goes on the same disk as the folder; the hidden
+    directory is created only by proteggi(), so this check changes nothing.
+    """
     minutes = _minuti(minutes)
-    fonte, disco = _percorso(origine), _percorso(dove)
-    if not fonte.is_dir() or not disco.is_dir():
-        raise Rifiuto(_t("Scegli due cartelle esistenti: fonte e destinazione sul disco esterno."))
+    fonte = _percorso(origine)
+    if not fonte.is_dir():
+        raise Rifiuto(_t("Scegli una cartella esistente da proteggere."))
+    predefinita = dove is None or str(dove) == ""
+    try:
+        disco = _percorso(posizione_predefinita(fonte) if predefinita else dove)
+    except OSError as e:
+        raise Rifiuto(_t("Impossibile individuare il volume della destinazione.")) from e
+    # The default directory may not exist yet: check the disk it will be created on.
+    base = _esistente(disco) if predefinita else disco
+    if not base.is_dir():
+        raise Rifiuto(_t("Scegli una cartella esistente come destinazione dell'immagine cifrata."))
     if _cloud(fonte) or _cloud(disco):
         raise Rifiuto(_t("Le cartelle sincronizzate con il cloud non sono ammesse."))
     if _dentro(disco, fonte) or _dentro(fonte, disco):
         raise Rifiuto(_t("Fonte e destinazione non possono essere annidate."))
-    _esterno(disco)
+    _disco_fisico(base)
     _origine_libera(fonte, _carica())
-    return {"pronto": True, "origine": str(fonte), "dove": str(disco), "minutes": minutes}
+    return {"pronto": True, "origine": str(fonte), "dove": str(disco), "minutes": minutes,
+            "predefinita": predefinita}
 
 
-def proteggi(origine: str | Path, dove: str | Path, passphrase: bytes, minutes: int = 15) -> dict:
+def proteggi(origine: str | Path, dove: str | Path | None, passphrase: bytes, minutes: int = 15) -> dict:
     preparazione = prepara_protezione(origine, dove, minutes)
     _chiave(passphrase)
     minutes = preparazione["minutes"]
     fonte, disco = Path(preparazione["origine"]), Path(preparazione["dove"])
+    if preparazione["predefinita"]:
+        disco.mkdir(mode=0o700, parents=True, exist_ok=True)
+        disco = _percorso(disco)
+        if not disco.is_dir():
+            raise Rifiuto(_t("Scegli una cartella esistente come destinazione dell'immagine cifrata."))
 
     with _registro() as r:
         _origine_libera(fonte, r)
         manifest = _scansiona(fonte)
         conta, byte = _totali(manifest)
+        if shutil.disk_usage(disco).free < byte + byte // 2 + 512 * 1024**2:
+            raise Rifiuto(_t("Spazio libero insufficiente sul disco dell'immagine cifrata: durante la cifratura servono circa una volta e mezza i dati della cartella."))
         identificatore = uuid.uuid4().hex
         bundle = disco / f"{fonte.name}-{identificatore}.sparsebundle"
         if bundle.exists() or bundle.is_symlink():
@@ -942,7 +993,7 @@ def _prepara_apertura(v: dict, minutes: int) -> dict:
     if not aperta:
         bundle = Path(v["bundle"])
         if not bundle.is_dir():
-            raise DiscoNonDisponibile(_t("Il disco esterno non è disponibile. Collegalo e riprova ad aprire la cartella."))
+            raise DiscoNonDisponibile(_t("Il disco con l'immagine cifrata non è disponibile. Collegalo e riprova ad aprire la cartella."))
         _verifica_struttura_bundle(bundle, v["id"])
         if not monte.is_dir():
             raise Rifiuto(_t("Il punto di montaggio non è disponibile. Ripristina il percorso originale e riprova."))
@@ -1147,6 +1198,114 @@ def recupera(identificatore: str, passphrase: bytes) -> dict:
                 staging.rmdir()  # Never delete an uninstalled recovered tree.
             except OSError:
                 pass
+
+
+def togli_protezione(identificatore: str, passphrase: bytes) -> dict:
+    """Put the files back in the folder as ordinary files, then delete the image.
+
+    The reference is what the volume holds now, not the manifest written at
+    protection time: a folder that was opened and edited must come back with
+    its edits. The plaintext is rebuilt beside the folder and verified against
+    that fresh scan before it takes the folder's place; the image is deleted
+    only after the registry no longer points at it. On any failure before the
+    swap the image stays the only copy and the partial plaintext is removed.
+    """
+    _chiave(passphrase)
+    with _registro() as r:
+        v = _voce(r, identificatore)
+        if v["stato"] in ("migrazione", "migrazione-incompleta") or v.get("plaintext_residuo"):
+            raise Rifiuto(_t("La migrazione richiede recupero prima dell'apertura."))
+        fonte, bundle = _percorso(v["origine"]), _percorso(v["bundle"])
+        # The stored state can say "aperta" after a restart or an eject: the mount decides.
+        if _montato(fonte):
+            raise Rifiuto(_t("Chiudi la cartella prima di togliere la protezione."))
+        if v.get("montaggio_temporaneo"):
+            precedente = _percorso(v["montaggio_temporaneo"])
+            if _montato(precedente):
+                _stacca(precedente)
+        if v.get("recupero_temporaneo"):
+            residuo = _percorso(v["recupero_temporaneo"])
+            if residuo.exists() and (not residuo.is_dir() or any(residuo.iterdir())):
+                raise Rifiuto(_t("Il recupero precedente conserva una copia plaintext: {residuo}", residuo=residuo))
+        if fonte.exists() and (not fonte.is_dir() or any(fonte.iterdir())):
+            raise Rifiuto(_t("L'origine contiene dati: il recupero non li sovrascriverà."))
+        if not bundle.is_dir() or bundle.suffix != ".sparsebundle":
+            raise DiscoNonDisponibile(_t("Il disco con l'immagine cifrata non è disponibile. Collegalo e riprova ad aprire la cartella."))
+        _verifica_struttura_bundle(bundle, v["id"])
+        area = CASA / "montaggi"
+        area.mkdir(mode=0o700, parents=True, exist_ok=True)
+        monte = Path(tempfile.mkdtemp(prefix="togli-", dir=area))
+        staging = Path(tempfile.mkdtemp(prefix="." + fonte.name + ".ripristino-", dir=fonte.parent))
+        v["montaggio_temporaneo"], v["recupero_temporaneo"] = str(monte), str(staging)
+        _salva(r)
+        sostituita = False
+        try:
+            try:
+                _attacca(bundle, monte, passphrase)
+            except Rifiuto:
+                _audit("tentativo-fallito", azione="togli-protezione", cartella=identificatore,
+                       percorso=str(fonte))
+                raise
+            originale = _leggi_manifest(monte, v)  # Same image as the one registered.
+            ignorati = {x for x in DIR_SISTEMA if x not in originale} | {v["metadir"]}
+            attuale = _scansiona(monte, ignorati)
+            for nome in attuale:
+                if nome != "." and len(Path(nome).parts) == 1:
+                    _comando([DITTO, "--rsrc", "--extattr", "--acl", str(monte / nome), str(staging / nome)])
+            _copia_metadati(monte, staging)
+            _verifica(staging, attuale)
+            _stacca(monte)
+            if fonte.exists():
+                if any(fonte.iterdir()) or _montato(fonte):
+                    raise Rifiuto(_t("L'origine è cambiata durante il recupero."))
+                fonte.rmdir()
+            try:
+                staging.rename(fonte)
+            except OSError:
+                fonte.mkdir(mode=0o700)  # Keep the mount point the registry expects.
+                raise
+            sostituita = True
+            del r["cartelle"][identificatore]
+            _salva(r)
+        except Exception as e:
+            if sostituita:
+                # The files are back and verified: the image is only a leftover now.
+                r["cartelle"].pop(identificatore, None)
+                try:
+                    _salva(r)
+                except OSError:
+                    pass
+                raise Rifiuto(_t("I file sono tornati nella cartella, ma l'immagine cifrata non è stata eliminata: {bundle}", bundle=bundle)) from e
+            try:
+                _stacca(monte)
+            except Rifiuto:
+                pass
+            # The image is intact: a partial plaintext copy has no use.
+            shutil.rmtree(staging, ignore_errors=True)
+            if not staging.exists():
+                v.pop("recupero_temporaneo", None)
+            if not _montato(monte):
+                v.pop("montaggio_temporaneo", None)
+            _salva(r)
+            if isinstance(e, Rifiuto):
+                raise
+            raise Rifiuto(_t("La protezione non è stata tolta: l'immagine cifrata resta com'era.")) from e
+        finally:
+            if not _montato(monte):
+                try:
+                    monte.rmdir()
+                except OSError:
+                    pass
+        avviso = None
+        try:
+            shutil.rmtree(bundle)
+        except OSError:
+            avviso = _t("I file sono tornati nella cartella, ma l'immagine cifrata non è stata eliminata: {bundle}", bundle=bundle)
+        esito = _esito_registrato({**v, "stato": "non-protetta", "bundle_eliminato": avviso is None},
+                                 "cartella-protezione-tolta", id=identificatore, origine=str(fonte))
+        if avviso:
+            esito["avviso_bundle"] = avviso
+        return esito
 
 
 def _identita_timer(v: dict) -> tuple[int, str] | None:

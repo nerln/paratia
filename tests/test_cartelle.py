@@ -243,11 +243,10 @@ def test_fonte_con_link_o_file_speciali_rifiutata_prima_create(C, D, albero, tip
     assert (fonte / "segreto.txt").exists()
 
 
-def test_disco_interno_e_destinazione_annidata_rifiutati(C, D, albero):
+def test_disco_interno_accettato_e_destinazione_annidata_rifiutata(C, D, albero):
     fonte, disco = albero
     D.interno = True
-    with pytest.raises(C.Rifiuto, match="esterno"):
-        C.proteggi(fonte, disco, KEY)
+    assert C.prepara_protezione(fonte, disco)["pronto"]
     D.interno = False
     con_figlia = fonte / "destinazione"
     con_figlia.mkdir()
@@ -484,7 +483,7 @@ def test_migrazione_nativa_fixture_temporanea(C, albero, monkeypatch):
 
 
 @pytest.mark.parametrize("caso", ["sottocartella", "radice", "exfat", "interno", "immagine", "contenitore"])
-def test_diskutil_interroga_il_mount_e_rifiuta_interno_e_immagine(C, tmp_path, monkeypatch, caso):
+def test_diskutil_interroga_il_mount_accetta_interno_e_rifiuta_immagine(C, tmp_path, monkeypatch, caso):
     radice = tmp_path / "SSD"
     figlia = radice / "backup" / "paratia"
     figlia.mkdir(parents=True)
@@ -514,11 +513,11 @@ def test_diskutil_interroga_il_mount_e_rifiuta_interno_e_immagine(C, tmp_path, m
         m.setattr(Path, "stat", volume_stat)
         m.setattr(C.sys, "platform", "fixture")
         m.setattr(C, "_corri", diskutil)
-        if caso in ("interno", "immagine"):
+        if caso == "immagine":
             with pytest.raises(C.Rifiuto, match="immagini disco"):
-                C._esterno(dove)
+                C._disco_fisico(dove)
         else:
-            C._esterno(dove)
+            C._disco_fisico(dove)
     attesi = [str(radice)]
     if caso == "contenitore":
         attesi.append("disk12")
@@ -557,11 +556,10 @@ def test_statfs_nativo_restituisce_il_volume_effettivo(C, tmp_path):
 def test_preflight_protezione_non_chiede_chiave_ne_crea_registro(C, D, albero):
     preparazione = C.prepara_protezione(*albero, minutes=7)
     assert preparazione == {"pronto": True, "origine": str(albero[0]),
-                             "dove": str(albero[1]), "minutes": 7}
+                             "dove": str(albero[1]), "minutes": 7, "predefinita": False}
     assert not C.CASA.exists() and D.conta["create"] == 0
     assert all(key is None for _, key in D.chiamate)
-    D.interno = True
-    with pytest.raises(C.Rifiuto, match="esterno"):
+    with pytest.raises(C.Rifiuto):
         C.proteggi(*albero, b"")
     assert not C.CASA.exists() and D.conta["create"] == 0
 
@@ -693,9 +691,9 @@ def CLI(C, monkeypatch):
 
 
 def test_cli_valida_il_disco_prima_del_prompt(CLI, D, albero):
-    D.interno = True
-    args = CLI.costruisci().parse_args(["cartella", "proteggi", str(albero[0]), "--dove", str(albero[1])])
-    with pytest.raises(CLI.Rifiuto, match="esterno"):
+    args = CLI.costruisci().parse_args(["cartella", "proteggi", str(albero[0]), "--dove", str(albero[0] / "dentro")])
+    (albero[0] / "dentro").mkdir()
+    with pytest.raises(CLI.Rifiuto, match="annidate"):
         CLI.cmd_cartella(args)
 
 
@@ -841,7 +839,7 @@ def test_disco_scollegato_preflight_tipizzato_prima_della_chiave(C, D, albero):
     bundle = Path(v["bundle"])
     bundle.rename(bundle.with_name("temporaneamente-non-disponibile"))
     for operazione in (lambda: C.prepara_apertura(v["id"]), lambda: C.apri(v["id"], None)):
-        with pytest.raises(C.DiscoNonDisponibile, match="disco esterno non è disponibile") as errore:
+        with pytest.raises(C.DiscoNonDisponibile, match="immagine cifrata non è disponibile") as errore:
             operazione()
         assert "recuper" not in str(errore.value).lower() and "annulla" not in str(errore.value).lower()
     assert D.conta["attach"] == 2
@@ -1143,3 +1141,107 @@ def test_cli_busy_mostra_nomipids_non_contenuti(C, D, CLI, albero, monkeypatch, 
     assert "TextEdit (PID 123)" in esito["messaggio"]
     assert KEY.decode() not in output and "fixture-private-marker" not in output
     C.chiudi(v["id"])
+
+
+def test_senza_destinazione_l_immagine_resta_sullo_stesso_disco_nascosta(C, D, albero):
+    fonte, _ = albero
+    preparazione = C.prepara_protezione(fonte)
+    attesa = C.CASA / "compartimenti.noindex"
+    assert preparazione["predefinita"] is True and preparazione["dove"] == str(attesa)
+    assert not C.CASA.exists()  # The check creates nothing.
+    v = C.proteggi(fonte, None, KEY)
+    assert Path(v["bundle"]).parent == attesa and (attesa.stat().st_mode & 0o777) == 0o700
+    assert v["stato"] == "chiusa" and list(fonte.iterdir()) == []
+
+
+def test_spazio_insufficiente_rifiutato_prima_di_creare_l_immagine(C, D, albero, monkeypatch):
+    monkeypatch.setattr(C.shutil, "disk_usage", lambda p: SimpleNamespace(total=1, used=1, free=1024))
+    with pytest.raises(C.Rifiuto, match="Spazio libero insufficiente"):
+        C.proteggi(*albero, KEY)
+    assert D.conta["create"] == 0 and (albero[0] / "segreto.txt").exists()
+
+
+def test_togli_protezione_rimette_i_file_e_elimina_l_immagine(C, D, albero):
+    fonte, _ = albero
+    v = C.proteggi(fonte, None, KEY)
+    bundle = Path(v["bundle"])
+    with pytest.raises(C.ChiaveErrata):
+        C.togli_protezione(v["id"], b"chiave-sbagliata-123")
+    assert bundle.is_dir() and C.elenco()[0]["stato"] == "chiusa" and list(fonte.iterdir()) == []
+    esito = C.togli_protezione(v["id"], KEY)
+    assert esito["stato"] == "non-protetta" and esito["bundle_eliminato"] is True
+    assert (fonte / "segreto.txt").read_text() == "fixture-private-marker"
+    assert (fonte / ".invisibile" / "a.txt").read_text() == "anche questo"
+    assert not bundle.exists() and C.elenco() == [] and not D.montati
+    assert not [p for p in fonte.parent.iterdir() if ".ripristino-" in p.name]
+
+
+def test_togli_protezione_rifiuta_una_cartella_aperta(C, D, albero):
+    v = C.proteggi(*albero, KEY)
+    C.apri(v["id"], KEY)
+    with pytest.raises(C.Rifiuto, match="Chiudi la cartella"):
+        C.togli_protezione(v["id"], KEY)
+    C.chiudi(v["id"])
+
+
+def test_togli_protezione_fallita_lascia_l_immagine_e_nessuna_copia_in_chiaro(C, D, albero):
+    fonte, _ = albero
+    v = C.proteggi(fonte, None, KEY)
+    D.fallisce = ("ditto", D.conta["ditto"] + 1)
+    with pytest.raises(C.Rifiuto):
+        C.togli_protezione(v["id"], KEY)
+    assert Path(v["bundle"]).is_dir() and C.elenco()[0]["stato"] == "chiusa"
+    assert list(fonte.iterdir()) == [] and not D.montati
+    assert not [p for p in fonte.parent.iterdir() if ".ripristino-" in p.name]
+    D.fallisce = None
+    assert C.togli_protezione(v["id"], KEY)["stato"] == "non-protetta"
+
+
+@pytest.mark.parametrize("interno,accettato", [(True, True), (False, False)])
+def test_ssd_interno_apple_silicon_dichiarato_unknown(C, tmp_path, monkeypatch, interno, accettato):
+    dove = tmp_path / "Data"
+    dove.mkdir()
+    dischi = dischi_fixture(interno=interno)
+    dischi["disk10"]["VirtualOrPhysical"] = "Unknown"
+    monkeypatch.setattr(C.sys, "platform", "fixture")
+    monkeypatch.setattr(C, "_corri", lambda argv, passphrase=None: subprocess.CompletedProcess(
+        argv, 0, plistlib.dumps(dischi.get(argv[-1], dischi["volume"])), b""))
+    if accettato:
+        C._disco_fisico(dove)
+    else:
+        with pytest.raises(C.Rifiuto, match="immagini disco"):
+            C._disco_fisico(dove)
+
+
+def test_attributi_scritti_da_macos_non_fanno_fallire_la_verifica(C, monkeypatch, tmp_path):
+    cartella = tmp_path / "x"
+    cartella.mkdir()
+    monkeypatch.setattr(C, "_tutti_xattr", lambda p: ["com.apple.provenance", "com.apple.macl", "it.paratia.utente"])
+    assert C._nomi_xattr(cartella) == ["it.paratia.utente"]
+
+
+def test_togli_protezione_riporta_anche_le_modifiche_fatte_da_aperta(C, D, albero):
+    fonte, _ = albero
+    v = C.proteggi(fonte, None, KEY)
+    C.apri(v["id"], KEY)
+    (fonte / "segreto.txt").write_text("modificato mentre era aperta")
+    (fonte / "nuovo.txt").write_text("aggiunto dopo la protezione")
+    (fonte / "vuota" / "dentro.txt").write_text("anche in una sottocartella")
+    C.chiudi(v["id"])
+    esito = C.togli_protezione(v["id"], KEY)
+    assert esito["stato"] == "non-protetta" and not Path(v["bundle"]).exists()
+    assert (fonte / "segreto.txt").read_text() == "modificato mentre era aperta"
+    assert (fonte / "nuovo.txt").read_text() == "aggiunto dopo la protezione"
+    assert (fonte / "vuota" / "dentro.txt").read_text() == "anche in una sottocartella"
+    assert (fonte / ".invisibile" / "a.txt").read_text() == "anche questo"
+    assert not (fonte / v["metadir"]).exists() and not (fonte / ".fseventsd").exists()
+
+
+def test_togli_protezione_decide_dal_montaggio_non_dallo_stato_salvato(C, D, albero):
+    fonte, _ = albero
+    v = C.proteggi(fonte, None, KEY)
+    with C._registro() as r:
+        r["cartelle"][v["id"]]["stato"] = "aperta"  # As after a restart or an eject.
+        C._salva(r)
+    assert C.togli_protezione(v["id"], KEY)["stato"] == "non-protetta"
+    assert (fonte / "segreto.txt").read_text() == "fixture-private-marker"

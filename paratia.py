@@ -1456,6 +1456,8 @@ def cmd_cartella(args) -> int:
         else:
             if args.operazione == "proteggi":
                 C.prepara_protezione(args.origine, args.dove, args.minutes)
+            elif args.operazione == "togli":
+                pass
             else:
                 preparazione = C.prepara_apertura(args.id, args.minutes)
                 if preparazione["gia_aperta"]:
@@ -1475,6 +1477,8 @@ def cmd_cartella(args) -> int:
                 if chiave != conferma:
                     raise Rifiuto("Le chiavi non coincidono. Ripeti l'operazione.")
                 risultato = C.proteggi(args.origine, args.dove, chiave, args.minutes)
+            elif args.operazione == "togli":
+                risultato = C.togli_protezione(args.id, chiave)
             else:
                 risultato = C.apri(args.id, chiave, args.minutes)
         print(json.dumps(risultato, ensure_ascii=False, indent=1))
@@ -1660,9 +1664,13 @@ def costruisci() -> argparse.ArgumentParser:
     cap.set_defaults(fn=cmd_cartella)
     cp = cas.add_parser("proteggi")
     cp.add_argument("origine")
-    cp.add_argument("--dove", required=True)
+    cp.add_argument("--dove", default=None,
+                    help="dove salvare l'immagine cifrata; senza, sullo stesso disco della cartella")
     cp.add_argument("--minutes", type=int, default=15)
     cp.set_defaults(fn=cmd_cartella)
+    ct = cas.add_parser("togli", help="rimette i file nella cartella ed elimina l'immagine cifrata")
+    ct.add_argument("id")
+    ct.set_defaults(fn=cmd_cartella)
 
     re = s.add_parser("registro", help="eventi osservati e stato delle autorizzazioni")
     res = re.add_subparsers(dest="operazione", required=True)
