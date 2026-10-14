@@ -185,8 +185,9 @@ copia di bootstrap prima di reinstallare il servizio e ripeti la verifica.
 `registro_installa.piano()` prepara gli argv e la plist senza installare nulla.
 Il pulsante **Installa il registro** consegna quel piano al dialogo amministratore
 nativo. La password viene gestita da macOS, mai dall'app o da un modello.
-L'installer verifica la firma ad hoc e il marker del launcher, copia il bundle
-senza symlink o hardlink, verifica che la copia abbia lo stesso CDHash e applica
+L'installer verifica la firma e il marker del launcher. La firma può essere ad hoc
+(`Signature=adhoc`) oppure un'identità stabile (catena `Authority`, senza riga adhoc);
+ogni altro esito è rifiutato. Copia il bundle senza symlink o hardlink, verifica che la copia abbia lo stesso CDHash e applica
 proprietà/ACL. Prepara i tre moduli del raccoglitore da quella copia verificata.
 Conserva bundle, moduli e plist precedenti fino al bootstrap; se questo fallisce,
 tenta il ripristino. Dopo ogni `bootout` attende, per un massimo di otto secondi,
@@ -207,11 +208,14 @@ ripristino riuscito quando manca la conferma.
 Poi, in **Impostazioni di Sistema → Privacy e Sicurezza → Accesso completo al
 disco**, aggiungi e abilita **`/Applications/Paratia.app`** con il pulsante `+`.
 Dopo ogni nuova build ad hoc, rimuovi la voce precedente e aggiungi di nuovo
-l'app installata; reinstalla il registro per aggiornare anche la copia protetta.
+l'app installata. Con un'identità stabile la voce resta valida finché la firma
+usa lo stesso certificato, e `fda_regrant_after_build` è `false`. Reinstalla il
+registro per aggiornare anche la copia protetta.
 Non concedere l'Accesso completo al disco a Python 3.9: quel runtime esegue
 anche altri programmi. Il vecchio servizio avviato direttamente da Python deve
 essere reinstallato. `registro stato` indica `launch_mode`, `needs_reinstall`,
-`fda_entry` e `fda_regrant_after_build`.
+`fda_entry`, `fda_regrant_after_build` e la firma letta (`adhoc`, `stabile` o
+`non-verificata` quando la lettura non riesce, nel qual caso si resta prudenti).
 
 Le copie normale, di bootstrap e del servizio mantengono la stessa firma
 verificata. Questa architettura mantiene l'eseguibile dell'app come padre del raccoglitore; il riconoscimento

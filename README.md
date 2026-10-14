@@ -212,7 +212,6 @@ If conversion fails, the generator reports the error and retains the iconset
 for inspection. Native ICNS conversion still needs the supervisor's build:
 `iconutil` rejected the valid PNG set in this sandbox.
 
-The app signs ad hoc and is not notarized. Keep the normal app in `/Applications`.
 Close all copies of Paratia and run this yourself in Terminal to prepare a
 separate root-owned bootstrap copy. The current command is in the [GUI guide, section Impostazioni](docs/gui-mac.md#impostazioni): copy it from there.
 
@@ -235,8 +234,8 @@ every new build before reinstalling the service and verifying the new identity.
 The daemon launches a native executable in a root-protected copy of the signed
 app at `/Library/Application Support/Paratia/Paratia.app`, separate from the
 bootstrap copy; it keeps Python and eslogger as children. In Full Disk Access, enable
-**`/Applications/Paratia.app`**; remove and re-add it after every new ad hoc
-build, and reinstall the registry copy. Do not enable Python 3.9.
+**`/Applications/Paratia.app`**; remove and re-add it after every new ad hoc build (with a stable identity, only when the signature changes),
+and reinstall the registry copy. Do not enable Python 3.9.
 Giro 6 was published as `91914a0` and installed. Its registry installation failed
 and left the service unloaded, as reported by the supervisor. Giro 7 waits for
 launchd removal, retries race errors, checks rollback and shows the installer
@@ -245,6 +244,22 @@ copy, registry installation and renewed Full Disk Access.
 The app compares the installed collector's CDHash with `/Applications/Paratia.app`
 and shows the update steps in order. Older collectors without an identity report
 are shown as unverified, without claiming two hashes were compared.
+
+The app is signed ad hoc by default and is not notarized. Keep the normal app in `/Applications`.
+
+To keep the Full Disk Access permission across builds, sign with a stable identity
+from your keychain: `python3 strumenti/build-app.py --sign-identity "<certificate name>"`,
+or set `PARATIA_SIGN_IDENTITY`. Without the option the build stays ad hoc and never
+opens a keychain. With a stable identity the permission is tied to the signing
+certificate, so builds signed with the same certificate keep it. The installer still
+requires the installed copy to match the source CDHash and to pass
+`codesign --verify --deep --strict`. The root trust anchor, `sudo bootstrap`, is unchanged.
+The stable identity path was not run with a real certificate in this session; check
+the permission after the first build.
+
+The app is available in Italian, English and Spanish. It follows the macOS language,
+with English as the fallback. Change it in **Settings → Language**: the window changes
+at once, and the menu item changes after a restart.
 
 See the [GUI guide](docs/gui-mac.md), [registry limits](docs/registro-accessi.md)
 and [October 2026 implementation and verification status](docs/stato-2026-10.md).

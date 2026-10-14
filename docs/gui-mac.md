@@ -144,6 +144,9 @@ e **Esporta CSV…** mantengono i dati completi. La prova live è ancora
 
 ## Impostazioni
 
+**Lingua** sceglie fra Sistema, Italiano, English ed Español. La finestra cambia subito;
+la voce del menu cambia al riavvio.
+
 Quando il servizio appartiene a una build diversa da `/Applications/Paratia.app`,
 il Registro mostra **Passi per aggiornare…** e apre le Impostazioni, dove
 **Aggiorna il registro** elenca i passi numerati in ordine. Se la vecchia build
@@ -247,8 +250,9 @@ ridotti, senza percorsi o dati privati dello stderr.
 Conclusa l'installazione, chiudi la copia bootstrap e riapri l'app quotidiana
 in `/Applications/Paratia.app`. Qui **Apri Accesso completo al disco** porta
 alle impostazioni privacy:
-aggiungi e abilita **`/Applications/Paratia.app`**. Dopo ogni nuova build con
-firma ad hoc, rimuovi la voce precedente e aggiungi di nuovo l'app installata;
+aggiungi e abilita **`/Applications/Paratia.app`**. Con firma ad hoc, dopo ogni nuova
+build rimuovi la voce precedente e aggiungi di nuovo l'app installata. Con un'identità
+stabile il permesso resta valido finché l'app viene firmata con lo stesso certificato;
 aggiorna la copia bootstrap e reinstalla il registro per aggiornare la copia
 del servizio. Non abilitare
 Python 3.9. Il passaggio del permesso ai figli e la raccolta kernel sono stati
@@ -291,7 +295,15 @@ che Spotlight deve ignorare. L'icona nasce da `macos/Assets/Paratia.svg`:
 in `docs/immagini/paratia-icona.png`. Nel sandbox i PNG sono verificati, ma
 `iconutil` ha rifiutato l'iconset: il supervisore deve verificare la conversione
 reale durante la build. La build firma
-**ad hoc**, senza identità dal portachiavi, e non è notarizzata. Il percorso
+**ad hoc** per impostazione predefinita, senza identità dal portachiavi, e non è
+notarizzata. Con `--sign-identity "<nome>"` o la variabile `PARATIA_SIGN_IDENTITY`
+firma con un'identità stabile del portachiavi: la build non ne sceglie una da sola.
+Con identità stabile il permesso di Accesso completo al disco resta valido finché si
+firma con lo stesso certificato; la verifica della copia installata (stesso CDHash,
+`codesign --verify --deep --strict`) resta attiva e `sudo bootstrap` non cambia.
+Le tabelle dei testi stanno in `macos/lingue/{it,en,es}.lproj/Localizable.strings`.
+`--render-fixtures` produce le schermate in `build.noindex/screenshots/<lingua>/`;
+`--lang it|en|es` ne produce una sola. Il percorso
 amministratore locale usa l'API deprecata `AuthorizationExecuteWithPrivileges`,
 limitata al piano fisso del registro e al runtime root protetto. Eugenio ha già
 eseguito l'installazione del giro 6; il servizio richiede una nuova installazione

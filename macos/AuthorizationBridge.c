@@ -61,7 +61,7 @@ int32_t ParatiaAuthorizedInstall(const char *executable, char *const arguments[]
     result = AuthorizationCopyRights(authorization, &rights, kAuthorizationEmptyEnvironment,
                                     kAuthorizationFlagInteractionAllowed | kAuthorizationFlagExtendRights | kAuthorizationFlagPreAuthorize, NULL);
     if (result == errAuthorizationSuccess) {
-        // This local ad-hoc app cannot register a notarized SMAppService helper.
+        // This local app (ad hoc or stable identity, never notarized) cannot register a notarized SMAppService helper.
         // The deprecated API is confined to the reviewed, fixed installer argv.
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"

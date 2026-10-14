@@ -28,6 +28,11 @@ def build(tmp_path, monkeypatch):
         path.write_text("# Synthetic resource\n")
     (module.ROOT / "macos").mkdir()
     (module.ROOT / "macos" / "Stub.swift").write_text("// Not compiled\n")
+    for lingua in ("it", "en", "es"):
+        pasta = module.ROOT / "macos" / "lingue" / (lingua + ".lproj")
+        pasta.mkdir(parents=True)
+        (pasta / "Localizable.strings").write_text('"x" = "x";\n', encoding="utf-8")
+        (pasta / "InfoPlist.strings").write_text('"NSDesktopFolderUsageDescription" = "x";\n', encoding="utf-8")
     monkeypatch.setattr(module.subprocess, "check_output", lambda *a, **k: "/synthetic-sdk\n")
     monkeypatch.setattr(sys, "argv", [str(script)])
     calls = []
@@ -69,4 +74,64 @@ def test_render_fixtures_uses_noindex_screenshots(build, monkeypatch):
     module, calls = build
     monkeypatch.setattr(sys, "argv", ["build-app.py", "--render-fixtures"])
     module.main()
-    assert calls[-1][1:] == ["--render-fixtures", str(module.ROOT / "build.noindex" / "screenshots")]
+    for lingua in ("it", "en", "es"):
+        atteso = ["--render-fixtures", str(module.ROOT / "build.noindex" / "screenshots" / lingua), "--lang", lingua]
+        assert atteso in [c[1:] for c in calls]
+
+
+def _firma_usata(calls):
+    return [argv[argv.index("--sign") + 1] for argv in calls if argv[:2] == ["/usr/bin/codesign", "--force"]]
+
+
+def test_default_signing_is_adhoc_and_the_plist_says_so(build, monkeypatch):
+    module, calls = build
+    monkeypatch.delenv("PARATIA_SIGN_IDENTITY", raising=False)
+    module.main()
+    assert _firma_usata(calls) == ["-"]
+    info = plistlib.loads((module.ROOT / "build.noindex" / "Paratia.app" / "Contents" / "Info.plist").read_bytes())
+    assert info["ParatiaFirma"] == "ad-hoc"
+
+
+def test_empty_environment_variable_is_treated_as_absent(build, monkeypatch):
+    module, calls = build
+    monkeypatch.setenv("PARATIA_SIGN_IDENTITY", "   ")
+    module.main()
+    assert _firma_usata(calls) == ["-"]
+
+
+def test_environment_variable_selects_a_stable_identity_without_signing_here(build, monkeypatch):
+    module, calls = build
+    monkeypatch.setenv("PARATIA_SIGN_IDENTITY", "Identita Test")
+    module.main()
+    assert _firma_usata(calls) == ["Identita Test"]
+    info = plistlib.loads((module.ROOT / "build.noindex" / "Paratia.app" / "Contents" / "Info.plist").read_bytes())
+    assert info["ParatiaFirma"] == "identita-stabile"
+
+
+def test_flag_wins_over_the_environment_variable(build, monkeypatch):
+    module, calls = build
+    monkeypatch.setenv("PARATIA_SIGN_IDENTITY", "Dalla variabile")
+    monkeypatch.setattr(sys, "argv", ["build-app.py", "--sign-identity", "Dal flag"])
+    module.main()
+    assert _firma_usata(calls) == ["Dal flag"]
+
+
+def test_explicit_empty_flag_is_refused(build, monkeypatch):
+    module, calls = build
+    monkeypatch.setattr(sys, "argv", ["build-app.py", "--sign-identity", "  "])
+    with pytest.raises(ValueError):
+        module.main()
+    assert _firma_usata(calls) == []
+
+
+def test_locale_resources_are_copied_for_every_language(build):
+    module, calls = build
+    module.main()
+    for lingua in ("it", "en", "es"):
+        cartella = module.ROOT / "build.noindex" / "Paratia.app" / "Contents" / "Resources" / (lingua + ".lproj")
+        assert (cartella / "Localizable.strings").is_file()
+        assert (cartella / "InfoPlist.strings").is_file()
+    info = plistlib.loads((module.ROOT / "build.noindex" / "Paratia.app" / "Contents" / "Info.plist").read_bytes())
+    assert info["CFBundleLocalizations"] == ["it", "en", "es"]
+    assert info["CFBundleDevelopmentRegion"] == "en"
+

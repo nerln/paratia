@@ -10,8 +10,12 @@ struct ParatiaApp: App {
         if arguments.contains("--launch-check") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 4) { NSApplication.shared.terminate(nil) }
         }
-        if arguments.count == 3 && arguments[1] == "--render-fixtures" {
-            do { try FixtureRenderer.render(to: URL(fileURLWithPath: arguments[2], isDirectory: true)); exit(0) }
+        if let indice = arguments.firstIndex(of: "--render-fixtures"), indice + 1 < arguments.count {
+            var lingua = "it"
+            if let posizione = arguments.firstIndex(of: "--lang"), posizione + 1 < arguments.count {
+                lingua = arguments[posizione + 1]
+            }
+            do { try FixtureRenderer.render(to: URL(fileURLWithPath: arguments[indice + 1], isDirectory: true), lingua: lingua); exit(0) }
             catch { fputs("Fixture rendering failed.\n", stderr); exit(1) }
         }
     }
@@ -21,7 +25,7 @@ struct ParatiaApp: App {
             .defaultSize(width: 1180, height: 800)
             .commands {
                 CommandGroup(after: .appInfo) {
-                    Button("Aggiorna lo stato") { model.refreshAction() }.keyboardShortcut("r")
+                    Button(tr("Aggiorna lo stato")) { model.refreshAction() }.keyboardShortcut("r")
                 }
             }
     }
@@ -37,7 +41,8 @@ func paratiaRunGUI() {
 
 @MainActor
 enum FixtureRenderer {
-    static func render(to directory: URL) throws {
+    static func render(to directory: URL, lingua: String) throws {
+        Localizzazione.usa(lingua)
         NSApplication.shared.setActivationPolicy(.prohibited)
         let previousAppearance = NSApplication.shared.appearance
         let appearance = NSAppearance(named: .aqua)
@@ -64,11 +69,11 @@ enum FixtureRenderer {
             RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
             view.layoutSubtreeIfNeeded()
             guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
-                throw AppError(message: "Rendering non disponibile.")
+                throw AppError(message: tr("Rendering non disponibile."))
             }
             view.cacheDisplay(in: view.bounds, to: bitmap)
             guard let png = bitmap.representation(using: .png, properties: [:]) else {
-                throw AppError(message: "Rendering non disponibile.")
+                throw AppError(message: tr("Rendering non disponibile."))
             }
             let name = String(format: "%02d", index + 1) + "-" + ["cartelle", "registro", "etichette", "banco", "impostazioni"][index] + ".png"
             try png.write(to: directory.appendingPathComponent(name), options: .atomic)

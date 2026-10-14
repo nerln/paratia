@@ -5,6 +5,21 @@ here. A live run requires the already authorized kernel collector.
 """
 from __future__ import annotations
 
+
+def _t(testo, **valori):
+    """Testo per la lingua della GUI; senza lingua impostata, quello italiano."""
+    import importlib.util
+    import os
+    import sys
+    nome = "paratia_messaggi"
+    if nome not in sys.modules:
+        percorso = os.path.join(os.path.dirname(os.path.abspath(__file__)), "messaggi.py")
+        spec = importlib.util.spec_from_file_location(nome, percorso)
+        modulo = importlib.util.module_from_spec(spec)
+        sys.modules[nome] = modulo
+        spec.loader.exec_module(modulo)
+    return sys.modules[nome].t(testo, **valori)
+
 import csv
 import datetime as dt
 import fcntl
@@ -38,11 +53,11 @@ CASA = Path(os.environ.get("PARATIA_HOME", Path.home() / ".paratia"))
 ARCHIVIO = CASA / "banco" / "storico.json"
 PROBE = Path(__file__).resolve().parent / "strumenti" / "banco-probe.py"
 LIMITI = [
-    "I file della prova sono sintetici. Il banco non legge i contenuti dei file personali.",
-    "La sorgente paratia misura gli esiti dei probe; la sorgente eslogger contiene i riscontri kernel.",
-    "mdls è una sonda informativa: Spotlight può usare cache o non indicizzare i volumi montati; non determina l'esito della fase.",
-    "Le CLI degli agenti usano le loro configurazioni e autorizzazioni. Hook, login o errori possono impedire una prova.",
-    "Il banco non concede TCC, non sblocca né modifica il portachiavi e non disattiva hook.",
+    _t("I file della prova sono sintetici. Il banco non legge i contenuti dei file personali."),
+    _t("La sorgente paratia misura gli esiti dei probe; la sorgente eslogger contiene i riscontri kernel."),
+    _t("mdls è una sonda informativa: Spotlight può usare cache o non indicizzare i volumi montati; non determina l'esito della fase."),
+    _t("Le CLI degli agenti usano le loro configurazioni e autorizzazioni. Hook, login o errori possono impedire una prova."),
+    _t("Il banco non concede TCC, non sblocca né modifica il portachiavi e non disattiva hook."),
 ]
 
 
@@ -62,10 +77,10 @@ def _leggi_storico():
     with os.fdopen(fd, "rb") as f:
         s = os.fstat(fd)
         if not stat.S_ISREG(s.st_mode) or s.st_uid != os.getuid() or s.st_size > 16 * 1024**2:
-            raise Rifiuto("Lo storico del banco non è un file valido. Conservane una copia prima di riprovare.")
+            raise Rifiuto(_t("Lo storico del banco non è un file valido. Conservane una copia prima di riprovare."))
         dati = json.load(f)
     if not isinstance(dati, dict) or dati.get("versione") != 1 or not isinstance(dati.get("prove"), list):
-        raise Rifiuto("Lo storico del banco non è leggibile. Conservane una copia prima di riprovare.")
+        raise Rifiuto(_t("Lo storico del banco non è leggibile. Conservane una copia prima di riprovare."))
     return dati
 
 
@@ -95,7 +110,7 @@ def storico():
     dati = _leggi_storico()
     if not dati["prove"]:
         return {"versione": 1, "stato": "non-eseguito", "prove": [], "fasi": [],
-                "messaggio": "Il banco non è stato eseguito. Installa e autorizza il registro prima di iniziare.",
+                "messaggio": _t("Il banco non è stato eseguito. Installa e autorizza il registro prima di iniziare."),
                 "limiti": LIMITI}
     return {**dati["prove"][-1], "prove": dati["prove"], "limiti": LIMITI}
 
@@ -111,7 +126,7 @@ def _inventario(percorso, escluso=None, sistema_assenti=()):
 
     def visita(fd, prefisso="", profondita=0):
         if profondita > 100:
-            raise Rifiuto("La cartella contiene troppe sottocartelle annidate per il banco.")
+            raise Rifiuto(_t("La cartella contiene troppe sottocartelle annidate per il banco."))
         with os.scandir(fd) as entries:
             for e in entries:
                 relativo = prefisso + e.name
@@ -121,12 +136,12 @@ def _inventario(percorso, escluso=None, sistema_assenti=()):
                 if not prefisso and e.name in ignorati and stat.S_ISDIR(s.st_mode):
                     continue
                 if not (stat.S_ISREG(s.st_mode) or stat.S_ISDIR(s.st_mode)):
-                    raise Rifiuto("Il banco rifiuta collegamenti e file speciali: conserva i tuoi dati e usa una cartella vuota.")
+                    raise Rifiuto(_t("Il banco rifiuta collegamenti e file speciali: conserva i tuoi dati e usa una cartella vuota."))
                 risultati[relativo] = {"tipo": "cartella" if stat.S_ISDIR(s.st_mode) else "file",
                                        "byte": s.st_size if stat.S_ISREG(s.st_mode) else 0,
                                        "mtime_ns": s.st_mtime_ns}
                 if len(risultati) > 10000:
-                    raise Rifiuto("La cartella contiene troppi elementi per il banco. Usa una cartella vuota.")
+                    raise Rifiuto(_t("La cartella contiene troppi elementi per il banco. Usa una cartella vuota."))
                 if stat.S_ISDIR(s.st_mode):
                     child = os.open(e.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
                     try:
@@ -144,7 +159,7 @@ def _inventario(percorso, escluso=None, sistema_assenti=()):
 def _directory_fd(p):
     p = Path(p)
     if not p.is_absolute() or str(p) != os.path.normpath(str(p)):
-        raise Rifiuto("Scegli una cartella esistente senza collegamenti simbolici.")
+        raise Rifiuto(_t("Scegli una cartella esistente senza collegamenti simbolici."))
     fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
     try:
         for parte in p.parts[1:]:
@@ -165,25 +180,25 @@ def anteprima(path=None, dove=None):
     if cartella:
         return {"stato": cartella["stato"], "percorso": str(p), "file": cartella["file"], "byte": cartella["byte"],
                 "richiede_autorizzazione": not R.stato()["healthy"],
-                "messaggio": "Cartella già protetta. Il banco riparte solo se lo storico identifica i file sintetici della prova.",
+                "messaggio": _t("Cartella già protetta. Il banco riparte solo se lo storico identifica i file sintetici della prova."),
                 "cartella_id": cartella["id"]}
     try:
         inventario = _inventario(p)
     except PermissionError:
         return {"stato": "permesso-desktop", "percorso": str(p), "file": None, "byte": None,
                 "richiede_autorizzazione": True,
-                "messaggio": "macOS protegge il Desktop. Consenti l'accesso a Paratia quando richiesto, poi riprova."}
+                "messaggio": _t("macOS protegge il Desktop. Consenti l'accesso a Paratia quando richiesto, poi riprova.")}
     file = [v for v in inventario.values() if v["tipo"] == "file"]
     return {"stato": "vuota" if not inventario else "contiene-file", "percorso": str(p),
             "file": len(file), "byte": sum(v["byte"] for v in file),
             "richiede_autorizzazione": not R.stato()["healthy"],
-            "messaggio": "Verranno creati file sintetici dichiarati come tali." if not inventario else
-                         "Sono presenti dati. Il banco si limita ai metadati e non li migrerà: usa una cartella vuota."}
+            "messaggio": _t("Verranno creati file sintetici dichiarati come tali.") if not inventario else
+                         _t("Sono presenti dati. Il banco si limita ai metadati e non li migrerà: usa una cartella vuota.")}
 
 
 def _sintetici(p):
     if _inventario(p):
-        raise Rifiuto("folder-test contiene già file. Il banco non legge né migra dati personali: spostali tu e riprova.")
+        raise Rifiuto(_t("folder-test contiene già file. Il banco non legge né migra dati personali: spostali tu e riprova."))
     fd = _directory_fd(p)
     identita = os.fstat(fd)
 
@@ -204,7 +219,7 @@ def _sintetici(p):
         scrivi(fd, "grande.bin", [bytes(range(256)) * 4096] * 8)
         attuale = p.lstat()
         if (attuale.st_dev, attuale.st_ino) != (identita.st_dev, identita.st_ino):
-            raise Rifiuto("La cartella del banco è stata spostata durante la preparazione. Controlla i file sintetici prima di riprovare.")
+            raise Rifiuto(_t("La cartella del banco è stata spostata durante la preparazione. Controlla i file sintetici prima di riprovare."))
     finally:
         os.close(fd)
     return _inventario(p)
@@ -213,7 +228,7 @@ def _sintetici(p):
 def _pronto():
     stato = R.stato()
     if not (stato["running"] and stato["healthy"] and stato.get("local_chain_ok", False)):
-        raise Rifiuto("Il registro non è pronto. In Impostazioni premi Installa il registro, abilita /Applications/Paratia.app in Accesso completo al disco e attendi lo stato attivo. Python non va autorizzato.")
+        raise Rifiuto(_t("Il registro non è pronto. In Impostazioni premi Installa il registro, abilita /Applications/Paratia.app in Accesso completo al disco e attendi lo stato attivo. Python non va autorizzato."))
     return stato
 
 
@@ -224,7 +239,7 @@ def _attendi_sorveglianza(identificatore):
         if identificatore in stato.get("watched_ids", []):
             return
         time.sleep(0.25)
-    raise Rifiuto("Il registro non ha ancora recepito questa cartella. Il banco non è iniziato: riprova fra poco.")
+    raise Rifiuto(_t("Il registro non ha ancora recepito questa cartella. Il banco non è iniziato: riprova fra poco."))
 
 
 def _cli(nome):
@@ -314,24 +329,24 @@ def _mcp_comando(cli, comando, directory):
                 leggibili, _, _ = select.select([processo.stdout], [], [], 0.25)
                 if not leggibili:
                     if processo.poll() is not None:
-                        raise Rifiuto("Il server Claude Code è terminato senza completare il probe.")
+                        raise Rifiuto(_t("Il server Claude Code è terminato senza completare il probe."))
                     continue
                 pezzo = os.read(processo.stdout.fileno(), 65536)
                 if not pezzo:
-                    raise Rifiuto("Il server Claude Code non ha prodotto una risposta.")
+                    raise Rifiuto(_t("Il server Claude Code non ha prodotto una risposta."))
                 buffer += pezzo
             if len(buffer) > 1048576:
-                raise Rifiuto("La risposta del server Claude Code è troppo grande.")
+                raise Rifiuto(_t("La risposta del server Claude Code è troppo grande."))
             while b"\n" in buffer:
                 linea, buffer = buffer.split(b"\n", 1)
                 msg = json.loads(linea)
                 if msg.get("id") == identificatore and ("result" in msg or "error" in msg):
                     if "error" in msg or msg.get("result", {}).get("isError"):
-                        raise Rifiuto("Claude Code ha rifiutato la prova. Controlla autorizzazioni e hook della CLI.")
+                        raise Rifiuto(_t("Claude Code ha rifiutato la prova. Controlla autorizzazioni e hook della CLI."))
                     return msg["result"]
                 if "id" in msg and "method" in msg:
                     manda({"jsonrpc": "2.0", "id": msg["id"], "error": {"code": -32601, "message": "Serve consenso umano; il banco non approva richieste del server."}})
-        raise Rifiuto("Claude Code non ha concluso la prova in tempo. Controlla login e autorizzazioni.")
+        raise Rifiuto(_t("Claude Code non ha concluso la prova in tempo. Controlla login e autorizzazioni."))
 
     try:
         os.set_blocking(processo.stdout.fileno(), False)
@@ -343,15 +358,15 @@ def _mcp_comando(cli, comando, directory):
         manda({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
         elenco = risposta(2)
         if not any(t.get("name") == "Bash" for t in elenco.get("tools", [])):
-            raise Rifiuto("La CLI Claude Code non espone il tool Bash atteso per il banco.")
+            raise Rifiuto(_t("La CLI Claude Code non espone il tool Bash atteso per il banco."))
         manda({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
             "name": "Bash", "arguments": {"command": shlex.join(comando), "timeout": 30000,
                                           "description": "Banco sintetico Paratia: open/fstat senza lettura dei byte"}}})
         risposta(3)
-        return {"rc": 0, "pid_launcher": processo.pid, "timeout": False, "modo": "Claude Code MCP, comando umano senza modello"}
+        return {"rc": 0, "pid_launcher": processo.pid, "timeout": False, "modo": _t("Claude Code MCP, comando umano senza modello")}
     except (OSError, ValueError):
         return {"rc": None, "pid_launcher": processo.pid, "timeout": False,
-                "modo": "Claude Code MCP, comando umano senza modello"}
+                "modo": _t("Claude Code MCP, comando umano senza modello")}
     finally:
         try:
             processo.stdin.close()
@@ -374,20 +389,20 @@ def _probe(attore, target, fase, directory, agenti_reali):
         esito = _comando(["/bin/sh", "-c", 'exec "$@"', "banco-shell", *comando], directory, tempo=30)
     else:
         if not agenti_reali:
-            return {**r, "messaggio": "CLI reale non avviata: manca il consenso per questa prova."}
+            return {**r, "messaggio": _t("CLI reale non avviata: manca il consenso per questa prova.")}
         cli = _cli(attore)
         if not cli:
-            return {**r, "messaggio": "La CLI " + attore + " non è disponibile. Nessun processo sostitutivo è stato usato."}
+            return {**r, "messaggio": _t("La CLI ") + attore + _t(" non è disponibile. Nessun processo sostitutivo è stato usato.")}
         if attore == "codex":
             # A genuine child of Codex's sandbox command. No model call or hook
             # trust bypass; this is an explicitly requested human CLI operation.
             esito = _comando([cli, "sandbox", "-C", str(directory), "--", *comando], directory, tempo=45)
-            esito["modo"] = "Codex sandbox, comando umano senza modello"
+            esito["modo"] = _t("Codex sandbox, comando umano senza modello")
         else:
             esito = _mcp_comando(cli, comando, directory)
     misurato = _risultato_probe(output, nonce)
     if misurato is None:
-        return {**r, **esito, "messaggio": "Il processo non ha prodotto una misura valida. Controlla login, permessi e hook della CLI."}
+        return {**r, **esito, "messaggio": _t("Il processo non ha prodotto una misura valida. Controlla login, permessi e hook della CLI.")}
     return {**r, **esito, **misurato, "misurato": True}
 
 
@@ -419,7 +434,7 @@ def _fase(prova, nome, target, cartella_id, chiusa, directory, agenti_reali):
         r = _probe(attore, target, nome, directory, agenti_reali)
         r["obbligatoria"] = attore != "mdls"
         if not r["obbligatoria"]:
-            r["nota"] = "Sonda Spotlight informativa: cache e volumi non indicizzati non determinano l'esito della fase."
+            r["nota"] = _t("Sonda Spotlight informativa: cache e volumi non indicizzati non determinano l'esito della fase.")
         r["riscontri_kernel"] = _riscontri(r) if r["misurato"] else []
         if r["riscontri_kernel"]:
             r["agente"] = r["riscontri_kernel"][0].get("agente")
@@ -457,7 +472,7 @@ def esegui(dove, passphrase: bytes, minutes=15, agenti_reali=True):
     vecchia = next((p for p in reversed(_leggi_storico()["prove"]) if p.get("percorso") == str(fonte)
                    and p.get("sintetici") and p.get("inventario")), None)
     if esistenti and (not vecchia or vecchia.get("cartella_id") != esistenti[0]["id"]):
-        raise Rifiuto("Questa cartella protetta non appartiene al banco sintetico. Non verrà aperta o migrata dalla prova.")
+        raise Rifiuto(_t("Questa cartella protetta non appartiene al banco sintetico. Non verrà aperta o migrata dalla prova."))
     identificatore = esistenti[0]["id"] if esistenti else None
     prova = {"versione": 1, "id": uuid.uuid4().hex, "stato": "in-corso", "percorso": str(fonte),
              "iniziata": _ora(), "fasi": [], "sintetici": False, "cartella_id": identificatore, "bundle": None}
@@ -468,7 +483,7 @@ def esegui(dove, passphrase: bytes, minutes=15, agenti_reali=True):
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         os.close(fd)
-        raise Rifiuto("Un banco è già in corso. Attendi la fine prima di riprovare.")
+        raise Rifiuto(_t("Un banco è già in corso. Attendi la fine prima di riprovare."))
     watch = None
     watch_id = None
     try:
@@ -491,13 +506,13 @@ def esegui(dove, passphrase: bytes, minutes=15, agenti_reali=True):
             attuale = _inventario(fonte, escluso=esistenti[0].get("metadir"),
                                  sistema_assenti=C.DIR_SISTEMA - vecchia["inventario"].keys())
             if attuale != vecchia["inventario"]:
-                raise Rifiuto("I metadati del banco sono cambiati: la prova non tratta questi file come sintetici.")
+                raise Rifiuto(_t("I metadati del banco sono cambiati: la prova non tratta questi file come sintetici."))
             prova["inventario"] = attuale
         else:
             attuale = _inventario(fonte)
             if attuale:
                 if not vecchia or attuale != vecchia["inventario"]:
-                    raise Rifiuto("folder-test contiene file personali o non riconosciuti. Il banco si limita ai metadati: spostali tu e riprova.")
+                    raise Rifiuto(_t("folder-test contiene file personali o non riconosciuti. Il banco si limita ai metadati: spostali tu e riprova."))
             else:
                 attuale = _sintetici(fonte)
             prova["inventario"] = attuale
@@ -511,7 +526,7 @@ def esegui(dove, passphrase: bytes, minutes=15, agenti_reali=True):
             _fase(prova, "prima", target, identificatore or watch_id, False, directory, agenti_reali)
             if not identificatore:
                 if _inventario(fonte) != prova["inventario"]:
-                    raise Rifiuto("folder-test è cambiata durante la prova: nessun nuovo dato verrà migrato. Chiudi le app che la modificano e riprova.")
+                    raise Rifiuto(_t("folder-test è cambiata durante la prova: nessun nuovo dato verrà migrato. Chiudi le app che la modificano e riprova."))
                 v = _operazione(prova, C.proteggi(fonte, disco, passphrase, minutes))
                 identificatore = v["id"]
                 prova.update(cartella_id=identificatore, bundle=v["bundle"])
@@ -527,7 +542,7 @@ def esegui(dove, passphrase: bytes, minutes=15, agenti_reali=True):
             _operazione(prova, C.chiudi(identificatore))
             _fase(prova, "richiusa", target, identificatore, True, directory, agenti_reali)
         prova["stato"] = "completo" if all(f["ok"] for f in prova["fasi"]) and not prova.get("avviso_registro") else "incompleto"
-        prova["messaggio"] = "Sequenza conclusa e verificata." if prova["stato"] == "completo" else "Sequenza conclusa con prove o riscontri mancanti. Consulta ogni fase; nessun risultato mancante è stato considerato positivo."
+        prova["messaggio"] = _t("Sequenza conclusa e verificata.") if prova["stato"] == "completo" else _t("Sequenza conclusa con prove o riscontri mancanti. Consulta ogni fase; nessun risultato mancante è stato considerato positivo.")
     except BaseException as e:
         if not identificatore and isinstance(e, C.Rifiuto):
             # Only the ID created by this exact migration call can be cleaned
@@ -535,7 +550,7 @@ def esegui(dove, passphrase: bytes, minutes=15, agenti_reali=True):
             identificatore = getattr(e, "cartella_id", None)
             prova["cartella_id"] = identificatore
         prova["stato"] = "incompleto"
-        prova["messaggio"] = str(e) if isinstance(e, (Rifiuto, C.Rifiuto)) else "Il banco è stato interrotto. Consulta lo stato delle cartelle prima di riprovare."
+        prova["messaggio"] = str(e) if isinstance(e, (Rifiuto, C.Rifiuto)) else _t("Il banco è stato interrotto. Consulta lo stato delle cartelle prima di riprovare.")
         prova["tipo_errore"] = type(e).__name__
         raise
     finally:
@@ -545,19 +560,19 @@ def esegui(dove, passphrase: bytes, minutes=15, agenti_reali=True):
                 prova["stato_finale"] = finale["stato"]
                 if finale["stato"] != "chiusa":
                     prova["stato"] = "incompleto"
-                    prova["avviso_chiusura"] = "La migrazione conserva copie plaintext. Usa Recupera o Annulla migrazione in Cartelle prima di riprovare."
+                    prova["avviso_chiusura"] = _t("La migrazione conserva copie plaintext. Usa Recupera o Annulla migrazione in Cartelle prima di riprovare.")
                 if finale.get("avviso_registro"):
                     prova["avviso_registro"] = finale["avviso_registro"]
                     prova["stato"] = "incompleto"
             except Exception:
                 prova["stato_finale"] = "da-verificare"
                 prova["stato"] = "incompleto"
-                prova["avviso_chiusura"] = "La cartella non è stata chiusa: chiudi i documenti aperti e premi Chiudi tutte."
+                prova["avviso_chiusura"] = _t("La cartella non è stata chiusa: chiudi i documenti aperti e premi Chiudi tutte.")
         if watch:
             try:
                 R.rimuovi_sorveglianza(watch)
             except Exception:
-                prova["avviso_sorveglianza"] = "La richiesta di sorveglianza del banco è ancora presente. Riprova quando il registro locale è scrivibile."
+                prova["avviso_sorveglianza"] = _t("La richiesta di sorveglianza del banco è ancora presente. Riprova quando il registro locale è scrivibile.")
         prova["conclusa"] = _ora()
         try:
             _salva(prova)

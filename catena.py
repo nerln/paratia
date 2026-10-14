@@ -1,6 +1,21 @@
 """The existing fanale JSONL hash chain, with serialized, durable appends."""
 from __future__ import annotations
 
+
+def _t(testo, **valori):
+    """Testo per la lingua della GUI; senza lingua impostata, quello italiano."""
+    import importlib.util
+    import os
+    import sys
+    nome = "paratia_messaggi"
+    if nome not in sys.modules:
+        percorso = os.path.join(os.path.dirname(os.path.abspath(__file__)), "messaggi.py")
+        spec = importlib.util.spec_from_file_location(nome, percorso)
+        modulo = importlib.util.module_from_spec(spec)
+        sys.modules[nome] = modulo
+        spec.loader.exec_module(modulo)
+    return sys.modules[nome].t(testo, **valori)
+
 import fcntl
 import ctypes
 import errno
@@ -34,13 +49,13 @@ def acl_scrivibile(percorso):
     if not acl:
         if ctypes.get_errno() in (0, errno.ENOENT):
             return False
-        raise OSError(ctypes.get_errno(), "Impossibile verificare le ACL.")
+        raise OSError(ctypes.get_errno(), _t("Impossibile verificare le ACL."))
     testo = None
     try:
         lunghezza = ctypes.c_ssize_t()
         testo = _LIBACL.acl_to_text(acl, ctypes.byref(lunghezza))
         if not testo:
-            raise OSError("Impossibile interpretare le ACL.")
+            raise OSError(_t("Impossibile interpretare le ACL."))
         righe = ctypes.string_at(testo, lunghezza.value).decode("utf-8", "strict").splitlines()
         mutazioni = {"write", "append", "writeattr", "writeextattr", "writesecurity", "chown",
                      "delete", "delete_child", "add_file", "add_subdirectory"}
@@ -62,7 +77,7 @@ def _coda(f):
         return ZERO
     f.seek(posizione - 1)
     if f.read(1) != b"\n":
-        raise ValueError("La catena termina con una riga incompleta.")
+        raise ValueError(_t("La catena termina con una riga incompleta."))
     raccolta = b""
     while posizione:
         n = min(posizione, 8192)
@@ -76,7 +91,7 @@ def _coda(f):
                 json.loads(riga)
                 return hashlib.sha256(riga.strip()).hexdigest()
         if len(raccolta) > 1048576:
-            raise ValueError("Una riga della catena è troppo grande.")
+            raise ValueError(_t("Una riga della catena è troppo grande."))
     return ZERO
 
 
@@ -86,19 +101,19 @@ def appendi(percorso, voce, durevole=True):
     fd = os.open(p, os.O_CREAT | os.O_RDWR | os.O_APPEND | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "r+b", buffering=0) as f:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
-            raise ValueError("La catena deve essere un file ordinario.")
+            raise ValueError(_t("La catena deve essere un file ordinario."))
         fcntl.flock(fd, fcntl.LOCK_EX)
         try:
             r = {**voce, "precedente": _coda(f),
                  "quando": voce.get("quando", datetime.datetime.now().astimezone().isoformat(timespec="seconds"))}
             dati = (json.dumps(r, ensure_ascii=False, sort_keys=True) + "\n").encode()
             if len(dati) > 1048576:
-                raise ValueError("Il record della catena è troppo grande.")
+                raise ValueError(_t("Il record della catena è troppo grande."))
             vista = memoryview(dati)
             while vista:
                 n = os.write(fd, vista)
                 if not n:
-                    raise OSError("Scrittura della catena interrotta.")
+                    raise OSError(_t("Scrittura della catena interrotta."))
                 vista = vista[n:]
             if durevole:
                 os.fsync(fd)
@@ -119,10 +134,10 @@ def verifica(percorso):
                     continue
                 n += 1
                 if len(riga) > 1048576 or not riga.endswith(b"\n"):
-                    raise ValueError("Riga troppo grande o incompleta.")
+                    raise ValueError(_t("Riga troppo grande o incompleta."))
                 v = json.loads(riga)
                 if not isinstance(v, dict) or v.get("precedente") != atteso:
-                    raise ValueError("Catena interrotta alla voce %d." % n)
+                    raise ValueError(_t("Catena interrotta alla voce %d.") % n)
                 atteso = hashlib.sha256(riga.strip()).hexdigest()
     except FileNotFoundError:
         return {"ok": True, "voci": 0, "digest": ZERO, "errore": None}

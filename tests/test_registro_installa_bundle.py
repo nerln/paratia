@@ -156,11 +156,12 @@ class BundleInstallerTests(unittest.TestCase):
             stack.enter_context(mock.patch.object(I.time, "sleep", side_effect=self.sleeps.append))
             yield
 
-    def test_new_plist_uses_native_app_parent_and_plan_keeps_nine_authorization_args(self):
+    def test_new_plist_uses_native_app_parent_and_plan_keeps_eleven_authorization_args(self):
         with self.installation(), mock.patch.object(I, "installa") as install:
             plan = I.piano(self.source, self.uid)
             install.assert_not_called()
-        self.assertEqual(len(plan["argv"]), 9)
+        self.assertEqual(len(plan["argv"]), 11)
+        self.assertEqual(plan["argv"][-2:], ["--lingua", "it"])
         self.assertEqual(plan["argv"][:3], ["/protected/ApplePython", "-I", "-S"])
         self.assertEqual(plan["plist"]["ProgramArguments"], [
             str(self.support / "Paratia.app" / "Contents" / "MacOS" / "Paratia"), "--registro", "--uid", str(self.uid)])
@@ -333,10 +334,12 @@ class BundleInstallerTests(unittest.TestCase):
             I._protetto(self.app, directory=True)
 
     def test_daemon_metadata_distinguishes_native_launcher_and_legacy_python(self):
+        registro = mock.Mock()
+        registro._modo_firma_app.return_value = "adhoc"
         with mock.patch.dict(os.environ, {"PARATIA_REGISTRY_LAUNCHER": "app"}):
-            native = D.contesto_launcher()
+            native = D.contesto_launcher(registro)
         with mock.patch.dict(os.environ, {}, clear=True):
-            legacy = D.contesto_launcher()
+            legacy = D.contesto_launcher(registro)
         self.assertEqual(native["launch_mode"], "app")
         self.assertEqual(legacy["launch_mode"], "legacy-python")
         for value in (native, legacy):
@@ -344,6 +347,16 @@ class BundleInstallerTests(unittest.TestCase):
             self.assertTrue(value["fda_regrant_after_build"])
             self.assertNotIn("/usr/bin/eslogger", D.messaggio_fda(value))
         self.assertIn("Reinstalla", D.messaggio_fda(legacy))
+
+    def test_daemon_metadata_follows_the_installed_signature_mode(self):
+        # Con un'identità stabile il permesso resta valido; senza verifica si resta prudenti.
+        registro = mock.Mock()
+        for modo, regrant, firma in (("stabile", False, "stabile"), ("adhoc", True, "adhoc"), (None, True, "non-verificata")):
+            registro._modo_firma_app.return_value = modo
+            with mock.patch.dict(os.environ, {"PARATIA_REGISTRY_LAUNCHER": "app"}):
+                value = D.contesto_launcher(registro)
+            self.assertIs(value["fda_regrant_after_build"], regrant, modo)
+            self.assertEqual(value["firma"], firma, modo)
 
     def test_runtime_rejects_xcode_before_invoking_any_python(self):
         xcode = Path("/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3")

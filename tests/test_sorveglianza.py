@@ -276,7 +276,7 @@ def isolated_app(tmp_path):
     app, home = base / "app", base / "home"
     app.mkdir()
     home.mkdir()
-    for name in ("paratia.py", "gui_worker.py", "registro.py", "catena.py"):
+    for name in ("paratia.py", "gui_worker.py", "registro.py", "catena.py", "messaggi.py"):
         shutil.copyfile(ROOT / name, app / name)
     # Preserve the production APIs and redirect only collector filesystem roots.
     # This prevents query/export from consulting the user's live kernel chain.

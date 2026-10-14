@@ -28,8 +28,8 @@ struct EventItem: Identifiable {
     var path: String { data.text("percorso") }
     var process: String { data.text("processo") }
     var agent: String {
-        guard let value = data["agente"] as? Bool else { return "Sconosciuto" }
-        return value ? data.text("nome_agente", fallback: "Agente") : "No"
+        guard let value = data["agente"] as? Bool else { return tr("Sconosciuto") }
+        return value ? data.text("nome_agente", fallback: tr("Agente")) : "No"
     }
 }
 
@@ -43,6 +43,7 @@ struct FileItem: Identifiable {
 enum Section: String, CaseIterable, Identifiable {
     case folders = "Cartelle", logs = "Registro", labels = "Etichette", bank = "Banco di prova", settings = "Impostazioni"
     var id: String { rawValue }
+    var title: String { tr(rawValue) }
     var icon: String {
         switch self {
         case .folders: return "lock.rectangle"
@@ -63,21 +64,43 @@ struct KeyRequest: Identifiable {
 }
 
 func eventName(_ event: String) -> String {
-    ["open": "Apertura", "close": "Chiusura file", "write": "Scrittura", "create": "Creazione",
-     "rename": "Rinomina", "unlink": "Cancellazione", "mount": "Montaggio", "unmount": "Smontaggio",
-     "mmap": "Mappatura memoria", "truncate": "Troncamento", "lookup": "Ricerca percorso",
-     "cartella-aperta": "Cartella aperta", "cartella-chiusa": "Cartella chiusa",
-     "cartella-protetta": "Cartella protetta", "tentativo-fallito": "Tentativo fallito",
-     "diagnostico": "Diagnostico"][event] ?? event
+    ["open": tr("Apertura"), "close": tr("Chiusura file"), "write": tr("Scrittura"), "create": tr("Creazione"),
+     "rename": tr("Rinomina"), "unlink": tr("Cancellazione"), "mount": tr("Montaggio"), "unmount": tr("Smontaggio"),
+     "mmap": tr("Mappatura memoria"), "truncate": tr("Troncamento"), "lookup": tr("Ricerca percorso"),
+     "cartella-aperta": tr("Cartella aperta"), "cartella-chiusa": tr("Cartella chiusa"),
+     "cartella-protetta": tr("Cartella protetta"), "tentativo-fallito": tr("Tentativo fallito"),
+     "diagnostico": tr("Diagnostico")][event] ?? event
 }
 
 func prettyJSON(_ value: Any) -> String {
     guard JSONSerialization.isValidJSONObject(value),
           let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]),
-          let text = String(data: data, encoding: .utf8) else { return "Nessun dettaglio disponibile." }
+          let text = String(data: data, encoding: .utf8) else { return tr("Nessun dettaglio disponibile.") }
     return text
 }
 
+/// Dimensione in byte, KB, MB, GB o TB con il separatore decimale della lingua in uso.
 func byteCount(_ count: Int) -> String {
-    ByteCountFormatter.string(fromByteCount: Int64(count), countStyle: .file)
+    let formatter = NumberFormatter()
+    formatter.locale = Localizzazione.locale
+    formatter.minimumFractionDigits = 0
+    formatter.maximumFractionDigits = 1
+    let value = Double(count)
+    let scale: [(Double, String)] = [(1e12, "TB"), (1e9, "GB"), (1e6, "MB"), (1e3, "KB")]
+    for (factor, unit) in scale where value >= factor {
+        return (formatter.string(from: NSNumber(value: value / factor)) ?? "") + " " + unit
+    }
+    return (formatter.string(from: NSNumber(value: count)) ?? "\(count)") + " B"
+}
+
+/// Testo visibile di un'etichetta. I codici riservato, pubblico e zona:nome restano
+/// quelli del worker; qui diventano frasi nella lingua in uso.
+func etichettaTesto(_ codice: String) -> String {
+    switch codice {
+    case "riservato": return tr("Riservato")
+    case "pubblico": return tr("Pubblico")
+    default:
+        if codice.hasPrefix("zona:") { return tr("Zona: %@", String(codice.dropFirst(5))) }
+        return codice
+    }
 }

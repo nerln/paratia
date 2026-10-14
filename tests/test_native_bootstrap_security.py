@@ -186,7 +186,8 @@ def test_all_bundle_reads_and_fixed_payload_are_guarded_before_authorization():
     assert "enumerator(at: bundle" in swift
     assert "try requireProtected(file)" in swift
     assert "FileAttributeType == .typeRegular" in swift
-    assert "argv.count == 9" in swift
+    assert "argv.count == 11" in swift
+    assert 'argv[9] == "--lingua"' in swift
     assert 'argv[3] == resource.appendingPathComponent("registro_installa.py").path' in swift
     assert "argv[8] == resource.path" in swift
     execute = swift.split("static func execute(plan:", 1)[1]
@@ -205,7 +206,8 @@ def test_remediation_is_the_exact_manual_command_and_does_not_bypass_parent_guar
     swift = (ROOT / "macos" / "NativeInstall.swift").read_text()
     assert swift_preparation_command() == PREPARATION_COMMAND
     assert "Chiudi Paratia ed esegui tu questo unico comando" in swift
-    assert "Se il comando termina senza errori, apri \\(bootstrapBundlePath) dal Finder" in swift
+    tabella_it = (ROOT / "macos" / "lingue" / "it.lproj" / "Localizable.strings").read_text(encoding="utf-8")
+    assert "Se il comando termina senza errori, apri %@ dal Finder" in tabella_it
     assert "Il comando non modifica /Applications" in swift
     assert "un suo antenato non è protetto da root" in swift
     assert "un ACL concede scrittura" in swift

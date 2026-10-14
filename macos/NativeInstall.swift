@@ -45,11 +45,12 @@ enum NativeInstall {
     private static let bootstrapFiles = [
         "Contents/Info.plist", "Contents/MacOS/Paratia", "Contents/_CodeSignature/CodeResources",
         "Contents/Resources/python/registro_installa.py", "Contents/Resources/python/catena.py",
-        "Contents/Resources/python/registro.py", "Contents/Resources/python/registro_daemon.py"
+        "Contents/Resources/python/registro.py", "Contents/Resources/python/registro_daemon.py",
+        "Contents/Resources/python/messaggi.py"
     ]
 
     private static func protectionError(_ path: String) -> AppError {
-        AppError(message: "Installazione amministratore bloccata: apri la copia bootstrap protetta, distinta dall'app normale e dal servizio (\(path)). Chiudi Paratia ed esegui tu questo unico comando nel Terminale:\n\n\(preparationCommand)\n\nSe il comando termina senza errori, apri \(bootstrapBundlePath) dal Finder e usa Installa il registro. Il comando non modifica /Applications: l'app normale e la voce Accesso completo al disco restano /Applications/Paratia.app. Dopo aver verificato la nuova copia, elimina il vecchio bootstrap indicizzabile e le directory .prepara root del bootstrap. Se la nuova copia o un suo antenato non è protetto da root, oppure un ACL concede scrittura, il dialogo resta bloccato: non vengono applicate eccezioni ai controlli.")
+        AppError(message: tr("Installazione amministratore bloccata: apri la copia bootstrap protetta, distinta dall'app normale e dal servizio (%@). Chiudi Paratia ed esegui tu questo unico comando nel Terminale:\n\n%@\n\nSe il comando termina senza errori, apri %@ dal Finder e usa Installa il registro. Il comando non modifica /Applications: l'app normale e la voce Accesso completo al disco restano /Applications/Paratia.app. Dopo aver verificato la nuova copia, elimina il vecchio bootstrap indicizzabile e le directory .prepara root del bootstrap. Se la nuova copia o un suo antenato non è protetto da root, oppure un ACL concede scrittura, il dialogo resta bloccato: non vengono applicate eccezioni ai controlli.", "\(path)", "\(preparationCommand)", "\(bootstrapBundlePath)"))
     }
 
     private static func requireProtected(_ path: URL) throws {
@@ -89,10 +90,10 @@ enum NativeInstall {
         verifier.standardOutput = FileHandle.nullDevice
         verifier.standardError = FileHandle.nullDevice
         do { try verifier.run(); verifier.waitUntilExit() } catch {
-            throw AppError(message: "La firma di Paratia non può essere verificata. Chiedi al supervisore di ricostruire e reinstallare l'app prima di autorizzare il registro.")
+            throw AppError(message: tr("La firma di Paratia non può essere verificata. Chiedi al supervisore di ricostruire e reinstallare l'app prima di autorizzare il registro."))
         }
         guard verifier.terminationReason == .exit, verifier.terminationStatus == 0 else {
-            throw AppError(message: "La firma o le risorse di Paratia non sono integre. Chiedi al supervisore di ricostruire e reinstallare l'app prima di autorizzare il registro.")
+            throw AppError(message: tr("La firma o le risorse di Paratia non sono integre. Chiedi al supervisore di ricostruire e reinstallare l'app prima di autorizzare il registro."))
         }
     }
 
@@ -101,23 +102,24 @@ enum NativeInstall {
         try validateBootstrap(bundle: bundle)
         let resource = bundle.appendingPathComponent("Contents/Resources/python", isDirectory: true)
         guard
-              let argv = plan["argv"] as? [String], argv.count == 9,
+              let argv = plan["argv"] as? [String], argv.count == 11,
               argv[1] == "-I", argv[2] == "-S",
               argv[3] == resource.appendingPathComponent("registro_installa.py").path,
               argv[4] == "--install", argv[5] == "--uid", argv[6] == String(getuid()),
-              argv[7] == "--source", argv[8] == resource.path else {
-            throw AppError(message: "Il piano di installazione non corrisponde ai componenti di questa app.")
+              argv[7] == "--source", argv[8] == resource.path,
+              argv[9] == "--lingua", ["it", "en", "es"].contains(argv[10]) else {
+            throw AppError(message: tr("Il piano di installazione non corrisponde ai componenti di questa app."))
         }
         let runtime = URL(fileURLWithPath: argv[0]).resolvingSymlinksInPath()
         let allowed = "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/"
         guard runtime.path == argv[0], runtime.path.hasPrefix(allowed),
               runtime.lastPathComponent.hasPrefix("python"), runtime.deletingLastPathComponent().lastPathComponent == "bin" else {
-            throw AppError(message: "L'installazione richiede il Python Apple protetto dei Command Line Tools.")
+            throw AppError(message: tr("L'installazione richiede il Python Apple protetto dei Command Line Tools."))
         }
         var current = runtime
         while true {
             guard current.path.withCString({ ParatiaRootProtected($0) }) == 1 else {
-                throw AppError(message: "Il runtime Apple è modificabile senza root. Ripristina i Command Line Tools prima di installare.")
+                throw AppError(message: tr("Il runtime Apple è modificabile senza root. Ripristina i Command Line Tools prima di installare."))
             }
             if current.path == "/" { break }
             current.deleteLastPathComponent()
@@ -128,16 +130,16 @@ enum NativeInstall {
     static func decodeInstallationResponse(_ response: Data) throws -> Record {
         guard !response.isEmpty, response.count <= 1_048_576,
               let result = try? JSONSerialization.jsonObject(with: response) as? Record else {
-            throw AppError(message: "L'installatore non ha restituito un JSON valido. Aggiorna lo stato e riprova dalle Impostazioni.")
+            throw AppError(message: tr("L'installatore non ha restituito un JSON valido. Aggiorna lo stato e riprova dalle Impostazioni."))
         }
         guard let installed = result["installed"] as? NSNumber,
               CFGetTypeID(installed) == CFBooleanGetTypeID() else {
-            throw AppError(message: "La risposta dell'installatore non contiene un esito booleano valido. Aggiorna lo stato e riprova.")
+            throw AppError(message: tr("La risposta dell'installatore non contiene un esito booleano valido. Aggiorna lo stato e riprova."))
         }
         guard installed.boolValue else {
-            let message = result["message"] as? String ?? "L'installazione del registro non è riuscita."
+            let message = result["message"] as? String ?? tr("L'installazione del registro non è riuscita.")
             let code = result["error_code"] as? String ?? "install_failed"
-            throw AppError(message: String(message.prefix(2048)) + "\nCodice: " + String(code.prefix(96)))
+            throw AppError(message: String(message.prefix(2048)) + tr("\nCodice: ") + String(code.prefix(96)))
         }
         return result
     }
@@ -155,14 +157,14 @@ enum NativeInstall {
                 pointers.withUnsafeMutableBufferPointer { ParatiaAuthorizedInstall(executable, $0.baseAddress, &stream) }
             }
             guard status == 0, let output = stream else {
-                throw AppError(message: status == -60006 ? "Autorizzazione annullata. Nessuna installazione confermata." : "macOS non ha autorizzato l'installazione. Riprova dalle Impostazioni.")
+                throw AppError(message: status == -60006 ? tr("Autorizzazione annullata. Nessuna installazione confermata.") : tr("macOS non ha autorizzato l'installazione. Riprova dalle Impostazioni."))
             }
             defer { fclose(output) }
             var response = Data(), buffer = [UInt8](repeating: 0, count: 4096)
             while true {
                 let count = fread(&buffer, 1, buffer.count, output)
                 if count == 0 { break }
-                if response.count + count > 1_048_576 { throw AppError(message: "Il servizio non ha restituito una conferma valida. Aggiorna lo stato.") }
+                if response.count + count > 1_048_576 { throw AppError(message: tr("Il servizio non ha restituito una conferma valida. Aggiorna lo stato.")) }
                 response.append(contentsOf: buffer.prefix(count))
             }
             return try decodeInstallationResponse(response)

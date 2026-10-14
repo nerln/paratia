@@ -206,6 +206,7 @@ def test_backend_refusal_text_is_never_forwarded(W, monkeypatch):
 @pytest.mark.parametrize("interpreter", [sys.executable] + (["/usr/bin/python3"] if Path("/usr/bin/python3").is_file() else []))
 def test_isolated_worker_suppresses_import_and_backend_stdout_stderr(tmp_path, interpreter):
     shutil.copyfile(ROOT / "gui_worker.py", tmp_path / "gui_worker.py")
+    shutil.copyfile(ROOT / "messaggi.py", tmp_path / "messaggi.py")
     (tmp_path / "cartelle.py").write_text(
         "import os, sys\n"
         "print('IMPORT_NOISE')\n"

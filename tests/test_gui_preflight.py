@@ -89,7 +89,7 @@ def swift_method(name):
 def test_gui_checks_destination_and_open_state_before_creating_key_requests():
     protect = swift_method("protectFolder")
     assert protect.index('worker.request("cartelle.prepara_protezione"') < protect.index("KeyRequest(")
-    opening = swift_method("askKey").split('perform("Controllo dello stato della cartella…")', 1)[1]
+    opening = swift_method("askKey").split('perform(tr("Controllo dello stato della cartella…"))', 1)[1]
     assert opening.index('worker.request("cartelle.prepara_apertura"') < opening.index('ready.flag("gia_aperta")')
     assert opening.index('ready.flag("gia_aperta")') < opening.index("return") < opening.index("KeyRequest(")
     assert opening.index('guard ready.flag("pronto")') < opening.index("KeyRequest(")
@@ -148,7 +148,7 @@ def test_worker_refuses_truthy_force_and_keys_before_disk_backend(W, monkeypatch
 
 def test_gui_force_close_requires_explicit_second_button_confirmation():
     force = swift_method("forceClose")
-    assert force.index('alert.addButton(withTitle: "Annulla")') < force.index('alert.addButton(withTitle: "Chiudi forzatamente")')
+    assert force.index('alert.addButton(withTitle: tr("Annulla"))') < force.index('alert.addButton(withTitle: tr("Chiudi forzatamente"))')
     assert force.index("guard alert.runModal() == .alertSecondButtonReturn else { return }") < force.index('worker.request("cartelle.chiudi"')
     assert '"force": true' in force and "modifiche non salvate" in force
     assert 'if folder.isIncomplete' in force and "migrazione resta incompleta" in force
@@ -172,7 +172,7 @@ def test_registry_view_distinguishes_zero_events_from_inactive_or_unknown_collec
     export = swift_method("export")
     assert 'action == "registro.export_csv"' in export and 'result["kernel_active"] as? Bool' in export
     view = (ROOT / "macos" / "Views.swift").read_text().split('struct RegistryView', 1)[1]
-    counter = view.split('Text("\\(model.eventTotal)', 1)[1].split('Button("Apri dettaglio")', 1)[0]
+    counter = view.split('plurale(model.eventTotal', 1)[1].split('Button(tr("Apri dettaglio"))', 1)[0]
     for state in ('"Raccolta kernel attiva"', '"Raccolta kernel inattiva"', '"Raccolta kernel da verificare"'):
         assert state in counter
     assert 'Text(model.eventsKernelMessage)' in view
@@ -183,22 +183,22 @@ def test_registry_view_distinguishes_zero_events_from_inactive_or_unknown_collec
 def test_gui_keeps_refused_folder_reason_visible_before_global_health_and_missing_path():
     status = swift_method("watchStatus")
     assert 'registry["watch_status"] as? [Record]' in status
-    refusal = status.index('return "Rifiutata dal raccoglitore: " + message')
+    refusal = status.index('return tr("Rifiutata dal raccoglitore: ") + message')
     assert status.index('"rejected"') < refusal < status.index('record["esiste"] as? Bool == false')
     assert refusal < status.index('registry.flag("running")')
     # Acceptance of an ID and health of the entire stream are separate states.
     assert 'registry.flag("healthy")' not in status
     view = (ROOT / "macos" / "Views.swift").read_text()
     assert 'Text(model.watchStatus(folder))' in view
-    assert 'Text("Registro: " + model.watchStatus(folder.data))' in view
+    assert 'Text(tr("Registro: ") + model.watchStatus(folder.data))' in view
 
 
 def test_confirmed_watch_warning_is_visible_before_missing_path_with_matching_token():
     status = swift_method("watchStatus")
     assert 'let token = record.text("configuration_token", fallback: "")' in status
     assert 'token.isEmpty || $0.text("configuration_token", fallback: "") == token' in status
-    warning = status.index('return "Confermata dal raccoglitore · " + warning')
-    assert status.index('return "Rifiutata dal raccoglitore: " + message') < warning
+    warning = status.index('return tr("Confermata dal raccoglitore · ") + warning')
+    assert status.index('return tr("Rifiutata dal raccoglitore: ") + message') < warning
     assert warning < status.index('record["esiste"] as? Bool == false')
 
 
@@ -209,7 +209,7 @@ def test_native_installer_keeps_json_failure_message_and_error_code():
     assert 'CFGetTypeID(installed) == CFBooleanGetTypeID()' in decode
     assert 'guard installed.boolValue' in decode
     assert 'result["message"] as? String' in decode and 'result["error_code"] as? String' in decode
-    assert 'throw AppError(message: String(message.prefix(2048)) + "\\nCodice: "' in decode
+    assert 'throw AppError(message: String(message.prefix(2048)) + tr("\\nCodice: ")' in decode
     assert 'return try decodeInstallationResponse(response)' in native
     assert 'Il servizio non ha confermato l\'installazione' not in native
 
@@ -242,18 +242,18 @@ def test_gui_shows_ordered_update_steps_only_for_a_known_build_mismatch():
     assert 'model.registryUpdateSteps.enumerated()' in steps
     assert 'Text("\\(index + 1). \\(step)")' in steps
     settings = view.split('struct SettingsView:', 1)[1]
-    assert settings.index('RegistryUpdateSteps(model: model)') < settings.index('GroupBox("Registro kernel")')
+    assert settings.index('RegistryUpdateSteps(model: model)') < settings.index('GroupBox(tr("Registro kernel"))')
     assert 'Versione del servizio: non ancora verificata.' in settings
     registry = view.split('struct RegistryView:', 1)[1].split('struct RegistryHealthDetails:', 1)[0]
     assert 'Label(model.registry.text("update_message"' in registry
-    assert 'Button("Passi per aggiornare…") { model.section = .settings }' in registry
+    assert 'Button(tr("Passi per aggiornare…")) { model.section = .settings }' in registry
 
 
 def test_gui_refresh_invalidates_old_query_health_without_discarding_history_or_requerying():
     refresh = swift_method("refresh")
     state = refresh.index('registry = try await worker.request("registro.stato")')
     for invalidation in ('eventsKernelActive = nil', 'eventsKernelCollection = [:]',
-                         'eventsKernelMessage = "Stato della ricerca precedente da verificare: ripeti la ricerca."'):
+                         'eventsKernelMessage = tr("Stato della ricerca precedente da verificare: ripeti la ricerca.")'):
         assert state < refresh.index(invalidation)
     # Refresh observes current collection status; displayed history survives
     # until the user reruns the filters and gets new query-scoped metadata.
