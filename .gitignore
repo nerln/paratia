@@ -3,6 +3,7 @@ __pycache__/
 .DS_Store
 *.sparsebundle
 build/
+build.noindex/
 dist/
 .swiftmodulecache/
 .pytest_cache/

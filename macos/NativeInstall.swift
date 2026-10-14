@@ -1,28 +1,44 @@
 import Foundation
+import CoreFoundation
 import Darwin
 
 enum NativeInstall {
-    static let bootstrapBundlePath = "/Library/Application Support/ParatiaBootstrap/Paratia.app"
+    static let bootstrapBundlePath = "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app"
     static let preparationCommand = """
     sudo /bin/sh -c 'set -eu
-    [ ! -L "/Library/Application Support/ParatiaBootstrap" ]
+    [ ! -L "/Library/Application Support/ParatiaBootstrap.noindex" ]
     [ -d "/Applications/Paratia.app" ]
     [ ! -L "/Applications/Paratia.app" ]
-    /usr/bin/install -d -m 755 -o root -g wheel "/Library/Application Support/ParatiaBootstrap"
-    /bin/chmod -N "/Library/Application Support/ParatiaBootstrap"
-    paratia_bootstrap_stage=$(/usr/bin/mktemp -d "/Library/Application Support/ParatiaBootstrap/.prepara.XXXXXX")
+    /usr/bin/install -d -m 755 -o root -g wheel "/Library/Application Support/ParatiaBootstrap.noindex"
+    /bin/chmod -N "/Library/Application Support/ParatiaBootstrap.noindex"
+    paratia_bootstrap_stage=$(/usr/bin/mktemp -d "/Library/Application Support/ParatiaBootstrap.noindex/.prepara.XXXXXX")
     /usr/bin/ditto --noacl "/Applications/Paratia.app" "$paratia_bootstrap_stage/Paratia.app"
     /usr/bin/find "$paratia_bootstrap_stage/Paratia.app" ! -type d ! -type f -print > "$paratia_bootstrap_stage/percorsi-non-ordinari"
     [ ! -s "$paratia_bootstrap_stage/percorsi-non-ordinari" ]
     /usr/sbin/chown -R root:wheel "$paratia_bootstrap_stage/Paratia.app"
     /bin/chmod -R go-w "$paratia_bootstrap_stage/Paratia.app"
     /usr/bin/codesign --verify --deep --strict "$paratia_bootstrap_stage/Paratia.app"
-    [ ! -L "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]
-    if [ -e "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]; then
-        /bin/mv "/Library/Application Support/ParatiaBootstrap/Paratia.app" "$paratia_bootstrap_stage/precedente.app"
+    [ ! -L "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app" ]
+    if [ -e "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app" ]; then
+        /bin/mv "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app" "$paratia_bootstrap_stage/precedente.app"
     fi
-    /bin/mv "$paratia_bootstrap_stage/Paratia.app" "/Library/Application Support/ParatiaBootstrap/Paratia.app"
-    /usr/bin/codesign --verify --deep --strict "/Library/Application Support/ParatiaBootstrap/Paratia.app"'
+    /bin/mv "$paratia_bootstrap_stage/Paratia.app" "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app"
+    /usr/bin/codesign --verify --deep --strict "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app"
+    /usr/bin/find "/Library/Application Support/ParatiaBootstrap.noindex" -mindepth 1 -maxdepth 1 -type d -user root -name ".prepara.*" -exec /bin/rm -rf -- {} +
+    if [ -e "/Library/Application Support/ParatiaBootstrap" ]; then
+        [ ! -L "/Library/Application Support/ParatiaBootstrap" ]
+        [ -d "/Library/Application Support/ParatiaBootstrap" ]
+        [ "$(/usr/bin/stat -f %u "/Library/Application Support/ParatiaBootstrap")" = "0" ]
+        paratia_legacy_mode=$(/usr/bin/stat -f %Lp "/Library/Application Support/ParatiaBootstrap")
+        [ $((0$paratia_legacy_mode & 022)) -eq 0 ]
+        [ ! -L "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]
+        if [ -e "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]; then
+            [ -d "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]
+            [ "$(/usr/bin/stat -f %u "/Library/Application Support/ParatiaBootstrap/Paratia.app")" = "0" ]
+            /bin/rm -rf -- "/Library/Application Support/ParatiaBootstrap/Paratia.app"
+        fi
+        /usr/bin/find "/Library/Application Support/ParatiaBootstrap" -mindepth 1 -maxdepth 1 -type d -user root -name ".prepara.*" -exec /bin/rm -rf -- {} +
+    fi'
     """
     // The bootstrap imports catena before installing these fixed daemon assets.
     // The complete bundle is checked too: the installer reads it while copying.
@@ -33,7 +49,7 @@ enum NativeInstall {
     ]
 
     private static func protectionError(_ path: String) -> AppError {
-        AppError(message: "Installazione amministratore bloccata: apri la copia bootstrap protetta, distinta dall'app normale e dal servizio (\(path)). Chiudi Paratia ed esegui tu questo unico comando nel Terminale:\n\n\(preparationCommand)\n\nSe il comando termina senza errori, apri \(bootstrapBundlePath) dal Finder e usa Installa il registro. Il comando non modifica /Applications: l'app normale e la voce Accesso completo al disco restano /Applications/Paratia.app. Eventuali copie precedenti sono conservate nella cartella .prepara sotto ParatiaBootstrap. Se la nuova copia o un suo antenato non è protetto da root, oppure un ACL concede scrittura, il dialogo resta bloccato: non vengono applicate eccezioni ai controlli.")
+        AppError(message: "Installazione amministratore bloccata: apri la copia bootstrap protetta, distinta dall'app normale e dal servizio (\(path)). Chiudi Paratia ed esegui tu questo unico comando nel Terminale:\n\n\(preparationCommand)\n\nSe il comando termina senza errori, apri \(bootstrapBundlePath) dal Finder e usa Installa il registro. Il comando non modifica /Applications: l'app normale e la voce Accesso completo al disco restano /Applications/Paratia.app. Dopo aver verificato la nuova copia, elimina il vecchio bootstrap indicizzabile e le directory .prepara root del bootstrap. Se la nuova copia o un suo antenato non è protetto da root, oppure un ACL concede scrittura, il dialogo resta bloccato: non vengono applicate eccezioni ai controlli.")
     }
 
     private static func requireProtected(_ path: URL) throws {
@@ -109,6 +125,23 @@ enum NativeInstall {
         return argv
     }
 
+    static func decodeInstallationResponse(_ response: Data) throws -> Record {
+        guard !response.isEmpty, response.count <= 1_048_576,
+              let result = try? JSONSerialization.jsonObject(with: response) as? Record else {
+            throw AppError(message: "L'installatore non ha restituito un JSON valido. Aggiorna lo stato e riprova dalle Impostazioni.")
+        }
+        guard let installed = result["installed"] as? NSNumber,
+              CFGetTypeID(installed) == CFBooleanGetTypeID() else {
+            throw AppError(message: "La risposta dell'installatore non contiene un esito booleano valido. Aggiorna lo stato e riprova.")
+        }
+        guard installed.boolValue else {
+            let message = result["message"] as? String ?? "L'installazione del registro non è riuscita."
+            let code = result["error_code"] as? String ?? "install_failed"
+            throw AppError(message: String(message.prefix(2048)) + "\nCodice: " + String(code.prefix(96)))
+        }
+        return result
+    }
+
     static func execute(plan: Record) async throws -> Record {
         let argv = try validate(plan: plan)
         return try await Task.detached(priority: .userInitiated) {
@@ -132,10 +165,7 @@ enum NativeInstall {
                 if response.count + count > 1_048_576 { throw AppError(message: "Il servizio non ha restituito una conferma valida. Aggiorna lo stato.") }
                 response.append(contentsOf: buffer.prefix(count))
             }
-            guard let result = try? JSONSerialization.jsonObject(with: response) as? Record, result.flag("installed") else {
-                throw AppError(message: "Il servizio non ha confermato l'installazione. Aggiorna lo stato e riprova dalle Impostazioni.")
-            }
-            return result
+            return try decodeInstallationResponse(response)
         }.value
     }
 }

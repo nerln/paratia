@@ -20,6 +20,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 SUPPORT = Path("/Library/Application Support/Paratia")
@@ -31,6 +32,114 @@ MAX_BUNDLE = 128 * 1024**2
 MAX_ELEMENTI = 10000
 FDA_APP = "/Applications/Paratia.app"
 LAUNCHER_VERSION = 1
+STOP_TIMEOUT = 8.0
+STOP_CHECKS = 40
+LAUNCHCTL_TIMEOUT = 5.0
+BOOTSTRAP_DELAYS = (0.2, 0.5)
+MAX_LAUNCHCTL_ERRORS = 12
+
+
+class ErroreInstallazione(ValueError):
+    """Human-readable, JSON-safe installation failure, including recovery state."""
+
+    def __init__(self, error_code, message, launchctl_errors=(), conserva_stage=False, backup=None):
+        super().__init__(message)
+        self.error_code = error_code
+        self.message = message
+        self.launchctl_errors = list(launchctl_errors)
+        self.conserva_stage = conserva_stage
+        self.backup = backup
+
+
+def _testo_launchctl(value):
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", "replace")
+    return str(value or "")[:4096]
+
+
+def _riduci_stderr(value):
+    """Keep standard launchctl diagnostics; never reflect arbitrary payloads."""
+    testo = _testo_launchctl(value)
+    messaggi = []
+    descrizioni = {3: "No such process", 5: "Input/output error", 13: "Permission denied",
+                   37: "Operation already in progress", 113: "Bad request"}
+    for riga in testo.splitlines()[:16]:
+        esito = re.fullmatch(r"\s*(Bootstrap failed|Boot-out failed):\s*(\d{1,3})(?::.*)?\s*", riga)
+        if esito:
+            numero = int(esito.group(2))
+            descrizione = descrizioni.get(numero, "Errore launchctl")
+            messaggi.append("%s: %d: %s" % (esito.group(1), numero, descrizione))
+        elif "Could not find service" in riga:
+            messaggi.append("Could not find service in domain for system")
+        elif riga.strip() == "Try running the command as root for richer errors.":
+            messaggi.append(riga.strip())
+    if not messaggi and testo.strip():
+        messaggi.append("Diagnostica launchctl non standard omessa.")
+    return "\n".join(messaggi)[:512]
+
+
+def _diagnostica(errors, operation, returncode, stderr):
+    if len(errors) < MAX_LAUNCHCTL_ERRORS:
+        errors.append({"operation": operation, "returncode": returncode,
+                       "stderr": _riduci_stderr(stderr)})
+
+
+def _launchctl(argv, errors, operation):
+    try:
+        return subprocess.run(["/bin/launchctl", *argv], capture_output=True,
+                              timeout=LAUNCHCTL_TIMEOUT)
+    except subprocess.TimeoutExpired as exc:
+        _diagnostica(errors, operation, None, exc.stderr)
+        raise ErroreInstallazione("launchctl_timeout", "launchctl non ha risposto entro il limite di tempo.", errors) from exc
+    except OSError as exc:
+        _diagnostica(errors, operation, None, "")
+        raise ErroreInstallazione("launchctl_unavailable", "Non è stato possibile eseguire launchctl.", errors) from exc
+
+
+def _servizio_presente(label, errors, operation="print"):
+    result = _launchctl(["print", "system/" + label], errors, operation)
+    if result.returncode == 0:
+        return True
+    # launchctl uses ESRCH or its domain-specific bad-request code for absence.
+    # Permission, transport and other failures do not prove that a job is gone.
+    testo = _testo_launchctl(result.stderr)
+    if result.returncode in (3, 113) and (not testo.strip() or "Could not find service" in testo):
+        return False
+    _diagnostica(errors, operation, result.returncode, result.stderr)
+    raise ErroreInstallazione("launchctl_probe_failed", "Non è stato possibile verificare se il servizio è ancora caricato; nessuna sostituzione è autorizzata.", errors)
+
+
+def _arresta(label, errors, rollback=False):
+    prefisso = "rollback_" if rollback else ""
+    result = _launchctl(["bootout", "system/" + label], errors, prefisso + "bootout")
+    if result.returncode:
+        _diagnostica(errors, prefisso + "bootout", result.returncode, result.stderr)
+    deadline = time.monotonic() + STOP_TIMEOUT
+    for tentativo in range(STOP_CHECKS):
+        if not _servizio_presente(label, errors, prefisso + "print"):
+            return
+        restante = deadline - time.monotonic()
+        if restante <= 0:
+            break
+        time.sleep(min(0.1 + tentativo * 0.05, 0.4, restante))
+    codice = "service_stop_failed" if result.returncode else "service_stop_timeout"
+    raise ErroreInstallazione(codice, "Il servizio precedente è ancora caricato dopo l'arresto: nessun componente è stato sostituito.", errors)
+
+
+def _avvia(plist_path, errors, rollback=False):
+    operation = "rollback_bootstrap" if rollback else "bootstrap"
+    for tentativo in range(len(BOOTSTRAP_DELAYS) + 1):
+        result = _launchctl(["bootstrap", "system", str(plist_path)], errors, operation)
+        if result.returncode == 0:
+            return
+        _diagnostica(errors, operation, result.returncode, result.stderr)
+        diagnostico = re.search(r"Bootstrap failed:\s*(5|37)(?:\D|$)", _testo_launchctl(result.stderr))
+        corsa = result.returncode in (5, 37) or diagnostico is not None
+        if not corsa or tentativo == len(BOOTSTRAP_DELAYS):
+            break
+        time.sleep(BOOTSTRAP_DELAYS[tentativo])
+    raise ErroreInstallazione("bootstrap_failed", "launchctl non ha caricato il nuovo servizio dopo i tentativi previsti.", errors)
+
 
 # Importing the installer must not add unsigned bytecode inside its app bundle.
 sys.dont_write_bytecode = True
@@ -405,15 +514,17 @@ def _transazione(stage, replacements, uid, identita, prima_avvio=None):
     """Keep old bundle/code/plist until the replacement service bootstraps."""
     label = "it.paratia.registro.%d" % uid
     precedenti, installati = [], []
+    launchctl_errors = []
     for _, target in replacements:
         if target.exists() or target.is_symlink():
             _protetto(target, directory=target.is_dir())
             if target.is_dir():
                 _albero(target, (0,))
-    presente = subprocess.run(["/bin/launchctl", "print", "system/" + label], capture_output=True).returncode == 0
-    arresto = subprocess.run(["/bin/launchctl", "bootout", "system/" + label], capture_output=True)
-    if presente and arresto.returncode:
-        raise ValueError("Il servizio precedente non è stato arrestato: nessun componente è stato sostituito.")
+    presente = _servizio_presente(label, launchctl_errors)
+    if presente:
+        # A successful bootout only schedules removal. Do not replace a loaded
+        # job's executable or plist until launchd confirms that the label is gone.
+        _arresta(label, launchctl_errors)
     try:
         for index, (candidate, target) in enumerate(replacements):
             backup = stage / ("precedente-%d" % index)
@@ -426,36 +537,51 @@ def _transazione(stage, replacements, uid, identita, prima_avvio=None):
         _verifica_copia(SUPPORT / "Paratia.app", identita)
         if prima_avvio is not None:
             prima_avvio()
-        subprocess.run(["/bin/launchctl", "bootstrap", "system", str(DAEMONS / (label + ".plist"))],
-                       check=True, capture_output=True)
+        _avvia(DAEMONS / (label + ".plist"), launchctl_errors)
     except BaseException as errore:
         recupero = []
         try:
-            subprocess.run(["/bin/launchctl", "bootout", "system/" + label], capture_output=True)
-        except Exception as exc:
-            recupero.append(exc)
+            _arresta(label, launchctl_errors, rollback=True)
+        except BaseException as exc:
+            # A possibly loaded candidate must keep its executable. Leave both
+            # candidate and protected originals untouched for manual recovery.
+            raise ErroreInstallazione(
+                "rollback_stop_failed", "Installazione non riuscita. Non è stato possibile confermare l'arresto durante il ripristino: conserva il backup protetto dell'installer; i componenti non sono stati rimossi.",
+                launchctl_errors, conserva_stage=True, backup=str(stage)) from exc
         for target in reversed(installati):
             try:
                 if target.is_dir():
                     shutil.rmtree(target)
                 else:
                     target.unlink()
-            except Exception as exc:
+            except BaseException as exc:
                 recupero.append(exc)
         for backup, target in reversed(precedenti):
             try:
                 os.replace(backup, target)
-            except Exception as exc:
+            except BaseException as exc:
                 recupero.append(exc)
         old_plist = DAEMONS / (label + ".plist")
         if recupero:
-            rifiuto = ValueError("Il ripristino è incompleto: conserva il backup protetto dell'installer.")
-            rifiuto.conserva_stage = True
-            rifiuto.backup = str(stage)
-            raise rifiuto from errore
-        if presente and old_plist.exists():
-            subprocess.run(["/bin/launchctl", "bootstrap", "system", str(old_plist)], capture_output=True)
-        raise
+            raise ErroreInstallazione(
+                "rollback_incomplete", "Il ripristino è incompleto: conserva il backup protetto dell'installer.",
+                launchctl_errors, conserva_stage=True, backup=str(stage)) from errore
+        if presente and not old_plist.exists():
+            raise ErroreInstallazione(
+                "rollback_bootstrap_failed", "Installazione non riuscita. I componenti precedenti sono stati ripristinati, ma il plist precedente non è disponibile e il servizio non è stato riavviato. Conserva il backup protetto e riprova l'installazione dall'app.",
+                launchctl_errors, conserva_stage=True, backup=str(stage)) from errore
+        if presente:
+            try:
+                _avvia(old_plist, launchctl_errors, rollback=True)
+            except BaseException as exc:
+                raise ErroreInstallazione(
+                    "rollback_bootstrap_failed", "Installazione non riuscita. I componenti precedenti sono stati ripristinati, ma launchctl non ha riavviato il servizio precedente. Conserva il backup protetto e riprova l'installazione dall'app.",
+                    launchctl_errors, conserva_stage=True, backup=str(stage)) from exc
+        codice = getattr(errore, "error_code", "install_failed")
+        dettaglio = str(errore) if isinstance(errore, ErroreInstallazione) else "Non è stato possibile completare la sostituzione dei componenti."
+        ripristino = " Il servizio precedente è stato ripristinato e riavviato." if presente else " I componenti precedenti sono stati ripristinati."
+        raise ErroreInstallazione(codice, dettaglio + ripristino, launchctl_errors) from errore
+    return launchctl_errors
 
 
 def installa(fonte, uid):
@@ -516,8 +642,9 @@ def installa(fonte, uid):
                 _acl(catena, u.pw_name)
                 _acl(stato, u.pw_name)
 
-            _transazione(stage, replacements, uid, identita, autorizzazioni_log)
-            return {"installed": True, "needs_fda": None, "label": label,
+            launchctl_errors = _transazione(stage, replacements, uid, identita, autorizzazioni_log)
+            return {"installed": True, "error_code": None, "launchctl_errors": launchctl_errors,
+                    "needs_fda": None, "label": label,
                     "launch_mode": "app", "fda_entry": FDA_APP,
                     "fda_regrant_after_build": True, "cdhash": identita,
                     "message": "Registro installato dalla copia protetta del bundle. Verifica lo stato; le autorizzazioni di macOS non sono state modificate."}
@@ -530,19 +657,49 @@ def installa(fonte, uid):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Prepara o installa il registro Paratia.")
+    class ParserJSON(argparse.ArgumentParser):
+        def error(self, message):
+            raise ErroreInstallazione("invalid_arguments", "Gli argomenti dell'installatore non sono validi.")
+
+    parser = ParserJSON(description="Prepara o installa il registro Paratia.", add_help=False)
+    parser.add_argument("-h", "--help", action="store_true")
     parser.add_argument("--uid", type=int, default=os.getuid())
     parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parent)
     parser.add_argument("--install", action="store_true")
-    args = parser.parse_args(argv)
-    result = installa(args.source, args.uid) if args.install else piano(args.source, args.uid)
+    codice = 0
+    try:
+        args = parser.parse_args(argv)
+        if args.help:
+            result = {"installed": False, "message": "Uso: registro_installa.py [--install] --uid UID --source RISORSE. L'installazione richiede l'autorizzazione amministratore della GUI."}
+        else:
+            result = installa(args.source, args.uid) if args.install else piano(args.source, args.uid)
+        result.setdefault("installed", False)
+        result.setdefault("error_code", None)
+        result.setdefault("launchctl_errors", [])
+    except (Exception, KeyboardInterrupt) as exc:
+        codice = 1
+        if isinstance(exc, ErroreInstallazione):
+            error_code, message = exc.error_code, str(exc)
+            errors = exc.launchctl_errors
+        elif isinstance(exc, PermissionError):
+            error_code = "permission_required"
+            message = "L'installazione richiede il dialogo amministratore della GUI."
+            errors = []
+        elif isinstance(exc, KeyboardInterrupt):
+            error_code = "installation_interrupted"
+            message = "L'installazione è stata interrotta. Verifica lo stato del servizio e riprova dall'app."
+            errors = []
+        else:
+            error_code = "install_failed"
+            message = "Non è stato possibile preparare o installare il registro. Verifica la copia bootstrap protetta e il bundle firmato, quindi riprova dall'app."
+            errors = []
+        result = {"installed": False, "error_code": error_code, "message": message,
+                  "launchctl_errors": errors}
+        if getattr(exc, "conserva_stage", False):
+            result["backup_retained"] = True
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
-    return 0
+    return codice
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except Exception as e:
-        print("Installazione non riuscita (%s). Riapri l'app e riprova il pulsante Installa il registro." % type(e).__name__)
-        raise SystemExit(1)
+    raise SystemExit(main())

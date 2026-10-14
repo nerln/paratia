@@ -226,7 +226,7 @@ def test_open_gate_reports_every_exact_exception_and_rejects_non_shell_tool(gate
     for command in ("paratia cartella chiudi <id>", "paratia cartella chiudi-tutte", "paratia lock",
                     "paratia status", "paratia status --json", "paratia cartella elenco"):
         assert "`" + command + "`" in reason
-    assert "root-protected ParatiaBootstrap CLI" in reason
+    assert "root-protected ParatiaBootstrap.noindex CLI" in reason
     assert "no CLI exception is allowed" in reason
     assert "Comandi consentiti" in reason
 

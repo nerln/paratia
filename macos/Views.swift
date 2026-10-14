@@ -563,7 +563,7 @@ struct SettingsView: View {
                                 Text("Chiudi Paratia. Esegui tu questo singolo comando nel Terminale; quando termina senza errori, apri la copia indicata sotto dal Finder e premi Installa il registro. L'app quotidiana e la voce Accesso completo al disco restano /Applications/Paratia.app.")
                                 Text(NativeInstall.preparationCommand).font(.caption.monospaced()).textSelection(.enabled)
                                 Text(NativeInstall.bootstrapBundlePath).font(.caption.monospaced()).textSelection(.enabled)
-                                Text("Dopo una nuova build, prepara di nuovo la copia. Le copie precedenti vengono conservate in una cartella .prepara protetta. Dopo l'installazione chiudi il bootstrap e riapri l'app normale.").font(.caption).foregroundStyle(.secondary)
+                                Text("Dopo una nuova build, prepara di nuovo la copia in ParatiaBootstrap.noindex. Il comando verifica la nuova firma, poi elimina il vecchio bootstrap e le cartelle .prepara. Dopo l'installazione chiudi il bootstrap e riapri l'app normale.").font(.caption).foregroundStyle(.secondary)
                             }.padding(.top, 8)
                         }
                         HStack {

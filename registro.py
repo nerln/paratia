@@ -1264,7 +1264,7 @@ def _servizio_installato(uid):
 
 PASSI_AGGIORNAMENTO = (
     "Chiudi Paratia e le eventuali copie di bootstrap aperte.",
-    "Prepara di nuovo /Library/Application Support/ParatiaBootstrap/Paratia.app con l'unico comando sudo mostrato dall'app; non cambiare i permessi di /Applications.",
+    "Prepara di nuovo /Library/Application Support/ParatiaBootstrap.noindex/Paratia.app con l'unico comando sudo mostrato dall'app: dopo la verifica della firma elimina il vecchio bootstrap e le cartelle .prepara. Non cambiare i permessi di /Applications.",
     "Apri la copia di bootstrap dal Finder e usa Impostazioni → Installa il registro… → Autorizza con macOS.",
     "Chiudi la copia di bootstrap dopo l'installazione.",
     "In Privacy e Sicurezza → Accesso completo al disco, rimuovi e aggiungi di nuovo /Applications/Paratia.app e abilitala. Non autorizzare Python.",

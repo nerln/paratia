@@ -202,6 +202,18 @@ def test_confirmed_watch_warning_is_visible_before_missing_path_with_matching_to
     assert warning < status.index('record["esiste"] as? Bool == false')
 
 
+def test_native_installer_keeps_json_failure_message_and_error_code():
+    native = (ROOT / "macos" / "NativeInstall.swift").read_text()
+    decode = native.split('static func decodeInstallationResponse(', 1)[1].split('static func execute(', 1)[0]
+    assert 'JSONSerialization.jsonObject(with: response)' in decode
+    assert 'CFGetTypeID(installed) == CFBooleanGetTypeID()' in decode
+    assert 'guard installed.boolValue' in decode
+    assert 'result["message"] as? String' in decode and 'result["error_code"] as? String' in decode
+    assert 'throw AppError(message: String(message.prefix(2048)) + "\\nCodice: "' in decode
+    assert 'return try decodeInstallationResponse(response)' in native
+    assert 'Il servizio non ha confermato l\'installazione' not in native
+
+
 def test_gui_shows_health_reasons_and_separates_event_latency_from_silent_stream_age():
     app = (ROOT / "macos" / "AppModel.swift").read_text()
     query = app.split('private func refreshEvents()', 1)[1].split('\n    func ', 1)[0]

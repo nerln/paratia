@@ -39,6 +39,7 @@ class BundleInstallerTests(unittest.TestCase):
         self.bootstrap_fail = False
         self.bootstraps = 0
         self.old_service = False
+        self.sleeps = []
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -98,10 +99,14 @@ class BundleInstallerTests(unittest.TestCase):
         rc = 0
         if argv[:2] == ["/bin/launchctl", "print"]:
             rc = 0 if self.old_service else 3
+        if argv[:2] == ["/bin/launchctl", "bootout"]:
+            self.old_service = False
         if argv[:2] == ["/bin/launchctl", "bootstrap"]:
             self.bootstraps += 1
-            if self.bootstrap_fail and self.bootstraps == 1:
+            if self.bootstrap_fail and self.bootstraps <= 3:
                 rc = 5
+            else:
+                self.old_service = True
         if kwargs.get("check") and rc:
             raise subprocess.CalledProcessError(rc, argv, stderr=b"RAW_DIAGNOSTIC_NOT_FOR_LOGS")
         return SimpleNamespace(returncode=rc, stdout=b"", stderr=b"")
@@ -148,6 +153,7 @@ class BundleInstallerTests(unittest.TestCase):
             stack.enter_context(mock.patch.object(I, "_firma", return_value=self.identity))
             stack.enter_context(mock.patch.object(I, "_leggi_codice", side_effect=code))
             stack.enter_context(mock.patch.object(I.subprocess, "run", side_effect=self.command))
+            stack.enter_context(mock.patch.object(I.time, "sleep", side_effect=self.sleeps.append))
             yield
 
     def test_new_plist_uses_native_app_parent_and_plan_keeps_nine_authorization_args(self):
@@ -169,6 +175,8 @@ class BundleInstallerTests(unittest.TestCase):
         with self.installation():
             result = I.installa(self.source, self.uid)
         self.assertTrue(result["installed"])
+        self.assertIsNone(result["error_code"])
+        self.assertEqual(result["launchctl_errors"], [])
         self.assertIsNone(result["needs_fda"])
         self.assertEqual(result["launch_mode"], "app")
         after = {str(p.relative_to(self.app)): (p.read_bytes(), p.stat().st_uid)
@@ -209,10 +217,12 @@ class BundleInstallerTests(unittest.TestCase):
         before = self.old_snapshot()
         self.bootstrap_fail = True
         with self.installation():
-            with self.assertRaises(subprocess.CalledProcessError):
+            with self.assertRaises(I.ErroreInstallazione) as caught:
                 I.installa(self.source, self.uid)
+        self.assertEqual(caught.exception.error_code, "bootstrap_failed")
+        self.assertIn("ripristinato e riavviato", str(caught.exception))
         self.assertEqual(self.old_snapshot(), before)
-        self.assertEqual(self.bootstraps, 2)  # Restart only the previously loaded service.
+        self.assertEqual(self.bootstraps, 4)  # Three retries, then restart only the old service.
         self.assertFalse(list(self.support.glob(".installazione-*")))
 
     def test_replacement_failure_restores_already_moved_originals(self):
@@ -228,8 +238,9 @@ class BundleInstallerTests(unittest.TestCase):
             return replace(source, target, *args, **kwargs)
 
         with self.installation(), mock.patch.object(I.os, "replace", side_effect=fail_one):
-            with self.assertRaises(OSError):
+            with self.assertRaises(I.ErroreInstallazione) as caught:
                 I.installa(self.source, self.uid)
+        self.assertEqual(caught.exception.error_code, "install_failed")
         self.assertEqual(self.old_snapshot(), before)
 
     def test_failed_rollback_retains_protected_previous_bundle_checkpoint(self):

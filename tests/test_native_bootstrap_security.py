@@ -11,29 +11,44 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-BOOTSTRAP = "/Library/Application Support/ParatiaBootstrap"
+BOOTSTRAP = "/Library/Application Support/ParatiaBootstrap.noindex"
 BUNDLE = BOOTSTRAP + "/Paratia.app"
 SCRIPT = BUNDLE + "/Contents/Resources/python/registro_installa.py"
 
-PREPARATION_COMMAND = '''sudo /bin/sh -c 'set -eu
-[ ! -L "/Library/Application Support/ParatiaBootstrap" ]
+PREPARATION_COMMAND = """sudo /bin/sh -c 'set -eu
+[ ! -L "/Library/Application Support/ParatiaBootstrap.noindex" ]
 [ -d "/Applications/Paratia.app" ]
 [ ! -L "/Applications/Paratia.app" ]
-/usr/bin/install -d -m 755 -o root -g wheel "/Library/Application Support/ParatiaBootstrap"
-/bin/chmod -N "/Library/Application Support/ParatiaBootstrap"
-paratia_bootstrap_stage=$(/usr/bin/mktemp -d "/Library/Application Support/ParatiaBootstrap/.prepara.XXXXXX")
+/usr/bin/install -d -m 755 -o root -g wheel "/Library/Application Support/ParatiaBootstrap.noindex"
+/bin/chmod -N "/Library/Application Support/ParatiaBootstrap.noindex"
+paratia_bootstrap_stage=$(/usr/bin/mktemp -d "/Library/Application Support/ParatiaBootstrap.noindex/.prepara.XXXXXX")
 /usr/bin/ditto --noacl "/Applications/Paratia.app" "$paratia_bootstrap_stage/Paratia.app"
 /usr/bin/find "$paratia_bootstrap_stage/Paratia.app" ! -type d ! -type f -print > "$paratia_bootstrap_stage/percorsi-non-ordinari"
 [ ! -s "$paratia_bootstrap_stage/percorsi-non-ordinari" ]
 /usr/sbin/chown -R root:wheel "$paratia_bootstrap_stage/Paratia.app"
 /bin/chmod -R go-w "$paratia_bootstrap_stage/Paratia.app"
 /usr/bin/codesign --verify --deep --strict "$paratia_bootstrap_stage/Paratia.app"
-[ ! -L "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]
-if [ -e "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]; then
-    /bin/mv "/Library/Application Support/ParatiaBootstrap/Paratia.app" "$paratia_bootstrap_stage/precedente.app"
+[ ! -L "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app" ]
+if [ -e "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app" ]; then
+    /bin/mv "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app" "$paratia_bootstrap_stage/precedente.app"
 fi
-/bin/mv "$paratia_bootstrap_stage/Paratia.app" "/Library/Application Support/ParatiaBootstrap/Paratia.app"
-/usr/bin/codesign --verify --deep --strict "/Library/Application Support/ParatiaBootstrap/Paratia.app"\''''
+/bin/mv "$paratia_bootstrap_stage/Paratia.app" "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app"
+/usr/bin/codesign --verify --deep --strict "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app"
+/usr/bin/find "/Library/Application Support/ParatiaBootstrap.noindex" -mindepth 1 -maxdepth 1 -type d -user root -name ".prepara.*" -exec /bin/rm -rf -- {} +
+if [ -e "/Library/Application Support/ParatiaBootstrap" ]; then
+    [ ! -L "/Library/Application Support/ParatiaBootstrap" ]
+    [ -d "/Library/Application Support/ParatiaBootstrap" ]
+    [ "$(/usr/bin/stat -f %u "/Library/Application Support/ParatiaBootstrap")" = "0" ]
+    paratia_legacy_mode=$(/usr/bin/stat -f %Lp "/Library/Application Support/ParatiaBootstrap")
+    [ $((0$paratia_legacy_mode & 022)) -eq 0 ]
+    [ ! -L "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]
+    if [ -e "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]; then
+        [ -d "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]
+        [ "$(/usr/bin/stat -f %u "/Library/Application Support/ParatiaBootstrap/Paratia.app")" = "0" ]
+        /bin/rm -rf -- "/Library/Application Support/ParatiaBootstrap/Paratia.app"
+    fi
+    /usr/bin/find "/Library/Application Support/ParatiaBootstrap" -mindepth 1 -maxdepth 1 -type d -user root -name ".prepara.*" -exec /bin/rm -rf -- {} +
+fi'"""
 
 
 def swift_preparation_command():
@@ -153,7 +168,7 @@ def test_normal_app_directory_is_not_a_bootstrap_ancestor(native_guard, kind):
     assert allowed(native_guard, bad_path="/Applications", kind=kind)
 
 
-@pytest.mark.parametrize("path", ["relative/Paratia.app", "/Library//Application Support/ParatiaBootstrap/Paratia.app", BUNDLE + "/",
+@pytest.mark.parametrize("path", ["relative/Paratia.app", "/Library//Application Support/ParatiaBootstrap.noindex/Paratia.app", BUNDLE + "/",
                                   BUNDLE + "/../other", BUNDLE + "/./Contents", BUNDLE + "/..", BUNDLE + "/."])
 def test_alias_paths_fail_closed(native_guard, path):
     assert not allowed(native_guard, path=path)
@@ -227,3 +242,36 @@ def test_preparation_has_a_fixed_separate_staged_payload_and_no_applications_cha
             assert line.startswith("[ ") or line.startswith("/usr/bin/ditto --noacl ")
     assert "--sign" not in command
     assert "/usr/bin/open" not in command
+
+
+def test_bootstrap_cleanup_only_follows_successful_new_copy_verification():
+    command = swift_preparation_command()
+    verified = command.index('codesign --verify --deep --strict "' + BUNDLE + '"')
+    new_cleanup = ('/usr/bin/find "' + BOOTSTRAP + '" -mindepth 1 -maxdepth 1 '
+                   '-type d -user root -name ".prepara.*" -exec /bin/rm -rf -- {} +')
+    old_root = "/Library/Application Support/ParatiaBootstrap"
+    old_cleanup = ('/usr/bin/find "' + old_root + '" -mindepth 1 -maxdepth 1 '
+                   '-type d -user root -name ".prepara.*" -exec /bin/rm -rf -- {} +')
+    assert verified < command.index(new_cleanup)
+    assert verified < command.index(old_cleanup)
+    assert command.index('[ ! -L "' + old_root + '" ]') < command.index(old_cleanup)
+    assert command.index('stat -f %u "' + old_root + '"') < command.index(old_cleanup)
+    assert command.index('[ $((0$paratia_legacy_mode & 022)) -eq 0 ]') < command.index(old_cleanup)
+    old_app = old_root + "/Paratia.app"
+    old_remove = '/bin/rm -rf -- "' + old_app + '"'
+    assert verified < command.index(old_remove)
+    assert command.index('[ ! -L "' + old_app + '" ]') < command.index(old_remove)
+    assert command.index('stat -f %u "' + old_app + '"') < command.index(old_remove)
+    # No recursive sweep of Application Support or of another app is allowed.
+    remove_lines = [line.strip() for line in command.splitlines() if "/bin/rm " in line]
+    assert remove_lines == [new_cleanup, old_remove, old_cleanup]
+
+
+def test_noindex_bootstrap_keeps_the_same_root_guard_and_service_separation():
+    assert BOOTSTRAP.endswith(".noindex")
+    swift = (ROOT / "macos/NativeInstall.swift").read_text()
+    assert f'static let bootstrapBundlePath = "{BUNDLE}"' in swift
+    assert "try requireProtected(bundle)" in swift
+    assert "/Library/Application Support/Paratia/" not in swift_preparation_command()
+    assert '"LSUIElement"' not in (ROOT / "strumenti/build-app.py").read_text()
+    assert '"LSBackgroundOnly"' not in (ROOT / "strumenti/build-app.py").read_text()

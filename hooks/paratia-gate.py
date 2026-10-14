@@ -59,7 +59,7 @@ sys.dont_write_bytecode = True
 CASA = Path(os.environ.get("PARATIA_HOME", Path.home() / ".paratia"))
 MONTAGGIO = Path(os.environ.get("PARATIA_MOUNT", "/Volumes/paratia"))
 REGOLE = CASA / "dogana.json"
-BOOTSTRAP_ROOT = Path("/Library/Application Support/ParatiaBootstrap/Paratia.app/Contents/Resources/python")
+BOOTSTRAP_ROOT = Path("/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app/Contents/Resources/python")
 PYTHON_VERSIONS = Path("/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions")
 BOOTSTRAP_ASSETS = ("paratia.py", "cartelle.py", "registro.py", "catena.py", "hookinstaller.py",
                     "hooks/paratia-gate.py", "hooks/paratia-cli.json")
@@ -520,9 +520,9 @@ def main(*, codex: bool = False) -> int:
             "tool call is refused until it is closed. Allowed commands / Comandi consentiti: "
             "`paratia cartella chiudi <id>`, `paratia cartella chiudi-tutte`, `paratia lock`, "
             "`paratia status`, `paratia status --json`, `paratia cartella elenco`. "
-            "These exceptions require the root-protected ParatiaBootstrap CLI, every Python "
+            "These exceptions require the root-protected ParatiaBootstrap.noindex CLI, every Python "
             "resource and Apple's protected runtime. Python calls require `PYTHON_APPLE -I -S -B "
-            "/Library/Application Support/ParatiaBootstrap/Paratia.app/Contents/Resources/python/paratia.py ...` "
+            "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app/Contents/Resources/python/paratia.py ...` "
             "with the script path quoted. Equivalent absolute paths or ~/.local/bin/paratia "
             "must resolve to that protected copy. If this protection is unavailable, no CLI "
             "exception is allowed: open Paratia from Finder and close the folders in the app. "

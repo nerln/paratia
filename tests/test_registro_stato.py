@@ -231,7 +231,7 @@ def test_build_identity_comparison_and_minimal_ordered_update_steps(
         assert status["needs_reinstall"] and not status["healthy"]
         assert len(status["update_steps"]) == 6
         steps = status["update_steps"]
-        assert "Chiudi" in steps[0] and "ParatiaBootstrap/Paratia.app" in steps[1]
+        assert "Chiudi" in steps[0] and "ParatiaBootstrap.noindex/Paratia.app" in steps[1]
         assert "Autorizza con macOS" in steps[2]
         assert "Chiudi" in steps[3]
         assert "rimuovi e aggiungi" in steps[4] and "Non autorizzare Python" in steps[4]

@@ -36,7 +36,7 @@ def protected(tmp_path, monkeypatch):
     monkeypatch.setenv("PARATIA_MOUNT", str(tmp_path / "unmounted"))
     gate = load_module("gate_protected_test", ROOT / "hooks/paratia-gate.py")
     installer = load_module("installer_protected_test", ROOT / "hookinstaller.py")
-    bootstrap = tmp_path / "root resources"
+    bootstrap = tmp_path / "ParatiaBootstrap.noindex/Paratia.app/Contents/Resources/python"
     (bootstrap / "hooks").mkdir(parents=True)
     versions = tmp_path / "ApplePython" / "Versions"
     version = versions / "3.9"
@@ -103,6 +103,65 @@ def test_protected_copy_is_allowed_without_executing_user_module(protected):
     assert allowed(protected)
     assert allowed(protected, verb="cartella chiudi sample")
     assert not allowed(protected, protected.repo / "paratia.py")
+
+
+def test_previous_bootstrap_is_cleanup_only_never_an_exempt_cli(protected, monkeypatch):
+    old_root = protected.installer.LEGACY_BOOTSTRAP_ROOT
+    # Even a tree modeled as protected is refused outside the new fixed path.
+    for module in (protected.gate, protected.installer):
+        monkeypatch.setattr(module, "_root_tree", lambda root: True)
+        assert not module._protected_bootstrap(old_root)
+    protected.gate.__file__ = str(old_root / "hooks/paratia-gate.py")
+    assert protected.gate.cli_attendibili() == set()
+    assert not allowed(protected, old_root / "paratia.py")
+
+
+@pytest.mark.parametrize("harness", ["claude", "codex"])
+@pytest.mark.parametrize("event", ["SessionStart", "PreToolUse"])
+def test_previous_bootstrap_handlers_migrate_without_deleting_foreign_entries(protected, harness, event):
+    installer = protected.installer
+    home = protected.base / "migration-home"
+    home.mkdir()
+    directory, filename = installer.TARGETS[harness]
+    config = home / directory / filename
+    config.parent.mkdir()
+    old_gate = installer.LEGACY_BOOTSTRAP_ROOT / "hooks/paratia-gate.py"
+    tail = " --codex" if harness == "codex" else ""
+    command = (shlex.quote(str(protected.runtime)) + " -I -S -B " + shlex.quote(str(old_gate)) + tail)
+    handler = {"type": "command", "command": command, "timeout": installer.EVENTS[event]}
+    foreign = {**handler, "vendor": "preserve"}
+    raw = json.dumps({"hooks": {event: [
+        {"matcher": "*", "groupField": "preserve", "hooks": [handler, foreign]},
+        {"matcher": "Bash", "hooks": [handler]},
+    ]}}).encode()
+    config.write_bytes(raw)
+    result = installer.installa(resource_root=protected.repo, home=home,
+                                 python_executable=protected.runtime)
+    groups = json.loads(config.read_bytes())["hooks"][event]
+    assert groups[0] == {"matcher": "*", "groupField": "preserve", "hooks": [foreign]}
+    assert groups[1] == {"matcher": "Bash", "hooks": [handler]}
+    assert shlex.split(groups[2]["hooks"][0]["command"])[4] == str(protected.bootstrap / "hooks/paratia-gate.py")
+    backup = next(p for p in result["backups"] if Path(p).parent == config.parent)
+    assert base64.b64decode(json.loads(Path(backup).read_bytes())["before_base64"]) == raw
+    assert result["protected_closure"]
+
+
+def test_previous_bootstrap_handlers_stay_untrusted_without_new_protected_copy(protected, monkeypatch):
+    installer = protected.installer
+    home = protected.base / "fallback-home"
+    config = home / ".claude/settings.json"
+    config.parent.mkdir(parents=True)
+    old_gate = installer.LEGACY_BOOTSTRAP_ROOT / "hooks/paratia-gate.py"
+    old = {"type": "command", "command": shlex.quote(str(protected.runtime)) + " -I -S -B " + shlex.quote(str(old_gate)),
+           "timeout": 5}
+    config.write_text(json.dumps({"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [old]}]}}))
+    monkeypatch.setattr(installer, "_protected_bootstrap", lambda *args: False)
+    result = installer.installa(resource_root=protected.repo, home=home,
+                                 python_executable=protected.runtime)
+    assert not result["protected_closure"]
+    assert "non è consentita alcuna esenzione CLI" in result["message"]
+    assert json.loads(config.read_text())["hooks"]["PreToolUse"][0]["hooks"] == [old]
+    assert not protected.gate._protected_bootstrap(old_gate.parent.parent)
 
 
 def test_repo_gate_never_exempts_mutated_repository_modules(protected):

@@ -29,7 +29,9 @@ MAX_JSON = 4 * 1024**2
 MAX_BACKUP = 8 * 1024**2
 DOCS = "https://learn.chatgpt.com/docs/hooks"
 TARGETS = {"claude": (".claude", "settings.json"), "codex": (".codex", "hooks.json")}
-BOOTSTRAP_ROOT = Path("/Library/Application Support/ParatiaBootstrap/Paratia.app/Contents/Resources/python")
+BOOTSTRAP_ROOT = Path("/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app/Contents/Resources/python")
+# Previous signed copies are cleanup identities, never trusted CLI locations.
+LEGACY_BOOTSTRAP_ROOT = Path("/Library/Application Support/ParatiaBootstrap/Paratia.app/Contents/Resources/python")
 PYTHON_VERSIONS = Path("/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions")
 BOOTSTRAP_ASSETS = ("paratia.py", "cartelle.py", "registro.py", "catena.py", "hookinstaller.py",
                     "hooks/paratia-gate.py", "hooks/paratia-cli.json")
@@ -352,6 +354,7 @@ def _parameters(resource_root=None, python_executable=None):
 def _legacy_scripts(resource_root=None):
     scripts = {str(Path(__file__).resolve().parent / "hooks" / "paratia-gate.py"),
                "/Applications/Paratia.app/Contents/Resources/python/hooks/paratia-gate.py",
+               str(LEGACY_BOOTSTRAP_ROOT / "hooks" / "paratia-gate.py"),
                str(BOOTSTRAP_ROOT / "hooks" / "paratia-gate.py")}
     if resource_root is not None:
         scripts.add(str(Path(resource_root) / "hooks" / "paratia-gate.py"))
