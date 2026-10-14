@@ -35,6 +35,11 @@ class InstallerTests(unittest.TestCase):
         (self.resources / "hooks" / "paratia-gate.py").write_text("# synthetic gate\n")
         (self.resources / "cartelle.py").write_text("# synthetic disk adapter\n")
         self.kwargs = {"home": self.home, "resource_root": self.resources}
+        # Exercise the local-resource branch regardless of whether this Mac
+        # already has the human-installed protected bootstrap.
+        bootstrap = mock.patch.object(H, "_protected_bootstrap", return_value=False)
+        bootstrap.start()
+        self.addCleanup(bootstrap.stop)
 
     def tearDown(self):
         self.tmp.cleanup()
