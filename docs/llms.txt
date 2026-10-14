@@ -45,7 +45,7 @@ root-protected app copy under /Library/Application Support/Paratia. That parent
 remains alive with Python and eslogger as children. The human installs it from
 Impostazioni > Installa il registro using the macOS administrator dialog from
 the separate bootstrap copy at
-/Library/Application Support/ParatiaBootstrap/Paratia.app. The manual command
+/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app. The manual command
 in gui-mac.md prepares that copy from /Applications/Paratia.app; it does not
 change /Applications permissions. Existing ancestors /, /Library and
 /Library/Application Support were verified root-owned with mode 0755.
@@ -61,8 +61,14 @@ app, bootstrap and service and completed Full Disk Access. On 14 October 2026,
 cat and ls open/close, Claude access classified as agent, Finder, Spotlight and
 Open/Save-panel events. These are registry observations, not a completed bank.
 The same run exposed excessive CPU, delayed events and dropped events. The
-Giro 5 changes still require a new build, installation/FDA refresh and live
-performance measurements; synthetic throughput does not prove the idle-CPU
+Giro 6 was published as 91914a0 and installed, but registry installation failed
+and left the service unloaded. Giro 7 waits for launchd removal, retries race
+errors and reports rollback failure through JSON and the GUI. Build output is
+build.noindex/Paratia.app; the manual command verifies the new bootstrap, then
+removes the old bootstrap app and root-owned .prepara.* directories. Spotlight
+and Launchpad must be checked after that human migration. Giro 7 still requires
+a new build, installation/FDA refresh and live performance measurements;
+synthetic throughput does not prove the idle-CPU
 and sub-two-second live-latency targets. Do not alter TCC or supply administrator
 credentials. Hook installation
 uses the protected bootstrap copy when verified and replaces old Paratia
@@ -156,7 +162,7 @@ protected folders and `paratia lock` for the core compartment. The complete
 allowlist also includes `paratia cartella elenco`, `paratia status` and
 `paratia status --json`.
 Equivalent absolute paths and the literal ~/.local/bin/paratia alias work only
-when they resolve to the protected ParatiaBootstrap CLI. Tilde expansion uses
+when they resolve to the protected ParatiaBootstrap.noindex CLI. Tilde expansion uses
 pwd's real account home, never a payload's HOME. The CLI, all Python resources
 and ancestors require root ownership and no group/other or ACL write access;
 the Apple runtime and standard library require the same protection. An explicit

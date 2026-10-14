@@ -98,7 +98,7 @@ modificabili da processi con lo stesso UID; la cifratura da chiuso resta il
 confine che non dipende dalla cooperazione dell'agente.
 
 Per installare il registro, la [guida GUI](gui-mac.md#impostazioni) descrive la
-copia bootstrap protetta in `/Library/Application Support/ParatiaBootstrap/Paratia.app`
+copia bootstrap protetta in `/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app`
 e la copia separata del servizio. L'app quotidiana e la voce Accesso completo
 al disco restano `/Applications/Paratia.app`.
 

@@ -93,7 +93,7 @@ L'installer rifiuta un runtime o librerie modificabili senza root; non modifica
 i permessi globali di Xcode o Applications.
 
 Il bootstrap amministratore usa una copia separata in
-`/Library/Application Support/ParatiaBootstrap/Paratia.app`. Verifica il bundle,
+`/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app`. Verifica il bundle,
 ogni suo file e tutti gli antenati: proprietario root, nessuna scrittura per
 gruppo/altri o tramite ACL, nessun collegamento simbolico. Verifica anche la
 firma e le risorse sigillate e ripete il controllo subito prima del dialogo.
@@ -154,32 +154,49 @@ di Paratia e prepara personalmente nel Terminale la copia di bootstrap:
 
 ```sh
 sudo /bin/sh -c 'set -eu
-[ ! -L "/Library/Application Support/ParatiaBootstrap" ]
+[ ! -L "/Library/Application Support/ParatiaBootstrap.noindex" ]
 [ -d "/Applications/Paratia.app" ]
 [ ! -L "/Applications/Paratia.app" ]
-/usr/bin/install -d -m 755 -o root -g wheel "/Library/Application Support/ParatiaBootstrap"
-/bin/chmod -N "/Library/Application Support/ParatiaBootstrap"
-paratia_bootstrap_stage=$(/usr/bin/mktemp -d "/Library/Application Support/ParatiaBootstrap/.prepara.XXXXXX")
+/usr/bin/install -d -m 755 -o root -g wheel "/Library/Application Support/ParatiaBootstrap.noindex"
+/bin/chmod -N "/Library/Application Support/ParatiaBootstrap.noindex"
+paratia_bootstrap_stage=$(/usr/bin/mktemp -d "/Library/Application Support/ParatiaBootstrap.noindex/.prepara.XXXXXX")
 /usr/bin/ditto --noacl "/Applications/Paratia.app" "$paratia_bootstrap_stage/Paratia.app"
 /usr/bin/find "$paratia_bootstrap_stage/Paratia.app" ! -type d ! -type f -print > "$paratia_bootstrap_stage/percorsi-non-ordinari"
 [ ! -s "$paratia_bootstrap_stage/percorsi-non-ordinari" ]
 /usr/sbin/chown -R root:wheel "$paratia_bootstrap_stage/Paratia.app"
 /bin/chmod -R go-w "$paratia_bootstrap_stage/Paratia.app"
 /usr/bin/codesign --verify --deep --strict "$paratia_bootstrap_stage/Paratia.app"
-[ ! -L "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]
-if [ -e "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]; then
-    /bin/mv "/Library/Application Support/ParatiaBootstrap/Paratia.app" "$paratia_bootstrap_stage/precedente.app"
+[ ! -L "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app" ]
+if [ -e "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app" ]; then
+    /bin/mv "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app" "$paratia_bootstrap_stage/precedente.app"
 fi
-/bin/mv "$paratia_bootstrap_stage/Paratia.app" "/Library/Application Support/ParatiaBootstrap/Paratia.app"
-/usr/bin/codesign --verify --deep --strict "/Library/Application Support/ParatiaBootstrap/Paratia.app"'
+/bin/mv "$paratia_bootstrap_stage/Paratia.app" "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app"
+/usr/bin/codesign --verify --deep --strict "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app"
+/usr/bin/find "/Library/Application Support/ParatiaBootstrap.noindex" -mindepth 1 -maxdepth 1 -type d -user root -name ".prepara.*" -exec /bin/rm -rf -- {} +
+if [ -e "/Library/Application Support/ParatiaBootstrap" ]; then
+    [ ! -L "/Library/Application Support/ParatiaBootstrap" ]
+    [ -d "/Library/Application Support/ParatiaBootstrap" ]
+    [ "$(/usr/bin/stat -f %u "/Library/Application Support/ParatiaBootstrap")" = "0" ]
+    paratia_legacy_mode=$(/usr/bin/stat -f %Lp "/Library/Application Support/ParatiaBootstrap")
+    [ $((0$paratia_legacy_mode & 022)) -eq 0 ]
+    [ ! -L "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]
+    if [ -e "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]; then
+        [ -d "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]
+        [ "$(/usr/bin/stat -f %u "/Library/Application Support/ParatiaBootstrap/Paratia.app")" = "0" ]
+        /bin/rm -rf -- "/Library/Application Support/ParatiaBootstrap/Paratia.app"
+    fi
+    /usr/bin/find "/Library/Application Support/ParatiaBootstrap" -mindepth 1 -maxdepth 1 -type d -user root -name ".prepara.*" -exec /bin/rm -rf -- {} +
+fi'
 ```
 
 Il comando non modifica `/Applications` o i suoi permessi. Prepara la copia in
 un'area root con modo 0700, rifiuta link e file speciali prima di cambiare
-proprietario/permessi e verifica la firma prima di pubblicarla. Un bootstrap
-precedente resta nella cartella `.prepara` protetta. Solo se il comando termina
+proprietario/permessi e verifica la firma prima e dopo la pubblicazione.
+A copia verificata elimina le cartelle root `.prepara.*` e l'app del vecchio
+percorso `ParatiaBootstrap`; il nuovo percorso `.noindex` mantiene la protezione
+root e viene escluso da Spotlight. Solo se il comando termina
 senza errori (codice 0), apri
-`/Library/Application Support/ParatiaBootstrap/Paratia.app` **dal Finder** e usa
+`/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app` **dal Finder** e usa
 **Installa il registro**. Anche i suoi antenati devono superare il controllo
 root e ACL; se il controllo fallisce, il dialogo resta bloccato.
 
@@ -196,7 +213,20 @@ L'installer verifica la firma ad hoc e il marker del launcher, copia il bundle
 senza symlink o hardlink, verifica che la copia abbia lo stesso CDHash e applica
 proprietà/ACL. Prepara i tre moduli del raccoglitore da quella copia verificata.
 Conserva bundle, moduli e plist precedenti fino al bootstrap; se questo fallisce,
-tenta il ripristino. Non modifica TCC né il portachiavi.
+tenta il ripristino. Dopo ogni `bootout` attende, per un massimo di otto secondi,
+che `launchctl print` non trovi più il servizio. Il bootstrap ha fino a tre
+tentativi per gli errori di corsa 5/37, con pause crescenti. Il ripristino usa
+la stessa attesa e gli stessi tentativi; un suo fallimento è segnalato e i
+backup necessari restano disponibili. Non modifica TCC né il portachiavi.
+
+L'installer restituisce sempre JSON con `installed`, `error_code`, `message`
+e `launchctl_errors` (operazione, codice, stderr ridotto). La GUI mostra il
+messaggio e il codice anche se il processo termina con errore. Gli stderr sono
+limitati a 512 caratteri di diagnostica riconosciuta: percorsi e testo arbitrario
+non vengono copiati. `service_stop_timeout`, `bootstrap_failed` e
+`rollback_bootstrap_failed` distinguono rimozione lenta, nuovo bootstrap fallito
+e impossibilità di riavviare il vecchio servizio; non viene dichiarato un
+ripristino riuscito quando manca la conferma.
 
 Poi, in **Impostazioni di Sistema → Privacy e Sicurezza → Accesso completo al
 disco**, aggiungi e abilita **`/Applications/Paratia.app`** con il pulsante `+`.

@@ -171,7 +171,7 @@ This does not add a guarantee for inherited mappings or byte reads.
 lines/s and readable `health_reasons`. The app shows delayed events, losses,
 refused watches and absence of confirmed folders; idle time alone is not delay.
 The repeatable synthetic throughput measurement is documented in
-[the Giro 5 status](docs/stato-2026-10.md). It measures Python processing,
+[the October status](docs/stato-2026-10.md). It measures Python processing,
 excluding eslogger and log fsync; live idle CPU and delay must be measured again
 after installing this build.
 
@@ -182,15 +182,25 @@ counts, times, measured access results and any matching kernel evidence. Its
 `mdls` probe is informational: Spotlight caches and unindexed mounted images
 do not determine the phase outcome.
 
-Build locally with Apple Command Line Tools:
+<img src="docs/immagini/paratia-icona.png" alt="Paratia: a sealed folder with a watertight door and wheel" width="128" height="128">
+
+Build locally with Apple Command Line Tools and `rsvg-convert` (librsvg):
 
 ```sh
 python3 strumenti/build-app.py --render-fixtures
-open -n build/Paratia.app --args --launch-check
+open -n build.noindex/Paratia.app --args --launch-check
+~/.local/bin/installa-app build.noindex/Paratia.app
 ```
 
 The build bundles the CLI with the other nine Python modules. Its hook manifest
 points to the protected bootstrap copy, never the writable repository.
+The `.noindex` output directory keeps the development app out of Spotlight.
+`strumenti/make-icon.py` renders `macos/Assets/Paratia.svg` at all ten macOS
+icon sizes, then runs Apple's `iconutil`; the build includes `Paratia.icns`
+and sets `CFBundleIconFile`. The PNG preview is rendered from the same source.
+If conversion fails, the generator reports the error and retains the iconset
+for inspection. Native ICNS conversion still needs the supervisor's build:
+`iconutil` rejected the valid PNG set in this sandbox.
 
 The app signs ad hoc and is not notarized. Keep the normal app in `/Applications`.
 Close all copies of Paratia and run this yourself in Terminal to prepare a
@@ -198,31 +208,48 @@ separate root-owned bootstrap copy:
 
 ```sh
 sudo /bin/sh -c 'set -eu
-[ ! -L "/Library/Application Support/ParatiaBootstrap" ]
+[ ! -L "/Library/Application Support/ParatiaBootstrap.noindex" ]
 [ -d "/Applications/Paratia.app" ]
 [ ! -L "/Applications/Paratia.app" ]
-/usr/bin/install -d -m 755 -o root -g wheel "/Library/Application Support/ParatiaBootstrap"
-/bin/chmod -N "/Library/Application Support/ParatiaBootstrap"
-paratia_bootstrap_stage=$(/usr/bin/mktemp -d "/Library/Application Support/ParatiaBootstrap/.prepara.XXXXXX")
+/usr/bin/install -d -m 755 -o root -g wheel "/Library/Application Support/ParatiaBootstrap.noindex"
+/bin/chmod -N "/Library/Application Support/ParatiaBootstrap.noindex"
+paratia_bootstrap_stage=$(/usr/bin/mktemp -d "/Library/Application Support/ParatiaBootstrap.noindex/.prepara.XXXXXX")
 /usr/bin/ditto --noacl "/Applications/Paratia.app" "$paratia_bootstrap_stage/Paratia.app"
 /usr/bin/find "$paratia_bootstrap_stage/Paratia.app" ! -type d ! -type f -print > "$paratia_bootstrap_stage/percorsi-non-ordinari"
 [ ! -s "$paratia_bootstrap_stage/percorsi-non-ordinari" ]
 /usr/sbin/chown -R root:wheel "$paratia_bootstrap_stage/Paratia.app"
 /bin/chmod -R go-w "$paratia_bootstrap_stage/Paratia.app"
 /usr/bin/codesign --verify --deep --strict "$paratia_bootstrap_stage/Paratia.app"
-[ ! -L "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]
-if [ -e "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]; then
-    /bin/mv "/Library/Application Support/ParatiaBootstrap/Paratia.app" "$paratia_bootstrap_stage/precedente.app"
+[ ! -L "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app" ]
+if [ -e "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app" ]; then
+    /bin/mv "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app" "$paratia_bootstrap_stage/precedente.app"
 fi
-/bin/mv "$paratia_bootstrap_stage/Paratia.app" "/Library/Application Support/ParatiaBootstrap/Paratia.app"
-/usr/bin/codesign --verify --deep --strict "/Library/Application Support/ParatiaBootstrap/Paratia.app"'
+/bin/mv "$paratia_bootstrap_stage/Paratia.app" "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app"
+/usr/bin/codesign --verify --deep --strict "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app"
+/usr/bin/find "/Library/Application Support/ParatiaBootstrap.noindex" -mindepth 1 -maxdepth 1 -type d -user root -name ".prepara.*" -exec /bin/rm -rf -- {} +
+if [ -e "/Library/Application Support/ParatiaBootstrap" ]; then
+    [ ! -L "/Library/Application Support/ParatiaBootstrap" ]
+    [ -d "/Library/Application Support/ParatiaBootstrap" ]
+    [ "$(/usr/bin/stat -f %u "/Library/Application Support/ParatiaBootstrap")" = "0" ]
+    paratia_legacy_mode=$(/usr/bin/stat -f %Lp "/Library/Application Support/ParatiaBootstrap")
+    [ $((0$paratia_legacy_mode & 022)) -eq 0 ]
+    [ ! -L "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]
+    if [ -e "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]; then
+        [ -d "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]
+        [ "$(/usr/bin/stat -f %u "/Library/Application Support/ParatiaBootstrap/Paratia.app")" = "0" ]
+        /bin/rm -rf -- "/Library/Application Support/ParatiaBootstrap/Paratia.app"
+    fi
+    /usr/bin/find "/Library/Application Support/ParatiaBootstrap" -mindepth 1 -maxdepth 1 -type d -user root -name ".prepara.*" -exec /bin/rm -rf -- {} +
+fi'
 ```
 
 The command leaves `/Applications` permissions unchanged. It stages the copy
 in a root-only directory, refuses links and special files before ownership or
-permission changes, and verifies its signature before publication. Previous
-copies remain in the protected `.prepara` directory. Only after exit code 0,
-open `/Library/Application Support/ParatiaBootstrap/Paratia.app` **from Finder**
+permission changes, and verifies its signature before and after publication.
+After that succeeds, it removes root-owned `.prepara.*` directories and the
+old bootstrap app under `ParatiaBootstrap`. The new `.noindex` parent keeps
+the bootstrap copy out of Spotlight without changing its protection. Only after exit code 0,
+open `/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app` **from Finder**
 for **Impostazioni → Installa il registro…** and the macOS administrator dialog.
 
 Before the dialog, the bootstrap checks its signature, every bundle member and
@@ -237,8 +264,11 @@ app at `/Library/Application Support/Paratia/Paratia.app`, separate from the
 bootstrap copy; it keeps Python and eslogger as children. In Full Disk Access, enable
 **`/Applications/Paratia.app`**; remove and re-add it after every new ad hoc
 build, and reinstall the registry copy. Do not enable Python 3.9.
-Giro 4 was published as `f54b403` and installed. This Giro 5 update still requires
-a new build, bootstrap copy, registry installation and renewed Full Disk Access.
+Giro 6 was published as `91914a0` and installed. Its registry installation failed
+and left the service unloaded, as reported by the supervisor. Giro 7 waits for
+launchd removal, retries race errors, checks rollback and shows the installer
+message and error code in the app. This update requires a new build, bootstrap
+copy, registry installation and renewed Full Disk Access.
 The app compares the installed collector's CDHash with `/Applications/Paratia.app`
 and shows the update steps in order. Older collectors without an identity report
 are shown as unverified, without claiming two hashes were compared.

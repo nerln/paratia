@@ -272,13 +272,18 @@ before JSON parsing, handles watched-root aliases and escaped or normalized
 paths, and keeps exec/fork/exit for ancestry. Sequence checks include skipped
 lines, preserving reported dropped-event detection.</p>
 
-<p>Build the app with <code>python3 strumenti/build-app.py --render-fixtures</code>.
+<p>Build the app with <code>python3 strumenti/build-app.py --render-fixtures</code>;
+the output is <code>build.noindex/Paratia.app</code>, with an icon rendered from
+the repository SVG and converted using <code>iconutil</code>.
 After installing it, follow the GUI guide's single manual administrator command
-to prepare <code>/Library/Application Support/ParatiaBootstrap/Paratia.app</code>.
+to prepare <code>/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app</code>.
 Open that separate copy and use <strong>Impostazioni → Installa il registro…</strong>
 and the macOS administrator dialog. The bootstrap verifies root ownership,
 write permissions, ACLs, all ancestors and sealed resources before authorization;
-it does not change <code>/Applications</code> permissions. The daemon launches the native
+it does not change <code>/Applications</code> permissions. After the new copy is
+verified, the command removes the old bootstrap app and root-owned staging
+directories. The <code>.noindex</code> parent excludes the bootstrap from Spotlight.
+The daemon launches the native
 binary in a signed, root-protected app copy, keeping Python and eslogger as
 children. Enable <strong>/Applications/Paratia.app</strong> in Full Disk Access;
 remove and re-add that entry after every new ad hoc build and reinstall the
@@ -288,7 +293,10 @@ bootstrap and service and completed Full Disk Access. On 14 October 2026,
 03:40–03:46 Europe/Madrid, the supervisor confirmed live zsh create/write,
 cat and ls open/close, Claude access marked as agent, Finder, Spotlight and
 Open/Save-panel events. That run also exposed excessive CPU, delayed events and
-reported drops. The Giro 5 changes await a new build, reinstallation/FDA refresh
+reported drops. Giro 6 was published (<code>91914a0</code>) and installed, but its
+registry installation failed and left the service unloaded. Giro 7 waits for
+launchd removal, retries race errors and shows the installer message and code,
+including rollback failure. It awaits a new build, reinstallation/FDA refresh
 and live performance verification; synthetic throughput does not establish
 the live idle-CPU and latency targets.</p>
 

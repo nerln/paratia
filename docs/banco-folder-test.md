@@ -18,7 +18,7 @@ interni vengono rifiutati. La verifica temporanea separata è descritta nello
 ## Avvio dalla GUI
 
 1. Prepara la copia bootstrap protetta da root in
-   `/Library/Application Support/ParatiaBootstrap/Paratia.app`, come descritto
+   `/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app`, come descritto
    nella [guida GUI](gui-mac.md#impostazioni): vengono verificati questa copia,
    tutti gli antenati e ogni file letto dal bootstrap, inclusi permessi e ACL.
    Apri la copia bootstrap e, nelle sue **Impostazioni**, premi

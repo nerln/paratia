@@ -17,7 +17,7 @@
   "prove": [],
   "autorizzazioni_live_verificate": false,
   "prerequisiti": [
-    "Copia di bootstrap root in /Library/Application Support/ParatiaBootstrap/Paratia.app preparata manualmente, con tutti gli antenati protetti",
+    "Copia di bootstrap root in /Library/Application Support/ParatiaBootstrap.noindex/Paratia.app preparata manualmente, con tutti gli antenati protetti",
     "Installazione del registro autorizzata nel dialogo amministratore macOS",
     "Accesso completo al disco per /Applications/Paratia.app, da riconcedere dopo una nuova build ad hoc, e registro attivo e sano",
     "Accesso al Desktop se richiesto da macOS",

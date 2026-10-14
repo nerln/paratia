@@ -156,7 +156,7 @@ non è esente; non viene modificato automaticamente. La configurazione degli
 harness resta modificabile dal loro proprietario e richiede la sua fiducia.
 
 Per installare il registro, apri la copia bootstrap dell'app preparata
-manualmente in `/Library/Application Support/ParatiaBootstrap/Paratia.app`.
+manualmente in `/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app`.
 Nelle sue **Impostazioni**, **Installa il registro…** prepara il piano e
 presenta **Autorizza con macOS**.
 Prima del dialogo, Paratia verifica che questa copia, tutti i suoi antenati e
@@ -168,16 +168,16 @@ I tre percorsi hanno ruoli distinti:
 
 - `/Applications/Paratia.app`: app quotidiana e voce Accesso completo al disco;
   conserva i permessi attuali.
-- `/Library/Application Support/ParatiaBootstrap/Paratia.app`: copia protetta
+- `/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app`: copia protetta
   da aprire per avviare il piano amministratore.
 - `/Library/Application Support/Paratia/Paratia.app`: copia protetta del
   servizio installato, dentro la directory privata del servizio con modo `0700`.
 
-Alla verifica del 10 ottobre 2026, gli antenati del bootstrap hanno permessi
+Alla verifica del 14 ottobre 2026, gli antenati del bootstrap hanno permessi
 Unix compatibili:
 `/` e `/Library` sono `root:wheel 0755`, `/Library/Application Support` è
 `root:admin 0755`. La preparazione riguarda soltanto la nuova directory
-`ParatiaBootstrap` e la copia dell'app. Copiare la stessa build e cambiarne il
+`ParatiaBootstrap.noindex` e la copia dell'app. Copiare la stessa build e cambiarne il
 proprietario non cambia il CDHash: il permesso TCC dell'app quotidiana resta valido.
 
 Chiudi tutte le copie di Paratia. Esegui personalmente nel Terminale questo
@@ -185,36 +185,60 @@ unico comando di preparazione; viene riportato qui senza essere eseguito:
 
 ```sh
 sudo /bin/sh -c 'set -eu
-[ ! -L "/Library/Application Support/ParatiaBootstrap" ]
+[ ! -L "/Library/Application Support/ParatiaBootstrap.noindex" ]
 [ -d "/Applications/Paratia.app" ]
 [ ! -L "/Applications/Paratia.app" ]
-/usr/bin/install -d -m 755 -o root -g wheel "/Library/Application Support/ParatiaBootstrap"
-/bin/chmod -N "/Library/Application Support/ParatiaBootstrap"
-paratia_bootstrap_stage=$(/usr/bin/mktemp -d "/Library/Application Support/ParatiaBootstrap/.prepara.XXXXXX")
+/usr/bin/install -d -m 755 -o root -g wheel "/Library/Application Support/ParatiaBootstrap.noindex"
+/bin/chmod -N "/Library/Application Support/ParatiaBootstrap.noindex"
+paratia_bootstrap_stage=$(/usr/bin/mktemp -d "/Library/Application Support/ParatiaBootstrap.noindex/.prepara.XXXXXX")
 /usr/bin/ditto --noacl "/Applications/Paratia.app" "$paratia_bootstrap_stage/Paratia.app"
 /usr/bin/find "$paratia_bootstrap_stage/Paratia.app" ! -type d ! -type f -print > "$paratia_bootstrap_stage/percorsi-non-ordinari"
 [ ! -s "$paratia_bootstrap_stage/percorsi-non-ordinari" ]
 /usr/sbin/chown -R root:wheel "$paratia_bootstrap_stage/Paratia.app"
 /bin/chmod -R go-w "$paratia_bootstrap_stage/Paratia.app"
 /usr/bin/codesign --verify --deep --strict "$paratia_bootstrap_stage/Paratia.app"
-[ ! -L "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]
-if [ -e "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]; then
-    /bin/mv "/Library/Application Support/ParatiaBootstrap/Paratia.app" "$paratia_bootstrap_stage/precedente.app"
+[ ! -L "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app" ]
+if [ -e "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app" ]; then
+    /bin/mv "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app" "$paratia_bootstrap_stage/precedente.app"
 fi
-/bin/mv "$paratia_bootstrap_stage/Paratia.app" "/Library/Application Support/ParatiaBootstrap/Paratia.app"
-/usr/bin/codesign --verify --deep --strict "/Library/Application Support/ParatiaBootstrap/Paratia.app"'
+/bin/mv "$paratia_bootstrap_stage/Paratia.app" "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app"
+/usr/bin/codesign --verify --deep --strict "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app"
+/usr/bin/find "/Library/Application Support/ParatiaBootstrap.noindex" -mindepth 1 -maxdepth 1 -type d -user root -name ".prepara.*" -exec /bin/rm -rf -- {} +
+if [ -e "/Library/Application Support/ParatiaBootstrap" ]; then
+    [ ! -L "/Library/Application Support/ParatiaBootstrap" ]
+    [ -d "/Library/Application Support/ParatiaBootstrap" ]
+    [ "$(/usr/bin/stat -f %u "/Library/Application Support/ParatiaBootstrap")" = "0" ]
+    paratia_legacy_mode=$(/usr/bin/stat -f %Lp "/Library/Application Support/ParatiaBootstrap")
+    [ $((0$paratia_legacy_mode & 022)) -eq 0 ]
+    [ ! -L "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]
+    if [ -e "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]; then
+        [ -d "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]
+        [ "$(/usr/bin/stat -f %u "/Library/Application Support/ParatiaBootstrap/Paratia.app")" = "0" ]
+        /bin/rm -rf -- "/Library/Application Support/ParatiaBootstrap/Paratia.app"
+    fi
+    /usr/bin/find "/Library/Application Support/ParatiaBootstrap" -mindepth 1 -maxdepth 1 -type d -user root -name ".prepara.*" -exec /bin/rm -rf -- {} +
+fi'
 ```
 
 La preparazione usa una directory temporanea di root con modo `0700`, rifiuta
 collegamenti e file speciali prima di cambiare proprietario e permessi, e verifica
-la firma prima di pubblicare la copia. Un bootstrap precedente resta conservato
-nella directory `.prepara` sotto `ParatiaBootstrap`. Apri la nuova copia dal
+la firma prima e dopo la pubblicazione. A copia verificata elimina le directory
+root `.prepara.*` e l'app del vecchio percorso `ParatiaBootstrap`. Il suffisso
+`.noindex` evita l'indicizzazione della nuova copia senza cambiare i controlli
+root. Apri la nuova copia dal
 Finder soltanto se il comando termina senza errori, con codice di uscita `0`.
 
 Il dialogo amministratore gestisce la password. L'installer copia il bundle
 firmato in `/Library/Application Support/Paratia/Paratia.app`, protetto da root.
 Il LaunchDaemon esegue il binario nativo di questa copia, che resta vivo e
 avvia il raccoglitore Python come figlio.
+
+L'installer attende che launchd abbia rimosso il servizio dopo ogni `bootout`,
+con un limite di tempo, e riprova gli errori di corsa 5/37 con attesa crescente.
+Se deve ripristinare il servizio precedente, applica gli stessi controlli.
+In caso di errore la GUI mostra il messaggio dell'installer e il codice, anche
+quando il ripristino fallisce. La risposta JSON include gli errori launchctl
+ridotti, senza percorsi o dati privati dello stderr.
 
 Conclusa l'installazione, chiudi la copia bootstrap e riapri l'app quotidiana
 in `/Applications/Paratia.app`. Qui **Apri Accesso completo al disco** porta
@@ -224,7 +248,8 @@ firma ad hoc, rimuovi la voce precedente e aggiungi di nuovo l'app installata;
 aggiorna la copia bootstrap e reinstalla il registro per aggiornare la copia
 del servizio. Non abilitare
 Python 3.9. Il passaggio del permesso ai figli e la raccolta kernel sono stati
-verificati sulla build del giro 4. Per la nuova build del giro 5, ripeti i passi
+verificati sulla build del giro 4. Il giro 6 è pubblicato (`91914a0`), ma la sua
+installazione del servizio è fallita e lo ha lasciato scaricato. Per il giro 7, ripeti i passi
 numerati e verifica un nuovo evento eslogger dopo **Aggiorna**; il registro
 precedente funzionante non prova che la nuova firma sia già autorizzata.
 **Verifica il registro** controlla le due catene presenti, senza attestare da sola
@@ -245,18 +270,37 @@ o percorsi non protetti.
 
 ## Costruzione per il manutentore
 
-Dal repository, con i Command Line Tools Apple disponibili:
+Dal repository, con i Command Line Tools Apple e `rsvg-convert` disponibili:
 
 ```sh
-python strumenti/build-app.py --render-fixtures
-open -n build/Paratia.app --args --launch-check
-~/.local/bin/installa-app build/Paratia.app
+python3 strumenti/build-app.py --render-fixtures
+open -n build.noindex/Paratia.app --args --launch-check
+~/.local/bin/installa-app build.noindex/Paratia.app
 ```
 
 `--launch-check` apre la GUI e la chiude dopo quattro secondi. L'installazione
 in `/Applications` è a carico del supervisore. Le immagini generate usano
-fixture dichiarate sintetiche. La build firma
+fixture dichiarate sintetiche. La build produce `build.noindex/Paratia.app`,
+che Spotlight deve ignorare. L'icona nasce da `macos/Assets/Paratia.svg`:
+`strumenti/make-icon.py` genera dieci PNG da 16 a 1024 pixel e li converte con
+`iconutil`, poi la build collega `Paratia.icns` in `Info.plist`. La preview è
+in `docs/immagini/paratia-icona.png`. Nel sandbox i PNG sono verificati, ma
+`iconutil` ha rifiutato l'iconset: il supervisore deve verificare la conversione
+reale durante la build. La build firma
 **ad hoc**, senza identità dal portachiavi, e non è notarizzata. Il percorso
 amministratore locale usa l'API deprecata `AuthorizationExecuteWithPrivileges`,
 limitata al piano fisso del registro e al runtime root protetto. Eugenio ha già
-eseguito l'installazione del giro 4; quella della nuova build resta un passo umano.
+eseguito l'installazione del giro 6; il servizio richiede una nuova installazione
+umana con la correzione del giro 7.
+
+Dopo la migrazione, verifica da Terminale:
+
+```sh
+mdfind "kMDItemCFBundleIdentifier == 'it.paratia.app'"
+```
+
+Deve comparire soltanto `/Applications/Paratia.app`. Nel sandbox la query
+restituisce zero risultati anche per l'app normale esistente, quindi non prova
+l'assenza di doppioni. Il supervisore ripete la query e controlla Spotlight e
+Launchpad dopo la copia manuale. Nessun flag che nasconde l'app dal Dock viene
+aggiunto al bundle.
