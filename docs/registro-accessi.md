@@ -163,44 +163,7 @@ cifrato, non prova accessi al testo in chiaro.
 ## Installazione e aggiornamento
 
 Dopo aver installato l'app normale in `/Applications`, chiudi tutte le copie
-di Paratia e prepara personalmente nel Terminale la copia di bootstrap:
-
-```sh
-sudo /bin/sh -c 'set -eu
-[ ! -L "/Library/Application Support/ParatiaBootstrap.noindex" ]
-[ -d "/Applications/Paratia.app" ]
-[ ! -L "/Applications/Paratia.app" ]
-/usr/bin/install -d -m 755 -o root -g wheel "/Library/Application Support/ParatiaBootstrap.noindex"
-/bin/chmod -N "/Library/Application Support/ParatiaBootstrap.noindex"
-paratia_bootstrap_stage=$(/usr/bin/mktemp -d "/Library/Application Support/ParatiaBootstrap.noindex/.prepara.XXXXXX")
-/usr/bin/ditto --noacl "/Applications/Paratia.app" "$paratia_bootstrap_stage/Paratia.app"
-/usr/bin/find "$paratia_bootstrap_stage/Paratia.app" ! -type d ! -type f -print > "$paratia_bootstrap_stage/percorsi-non-ordinari"
-[ ! -s "$paratia_bootstrap_stage/percorsi-non-ordinari" ]
-/usr/sbin/chown -R root:wheel "$paratia_bootstrap_stage/Paratia.app"
-/bin/chmod -R go-w "$paratia_bootstrap_stage/Paratia.app"
-/usr/bin/codesign --verify --deep --strict "$paratia_bootstrap_stage/Paratia.app"
-[ ! -L "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app" ]
-if [ -e "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app" ]; then
-    /bin/mv "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app" "$paratia_bootstrap_stage/precedente.app"
-fi
-/bin/mv "$paratia_bootstrap_stage/Paratia.app" "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app"
-/usr/bin/codesign --verify --deep --strict "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app"
-/usr/bin/find "/Library/Application Support/ParatiaBootstrap.noindex" -mindepth 1 -maxdepth 1 -type d -user root -name ".prepara.*" -exec /bin/rm -rf -- {} +
-if [ -e "/Library/Application Support/ParatiaBootstrap" ]; then
-    [ ! -L "/Library/Application Support/ParatiaBootstrap" ]
-    [ -d "/Library/Application Support/ParatiaBootstrap" ]
-    [ "$(/usr/bin/stat -f %u "/Library/Application Support/ParatiaBootstrap")" = "0" ]
-    paratia_legacy_mode=$(/usr/bin/stat -f %Lp "/Library/Application Support/ParatiaBootstrap")
-    [ $((0$paratia_legacy_mode & 022)) -eq 0 ]
-    [ ! -L "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]
-    if [ -e "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]; then
-        [ -d "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]
-        [ "$(/usr/bin/stat -f %u "/Library/Application Support/ParatiaBootstrap/Paratia.app")" = "0" ]
-        /bin/rm -rf -- "/Library/Application Support/ParatiaBootstrap/Paratia.app"
-    fi
-    /usr/bin/find "/Library/Application Support/ParatiaBootstrap" -mindepth 1 -maxdepth 1 -type d -user root -name ".prepara.*" -exec /bin/rm -rf -- {} +
-fi'
-```
+di Paratia e prepara personalmente nel Terminale la copia di bootstrap. Il comando vigente è nella [guida GUI, sezione Impostazioni](gui-mac.md#impostazioni): copialo da lì.
 
 Il comando non modifica `/Applications` o i suoi permessi. Prepara la copia in
 un'area root con modo 0700, rifiuta link e file speciali prima di cambiare
@@ -403,3 +366,101 @@ stesse righe sintetiche; il sink conta i record senza I/O. Riporta mediane di
 righe/s, secondi CPU e microsecondi CPU per riga. La stima CPU a un input
 ipotetico non è una misura live: il limite complessivo sotto il 10% a riposo
 e il ritardo sotto due secondi richiedono la nuova installazione e misura.
+
+## Rotte di paranco
+
+`paratia registro rotte-paranco` legge il file delle rotte di paranco e propone
+quali cartelle sorvegliare. Il file è `~/Library/Application Support/paranco/routes.json`.
+Il comando lo apre in sola lettura con il lettore del registro: deve appartenere
+all'utente, non deve essere scrivibile da gruppo e altri, non può essere un
+collegamento simbolico e non può superare 4 MiB. Non importa né lancia codice di
+paranco e non scrive mai nel file.
+
+Se il file non esiste, il comando risponde con `paranco_presente: false`, non
+propone nulla e termina con codice 0. Se il file non è leggibile o non è una
+lista, mostra un messaggio fisso e non propone nulla. Se la configurazione delle
+cartelle o delle sorveglianze di paratia non è leggibile, il comando si ferma con
+errore e non propone nulla.
+
+Il comando considera al massimo sedici rotte, e solo le voci che sono oggetti: le
+altre sono contate in `voci_ignorate`. Di ogni rotta usa soltanto `name`, `enabled`,
+`destination` e `sourceID`. Il nome perde i caratteri di controllo e di formattazione,
+per esempio i segni che invertono la direzione del testo, e i surrogati isolati; si
+tronca a 64 caratteri. Se la rotta non ha un nome, il nome è quello della cartella,
+con la stessa pulizia. La destinazione deve essere un percorso `file://` assoluto,
+senza `..`, e codificabile in UTF-8. Nel testo stampato, un percorso con caratteri di
+controllo o di formattazione mostra quei caratteri come `\uXXXX`. Con `--esegui` la
+cartella viene configurata con il suo percorso reale.
+
+Ogni destinazione ha uno stato:
+
+- `da-aggiungere`: cartella esistente, dentro la tua cartella utente, senza
+  conflitti e non ancora sorvegliata. Con `--esegui` viene configurata.
+- `gia-sorvegliata`: è già nel registro delle sorveglianze. Il comando non la tocca.
+- `conflitto`: la cartella è protetta da paratia, sta dentro una cartella protetta
+  o sta dentro un punto di montaggio. Anche una cartella che la configurazione
+  rifiuta conta come protetta. Da chiusa una cartella protetta è una directory vuota
+  sul disco interno, e paranco ci scriverebbe in chiaro.
+- `rifiutata`: la destinazione non è valida, è fuori dalla tua cartella utente, è
+  la cartella utente stessa, contiene un collegamento simbolico, o non esiste
+  ancora. Una cartella mancante va creata: paranco la crea al primo sollevamento.
+  Se i permessi non fanno vedere il percorso, il comando non può dire se esiste e
+  lo rifiuta con quel motivo.
+- `disabilitata`: `enabled` non è `true`. La rotta non viene proposta.
+
+Quando `routes.json` esiste, il piano propone anche la cartella
+`~/Library/Application Support/paranco`, con il nome `paranco: rotte e log`, se
+non è già sorvegliata. Così si vede chi riscrive `routes.json`.
+
+Con `--esegui` il comando configura soltanto le proposte `da-aggiungere`, una per
+una, con un ID nuovo. Non rimuove sorveglianze e non cambia i nomi di quelle già
+presenti. Il comando rifiuta `--esegui` in una sessione agente, prima di scrivere
+qualunque cosa, perché la decisione spetta a una persona. Il controllo legge le
+variabili d'ambiente degli agenti: è una barriera di cortesia, non un confine,
+come nel resto di paratia. Una cartella configurata non è ancora raccolta attiva:
+il raccoglitore la conferma soltanto dopo.
+
+Negli esempi, `~/.scriba/inbox` è la cartella in cui scrive scriba, un altro programma
+dello stesso autore.
+
+Esempi:
+
+```sh
+paratia registro rotte-paranco
+paratia registro rotte-paranco --esegui
+paratia registro elenco --cartella ~/.scriba/inbox --agente true
+paratia registro elenco --cartella "$HOME/Library/Application Support/paranco" --file routes.json
+```
+
+Il filtro `--file routes.json` è relativo. paranco riscrive il file con un
+`.part` e poi lo rinomina, e il filtro relativo raccoglie entrambi i nomi.
+
+Limiti:
+
+- `routes.json` è un file che può riscrivere chiunque giri come te, agenti compresi.
+  Il piano è un aiuto per configurare, non un confine, come le etichette.
+- Il registro mostra dopo, non impedisce. Se un agente cambia la destinazione di
+  una rotta, lo vedi nel registro, ma il registro non blocca la scrittura.
+- Un evento `open` non prova che i byte siano stati letti.
+- Atteso e non ancora misurato: se l'agente launchd di paranco è installato, paranco
+  apre `routes.json` e la destinazione ogni cinque minuti. Anche scriba o altri
+  processi possono aprire la destinazione. Sono eventi normali, e si separano con
+  `--processo`.
+- La cartella sorgente dei Memo Vocali non si sorveglia: produce rumore e non dà
+  valore.
+- Non puntare mai una rotta di paranco a una cartella protetta da paratia. Il
+  comando lo segnala come `conflitto`.
+- L'Accesso completo al disco di paratia, per eslogger, e quello di paranco, per
+  leggere i Memo Vocali, sono due voci distinte nell'elenco di macOS. Una build ad
+  hoc nuova riguarda soltanto la sua app.
+
+Il test sintetico `tests/test_rotte_paranco.py` copre il file assente, le rotte
+disattivate, le destinazioni rifiutate, i nomi ripuliti, i file malformati, il
+limite di sedici voci, un `routes.json` come collegamento simbolico, l'invarianza
+del file, due passate di `--esegui`, i conflitti con cartelle protette e punti di
+montaggio simulati, e il rifiuto in sessione agente. Copre anche i caratteri di
+formattazione nel nome e nella cartella di ripiego, i surrogati isolati, una cartella
+senza permessi, un JSON molto annidato, il conflitto che prevale sulla convalida, e le configurazioni di cartelle o
+sorveglianze illeggibili, rotte o scrivibili dal gruppo: in quei casi il comando si
+ferma con errore e non scrive nulla. Il test usa una home temporanea e non legge la
+home reale.

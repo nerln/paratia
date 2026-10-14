@@ -331,6 +331,16 @@ agent session, and the `--forza` override exists for screenshots, not for you.
   remains mutable. Two layers are tamper-evident, not tamper-proof.
 
 
+## paranco routes and the folders they write to
+
+paranco keeps its routes in `~/Library/Application Support/paranco/routes.json`.
+Do not edit that file. Do not use `paratia registro rotte-paranco --esegui`: it
+refuses inside an agent session, and deciding what to watch belongs to the
+operator. Reading the plan without `--esegui` is allowed; it only reads the file.
+If a route's folder should be watched, tell the operator and give them the
+command to run. A route must never point into a folder that paratia protects:
+the plan reports that case as `conflitto`.
+
 ## Commands, and who runs them
 
 Yours, inside a session:

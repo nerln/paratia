@@ -152,6 +152,7 @@
   .card h4 { margin: 0 0 .9rem; }
   .card p:last-child { margin-bottom: 0; }
   .half + .half { margin-top: 2.4rem; }
+  .cards + p { margin-top: 1.2rem; }
 
   /* app captures */
   .shots { display: grid; gap: 2.2rem; }
@@ -190,6 +191,12 @@
   .links a { font-weight: 600; }
   .links span { display: block; color: var(--muted); font-size: .95rem; }
 
+  /* family table: scrolls inside its own box if a narrow screen cannot fit it */
+  .table-wrap { overflow-x: auto; margin: 0 0 1.2rem; }
+  table { width: 100%; border-collapse: collapse; font-size: .95rem; }
+  th, td { text-align: left; vertical-align: top; padding: .65rem .6rem; border-bottom: 1px solid var(--line); }
+  th { color: var(--petrol); font-weight: 650; }
+
   .name-block { color: var(--muted); }
   footer {
     margin-top: 4rem; padding: 1.5rem 0 2.6rem;
@@ -207,6 +214,7 @@
   <nav aria-label="Page sections">
     <a href="#problem">The problem</a>
     <a href="#how">How it works</a>
+    <a href="#family">Family</a>
     <a href="#app">Mac app</a>
     <a href="#install">Install</a>
     <a href="#limits">Limits</a>
@@ -310,6 +318,50 @@
       <p>Each source is a chain: every entry carries a fingerprint (a hash) of the one before it, so an edit inside a chain breaks verification. The app's records belong to your account, so a program running as you can rewrite them. The kernel log is a root-owned file, and your account has read access to it only. Cutting entries off the end is not detected without an outside checkpoint.</p>
     </article>
   </div>
+  <p>Routes that paranco writes can be read with <code>paratia registro rotte-paranco</code>, which proposes the folders to watch.</p>
+</section>
+
+<section id="family" aria-labelledby="h-family">
+  <h2 id="h-family">paratia and paranco</h2>
+  <p>paratia and paranco are two small programs by the same author. They run on the same Mac and do not call each other. The only link between them is one file.</p>
+  <div class="cards two">
+    <article class="card">
+      <p class="eyebrow">paratia</p>
+      <h3>Keeps data away from agents</h3>
+      <p>Encrypted folders that no agent reads while they are closed. A log of who touches what. A check that blocks agents while a folder is open. It also checks one agent asking another for what it may not do, on the Claude side only (see Limits).</p>
+    </article>
+    <article class="card">
+      <p class="eyebrow">paranco</p>
+      <h3>Opens one controlled door</h3>
+      <p>paranco holds Full Disk Access, the macOS permission for protected files, so that the programs that read the copied files do not need it. It copies files in one direction only, from a folder that macOS protects, such as Voice Memos, into an ordinary folder. It follows the routes you set. Its sources are compiled into the program, so a route cannot add one by writing a file.</p>
+    </article>
+  </div>
+
+  <h3>Who holds Full Disk Access</h3>
+  <p>Each program has its own entry in the macOS list, and each one needs its own permission.</p>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th scope="col">Program</th><th scope="col">Full Disk Access is used for</th><th scope="col">After a new build</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>paratia</code><br>Paratia.app</td><td>Reading kernel events through its log service</td><td>Remove the entry, add it again, then reinstall the service</td></tr>
+        <tr><td><code>paranco</code><br>Paranco.app</td><td>Reading the Voice Memos folder</td><td>Remove the entry, then add Paranco.app again</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>They are two separate entries. paranco's permission does not make paratia's unnecessary.</p>
+
+  <h3>Why not one program</h3>
+  <ul>
+    <li>They have opposite goals. One closes access, and the other opens one controlled door.</li>
+    <li>Each new ad hoc build has a new code hash, and its privacy permissions must be granted again. A rebuild of one must not stop the other.</li>
+    <li>They have different licenses: GPL-3.0 for paratia and MIT for paranco.</li>
+  </ul>
+
+  <h3>The one file they share</h3>
+  <p>paranco writes <code>routes.json</code>. paratia can read that file in read-only mode with <code>paratia registro rotte-paranco</code>. The command proposes watching the folders the routes write to, so you can see who opens the copied files. Without paranco, the command reports that there are no routes. Without paratia, paranco does not change.</p>
+  <p><a class="btn btn-ghost" href="https://github.com/nerln/paranco">paranco on GitHub</a></p>
 </section>
 
 <section id="app" aria-labelledby="h-app">
@@ -385,6 +437,7 @@
       <li>A label records a decision and protects nothing by itself. It is a JSON file (a plain-text data format) in your home directory, and the agent's account can rewrite it. Protection comes from encrypting the files.</li>
       <li>Removing the original after a move is not a secure erase. Backups, APFS snapshots (saved states of the disk that macOS keeps) and cloud copies made earlier keep their versions, and the physical blocks of an SSD (solid-state disk) are not wiped.</li>
       <li>Some measurements are still open. As of October 2026, the live run of the test bench has not been executed. Idle CPU use and event delay must be measured again after a new build is installed.</li>
+      <li>The watch plan comes from a file that any program running as you can rewrite. It helps you set up a watch, and it is not a boundary.</li>
     </ol>
   </div>
 </section>

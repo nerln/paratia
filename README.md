@@ -1,6 +1,6 @@
 # paratia
 
-[Site](https://nerln.github.io/paratia/) · [agent manual](https://nerln.github.io/paratia/llms.txt) · [SSH bridge](docs/ponte-ssh.md)
+[Site](https://nerln.github.io/paratia/) · [agent manual](https://nerln.github.io/paratia/llms.txt) · [SSH bridge](docs/ponte-ssh.md) · [paranco](https://github.com/nerln/paranco)
 
 **A deny list is a list of the paths somebody thought of.** This is not one.
 
@@ -149,6 +149,8 @@ paratia registro esporta --cartella ~/Documenti/progetto
 paratia registro smetti ~/Documenti/progetto
 ```
 
+`paratia registro rotte-paranco` reads paranco's route file in read-only mode and proposes which folders to watch. `--esegui` applies those proposals, and it refuses to run inside an agent session. Limits and examples are in [Rotte di paranco](docs/registro-accessi.md#rotte-di-paranco).
+
 `elenco` and `esporta` warn on stderr when collection is stopped or unhealthy,
 including empty results. The CLI and worker query/CSV accept a folder ID or an
 exact configured absolute path, with slash, alias and NFC/NFD normalization.
@@ -212,44 +214,7 @@ for inspection. Native ICNS conversion still needs the supervisor's build:
 
 The app signs ad hoc and is not notarized. Keep the normal app in `/Applications`.
 Close all copies of Paratia and run this yourself in Terminal to prepare a
-separate root-owned bootstrap copy:
-
-```sh
-sudo /bin/sh -c 'set -eu
-[ ! -L "/Library/Application Support/ParatiaBootstrap.noindex" ]
-[ -d "/Applications/Paratia.app" ]
-[ ! -L "/Applications/Paratia.app" ]
-/usr/bin/install -d -m 755 -o root -g wheel "/Library/Application Support/ParatiaBootstrap.noindex"
-/bin/chmod -N "/Library/Application Support/ParatiaBootstrap.noindex"
-paratia_bootstrap_stage=$(/usr/bin/mktemp -d "/Library/Application Support/ParatiaBootstrap.noindex/.prepara.XXXXXX")
-/usr/bin/ditto --noacl "/Applications/Paratia.app" "$paratia_bootstrap_stage/Paratia.app"
-/usr/bin/find "$paratia_bootstrap_stage/Paratia.app" ! -type d ! -type f -print > "$paratia_bootstrap_stage/percorsi-non-ordinari"
-[ ! -s "$paratia_bootstrap_stage/percorsi-non-ordinari" ]
-/usr/sbin/chown -R root:wheel "$paratia_bootstrap_stage/Paratia.app"
-/bin/chmod -R go-w "$paratia_bootstrap_stage/Paratia.app"
-/usr/bin/codesign --verify --deep --strict "$paratia_bootstrap_stage/Paratia.app"
-[ ! -L "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app" ]
-if [ -e "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app" ]; then
-    /bin/mv "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app" "$paratia_bootstrap_stage/precedente.app"
-fi
-/bin/mv "$paratia_bootstrap_stage/Paratia.app" "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app"
-/usr/bin/codesign --verify --deep --strict "/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app"
-/usr/bin/find "/Library/Application Support/ParatiaBootstrap.noindex" -mindepth 1 -maxdepth 1 -type d -user root -name ".prepara.*" -exec /bin/rm -rf -- {} +
-if [ -e "/Library/Application Support/ParatiaBootstrap" ]; then
-    [ ! -L "/Library/Application Support/ParatiaBootstrap" ]
-    [ -d "/Library/Application Support/ParatiaBootstrap" ]
-    [ "$(/usr/bin/stat -f %u "/Library/Application Support/ParatiaBootstrap")" = "0" ]
-    paratia_legacy_mode=$(/usr/bin/stat -f %Lp "/Library/Application Support/ParatiaBootstrap")
-    [ $((0$paratia_legacy_mode & 022)) -eq 0 ]
-    [ ! -L "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]
-    if [ -e "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]; then
-        [ -d "/Library/Application Support/ParatiaBootstrap/Paratia.app" ]
-        [ "$(/usr/bin/stat -f %u "/Library/Application Support/ParatiaBootstrap/Paratia.app")" = "0" ]
-        /bin/rm -rf -- "/Library/Application Support/ParatiaBootstrap/Paratia.app"
-    fi
-    /usr/bin/find "/Library/Application Support/ParatiaBootstrap" -mindepth 1 -maxdepth 1 -type d -user root -name ".prepara.*" -exec /bin/rm -rf -- {} +
-fi'
-```
+separate root-owned bootstrap copy. The current command is in the [GUI guide, section Impostazioni](docs/gui-mac.md#impostazioni): copy it from there.
 
 The command leaves `/Applications` permissions unchanged. It stages the copy
 in a root-only directory, refuses links and special files before ownership or
