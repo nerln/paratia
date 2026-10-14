@@ -1195,6 +1195,8 @@ def _data(v):
     # Python 3.9 accepts colon-separated UTC offsets, unlike the historical
     # strftime %z writer. Preserve old rows without rewriting their hash chain.
     testo = re.sub(r"([+-]\d{2})(\d{2})$", r"\1:\2", testo)
+    # eslogger writes nanoseconds; Python 3.9 reads only 3 or 6 fractional digits.
+    testo = re.sub(r"\.(\d+)", lambda m: "." + m.group(1)[:6].ljust(6, "0"), testo, count=1)
     return datetime.datetime.fromisoformat(testo).timestamp()
 
 

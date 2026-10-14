@@ -430,3 +430,22 @@ class RegistroTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_eslogger_nanoseconds_are_read_on_the_app_python():
+    """eslogger writes nine fractional digits; Python 3.9 reads only three or six."""
+    import importlib.util as u
+    ROOT = Path(__file__).resolve().parent.parent
+    spec = u.spec_from_file_location("registro_nano", ROOT / "registro.py")
+    R = u.module_from_spec(spec); spec.loader.exec_module(R)
+    atteso = 1791942048.707290
+    assert abs(R._data("2026-10-14T01:40:48.707290465+00:00") - atteso) < 1e-5
+    assert abs(R._data("2026-10-14T01:40:48.7072+00:00") - 1791942048.7072) < 1e-5
+    clt = Path("/Library/Developer/CommandLineTools/usr/bin/python3")
+    if clt.exists():
+        import subprocess
+        out = subprocess.run([str(clt), "-I", "-S", "-B", "-c",
+            "import sys; sys.path.insert(0, %r); import registro as R; print(R._data('2026-10-14T01:40:48.707290465+00:00'))" % str(ROOT)],
+            capture_output=True, text=True, timeout=60)
+        assert out.returncode == 0, out.stderr[-500:]
+        assert abs(float(out.stdout) - atteso) < 1e-5
