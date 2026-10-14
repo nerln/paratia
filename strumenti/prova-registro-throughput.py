@@ -26,6 +26,9 @@ ROOT = "/Users/paratia-synthetic/Desktop/folder-test"
 def righe_sintetiche(numero):
     """95% unrelated filesystem events, 4% watched accesses, 1% ancestry.
 
+    Unrelated events use only types in the default subscription (write, truncate,
+    unlink): close, mount and unmount are no longer subscribed, so they are not
+    part of the stream this benchmark stands for.
     Audit/signing/file metadata and harmless synthetic argument/environment fields
     resemble the real event envelope. No machine-specific paths or user data.
     """
@@ -42,7 +45,7 @@ def righe_sintetiche(numero):
     righe = []
     for i in range(numero):
         caso = i % 100
-        tipo = "exec" if caso == 0 else ("open" if caso < 5 else ("close" if caso % 2 else "write"))
+        tipo = "exec" if caso == 0 else ("open" if caso < 5 else ("write", "truncate", "unlink")[caso % 3])
         percorso = ROOT + "/synthetic.txt" if caso < 5 else "/System/Library/Synthetic/cache.dat"
         file = {"path": percorso, "path_truncated": False,
                 "stat": {"st_dev": 1, "st_ino": 123456, "st_mode": 33188, "st_nlink": 1,
@@ -50,8 +53,8 @@ def righe_sintetiche(numero):
                          "st_atimespec": {"tv_sec": 1791936000, "tv_nsec": 0},
                          "st_mtimespec": {"tv_sec": 1791936000, "tv_nsec": 0}}}
         dettaglio = ({"target": p, "args": ["synthetic-argument"], "env": ["SYNTHETIC=1"]}
-                     if tipo == "exec" else {"file" if tipo == "open" else "target": file,
-                                             "fflag": 1, "modified": False})
+                     if tipo == "exec" else {"file": file, "fflag": 1} if tipo == "open"
+                     else {"target": file})
         msg = {"schema_version": 1, "version": 7, "time": ora,
                "event_type": "ES_EVENT_TYPE_NOTIFY_" + tipo.upper(),
                "seq_num": i + 1, "global_seq_num": i + 1, "process": p,

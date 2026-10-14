@@ -31,6 +31,9 @@ CAMPI_RADICI = ("origine", "bundle", "montaggio", "recupero_temporaneo",
 _HEADER = re.compile(br'"(schema_version|event_type|global_seq_num|seq_num|time)"\s*:\s*("(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?|true|false|null)')
 _UNICODE = re.compile(br'\\u[dD][89aAbB][0-9a-fA-F]{2}\\u[dD][c-fC-F][0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}')
 _ORA_EVENTO = re.compile(r"([0-9]{4}-[0-9]{2}-[0-9]{2}[Tt ][0-9]{2}:[0-9]{2}:[0-9]{2})(?:[.,]([0-9]{1,9}))?(Z|z|[+-][0-9]{2}(?::?[0-9]{2})?)")
+# File types whose unrelated lines are discarded after reading only the header.
+# Close, mount, unmount, mmap and lookup are kept although they are no longer
+# subscribed: a stray unrelated line of those types is dropped cheaply, not decoded.
 _FILE_TYPES = (10, 12, 13, 20, 22, 23, 25, 32, 33, 41, 43,
                *("ES_EVENT_TYPE_NOTIFY_" + n for n in ("OPEN", "CLOSE", "CREATE", "MMAP", "MOUNT", "UNMOUNT", "RENAME", "UNLINK", "WRITE", "TRUNCATE", "LOOKUP")))
 sys.dont_write_bytecode = True
@@ -372,6 +375,7 @@ def main(argv=None):
     contesto = contesto_launcher()
     informazioni = {**contesto, "running": False, "healthy": False, "needs_fda": None,
                     "message": "Avvio del registro kernel in corso.", "dropped_events": 0,
+                    "last_dropped_at": None,
                     "drop_detection_available": False, "watched_ids": [v["id"] for v in osservatore.protetti],
                     "watch_status": [], "schema_supported": None,
                     "diagnostic_counts": {}, **flusso.metriche(),
@@ -439,6 +443,7 @@ def main(argv=None):
                 informazioni.update(running=processo.poll() is None and visto,
                                      healthy=osservatore.sano and visto and not config_illeggibile,
                                      dropped_events=osservatore.persi,
+                                     last_dropped_at=osservatore.ultima_perdita,
                                      drop_detection_available=osservatore.rileva_perdite,
                                      schema_supported=not osservatore.schema_fatale if visto else None,
                                      diagnostic_counts={k: max(sink.contatori.get(k, 0), osservatore.diagnostici.get(k, 0))
@@ -469,6 +474,7 @@ def main(argv=None):
         # Retain only the permission category, never the stderr text itself.
         bisogno = any(x in errori.lower() for x in (b"tcc", b"full disk access", b"not permitted", b"not_permitted"))
         informazioni.update(running=False, healthy=False, needs_fda=bisogno,
+                             dropped_events=osservatore.persi, last_dropped_at=osservatore.ultima_perdita,
                              schema_supported=not osservatore.schema_fatale if visto else None,
                              diagnostic_counts={k: max(sink.contatori.get(k, 0), osservatore.diagnostici.get(k, 0))
                                                 for k in set(sink.contatori) | set(osservatore.diagnostici)},

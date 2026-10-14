@@ -82,7 +82,7 @@ def healthy_state(**extra):
 
 @pytest.mark.parametrize("extra,code", [
     ({"event_lag_seconds": 180}, "event_delay"),
-    ({"dropped_events": 6}, "dropped_events"),
+    ({"dropped_events": 6, "last_dropped_at": time.time()}, "dropped_events"),
     ({"watch_status": [{"id": "second", "status": "rejected", "reason_code": "owner_mismatch"}]}, "rejected_watches"),
     ({"watch_status": [{"id": None, "status": "rejected", "reason_code": "invalid_entry"}]}, "rejected_watches"),
     ({"watched_ids": []}, "no_watched_folders"),
@@ -98,6 +98,32 @@ def test_every_unhealthy_cause_has_a_readable_safe_reason(R, monkeypatch, extra,
     assert not status["healthy"]
     assert code in {reason["code"] for reason in status["health_reasons"]}
     assert all(reason["message"] for reason in status["health_reasons"])
+
+
+def test_loss_older_than_ten_minutes_keeps_the_total_but_not_the_health_block(R, monkeypatch):
+    monkeypatch.setattr(R, "_servizio_installato", lambda uid: (True, "app"))
+    write_state(R, healthy_state(dropped_events=6, last_dropped_at=time.time() - 601))
+    status = R.stato()
+    assert status["dropped_events"] == 6 and status["last_dropped_at"] is not None
+    assert "dropped_events" not in {reason["code"] for reason in status["health_reasons"]}
+    assert status["healthy"] and status["health_reasons"] == []
+
+
+def test_loss_inside_the_window_blocks_health_with_the_cumulative_count(R, monkeypatch):
+    monkeypatch.setattr(R, "_servizio_installato", lambda uid: (True, "app"))
+    write_state(R, healthy_state(dropped_events=6, last_dropped_at=time.time() - 590))
+    status = R.stato()
+    reasons = {reason["code"]: reason["message"] for reason in status["health_reasons"]}
+    assert not status["healthy"] and "dropped_events" in reasons
+    assert "negli ultimi 10 minuti" in reasons["dropped_events"]
+    assert status["dropped_events"] == 6
+
+
+def test_export_keeps_the_time_of_an_expired_loss(R, monkeypatch):
+    state = healthy_state(dropped_events=6, last_dropped_at=1000.0)
+    monkeypatch.setattr(R, "stato", lambda: state)
+    collection = R.raccolta_kernel({})["kernel_collection"]
+    assert collection["dropped_events"] == 6 and collection["last_dropped_at"] == 1000.0
 
 
 def test_idle_stream_is_not_mistaken_for_a_delayed_event(R, monkeypatch):

@@ -104,9 +104,9 @@ health_reasons lists readable reasons for unhealthy state, including delay,
 lost events, refused IDs and no acknowledged folders. The app shows reasons
 and metrics in Registry and Settings, and per-ID refusals in folder cards.
 
-The default EVENTI subscription includes open, close, write, create, rename,
-unlink, mount, unmount, truncate, exec, fork and exit; lookup and mmap are
-excluded. Historical/imported lookup and mmap remain readable. Before
+The default EVENTI subscription is open, write, create, rename, unlink,
+truncate, exec, fork and exit; close, mount, unmount, lookup and mmap are
+excluded. Historical/imported events of those types remain readable. Before
 json.loads, a raw-byte prefilter skips unrelated file-event lines, including
 alternate roots such as /System/Volumes/Data and /private aliases. Escaped
 paths and NFC/NFD variants are retained; uncertain forms use the full parser.

@@ -89,7 +89,9 @@ byte e ogni tentativo fallito non produce necessariamente un evento kernel.
 Vedi [Registro degli accessi](registro-accessi.md).
 
 Registro e Impostazioni mostrano i motivi di **registro non sano**, fra cui
-ritardo, eventi persi, cartelle rifiutate e nessuna cartella confermata. **Latenza
+ritardo, eventi persi negli ultimi dieci minuti, cartelle rifiutate e nessuna
+cartella confermata. Dopo dieci minuti senza nuove perdite il motivo sparisce e
+il registro torna sano; il totale delle perdite resta nei dati. **Latenza
 degli eventi** confronta il timestamp dell'ultimo evento con la sua ricezione;
 **Flusso ricevuto** mostra tutte le righe eslogger al secondo, incluse quelle
 scartate prima del parser perché estranee alle cartelle. **Ultimo evento ricevuto
@@ -104,8 +106,10 @@ Una nuova cartella assente o un percorso sostituito restano rifiutati: la
 conferma è legata al percorso corrente, senza riusare un vecchio ID per
 coprire una richiesta diversa.
 
-La raccolta predefinita del giro 5 esclude `lookup` e `mmap`; i relativi eventi
-storici restano leggibili. Un filtro economico prima della decodifica JSON
+La raccolta predefinita esclude `lookup`, `mmap`, `close`, `mount` e `unmount`
+(giro 8); i relativi eventi storici restano leggibili. Le modifiche sono `write`,
+`create`, `rename`, `unlink` e `truncate`. Il registro non mostra più un evento di
+chiusura file né di montaggio dal kernel. Un filtro economico prima della decodifica JSON
 riconosce le radici sorvegliate e le loro forme alternative, senza scartare la
 discendenza exec/fork/exit. I numeri di sequenza restano controllati anche per
 le righe scartate: il filtro non può mascherare perdite dichiarate da eslogger.

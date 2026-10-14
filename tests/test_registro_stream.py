@@ -40,9 +40,10 @@ def raw(msg, **kwargs):
 
 
 def test_default_subscription_omits_noisy_events_without_breaking_historical_parser():
-    assert "lookup" not in R.EVENTI and "mmap" not in R.EVENTI
-    assert {"exec", "fork", "exit", "open", "close", "write"} <= set(R.EVENTI)
-    assert {"lookup", "mmap"} <= set(R.TIPI_SUPPORTATI)
+    omessi = {"lookup", "mmap", "close", "mount", "unmount"}
+    assert not omessi & set(R.EVENTI)
+    assert {"exec", "fork", "exit", "open", "write", "create", "rename", "unlink", "truncate"} == set(R.EVENTI)
+    assert omessi <= set(R.TIPI_SUPPORTATI)
 
 
 @pytest.mark.parametrize("root,path", [
@@ -140,7 +141,8 @@ def test_control_path_records_match_full_parser_including_lineage_and_loss(contr
     assert len(accesses) == 3 and all(r["cartella"] == "watch" for r in accesses)
     assert accesses[0]["nome_agente"] == "Codex" and accesses[0]["agente"] is True
     assert accesses[1]["percorso"] == root
-    assert filtered.persi == full.persi == 1 and filtered.sano is full.sano is False
+    assert filtered.persi == full.persi == 1 and filtered.sano is full.sano is True
+    assert filtered.ultima_perdita is not None and full.ultima_perdita is not None
     assert filtered.globale == full.globale == 8
     assert s.codifica_incerta and s.parsed_lines == len(rows) and s.filtered_lines == 0
 
@@ -209,7 +211,7 @@ def test_real_sequence_loss_is_detected_even_between_filtered_lines(global_seque
             del msg["global_seq_num"]
         s.ricevi(raw(msg))
     assert s.filtered_lines == 4 and s.parsed_lines == 0
-    assert o.rileva_perdite and o.persi == 2 and not o.sano
+    assert o.rileva_perdite and o.persi == 2 and o.sano and o.ultima_perdita is not None
     assert len(records) == 1  # Exactly one bounded diagnostic.
     assert records[0]["motivo"] == "eventi-persi" and records[0]["persi"] == 2
 
@@ -220,6 +222,44 @@ def test_sequence_restart_is_not_silently_discarded():
         s.ricevi(raw(message("/System/Library/unrelated", i)))
     assert not o.sano and o.persi == 0
     assert records[0]["motivo"] == "sequenza-riavviata"
+
+
+def _salute(o, ora):
+    """Same inputs the daemon writes to stato.json; healthy follows the daemon's formula."""
+    dati = {"running": True, "healthy": o.sano, "needs_fda": False, "schema_supported": True,
+            "watched_ids": ["watch"], "watch_status": [], "event_lag_seconds": 0.1,
+            "dropped_events": o.persi, "last_dropped_at": o.ultima_perdita}
+    motivi = R.motivi_salute(dati, ora)
+    return {m["code"] for m in motivi}, bool(o.sano and not motivi)
+
+
+def test_loss_total_is_kept_but_health_reason_expires_after_ten_minutes():
+    clock = {"now": 1000.0}
+    records = []
+    o = R.Osservatore([{"id": "watch", "origine": ROOT}], records.append, orologio=lambda: clock["now"])
+    s = D.FlussoEslogger(o, wall_time=lambda: clock["now"])
+    # Startup: sequence 1 then 4 at t=1000 is a loss of two events.
+    for i in (1, 4):
+        s.ricevi(raw(message("/System/Library/unrelated", i)))
+    assert o.persi == 2 and o.ultima_perdita == 1000.0
+    assert _salute(o, 1599.0) == ({"dropped_events"}, False)
+    assert _salute(o, 1600.0) == (set(), True)  # Expired exactly at ten minutes.
+    assert o.persi == 2 and o.sano  # The cumulative total stays; the session is not stuck.
+
+    # A later loss restarts the window without writing a second diagnostic.
+    clock["now"] = 2000.0
+    s.ricevi(raw(message("/System/Library/unrelated", 8)))
+    assert o.persi == 5 and o.ultima_perdita == 2000.0
+    assert _salute(o, 2599.0) == ({"dropped_events"}, False)
+    assert _salute(o, 2600.0) == (set(), True)
+    assert sum(r["motivo"] == "eventi-persi" for r in records) == 1
+
+
+@pytest.mark.parametrize("stamp", [None, "ieri", float("nan"), 1000.0 + 61])
+def test_invalid_or_far_future_loss_timestamp_never_creates_a_permanent_warning(stamp):
+    dati = {"running": True, "healthy": True, "needs_fda": False, "schema_supported": True,
+            "watched_ids": ["watch"], "dropped_events": 4, "last_dropped_at": stamp}
+    assert "dropped_events" not in {m["code"] for m in R.motivi_salute(dati, 1000.0)}
 
 
 @pytest.mark.parametrize("kind", ["exec", "fork", "exit"])
@@ -393,6 +433,9 @@ def test_synthetic_mixed_stream_exceeds_conservative_throughput_floor():
     benchmark = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(benchmark)
     rows = benchmark.righe_sintetiche(10000)
+    # The benchmark stream may only contain what the collector subscribes to.
+    tipi = {next(iter(json.loads(riga)["event"])) for riga in rows}
+    assert tipi <= set(R.EVENTI), tipi
     # Deliberately far below the measured fast path, allowing slower CI hardware.
     result = benchmark.misura(rows, True)
     assert result["lines_per_second"] >= 10000, result

@@ -242,7 +242,10 @@ class RegistroTests(unittest.TestCase):
         o.ricevi(messaggio(sequenza=4))
         self.assertEqual(o.persi, 2)
         self.assertTrue(o.rileva_perdite)
-        self.assertFalse(o.sano)
+        # A counted loss is timestamped for the health window; it does not
+        # clear the run for good (see test_registro_stream: the window test).
+        self.assertIsNotNone(o.ultima_perdita)
+        self.assertTrue(o.sano)
         for _ in range(100):
             o.ricevi({"schema_version": 99, "event_type": {}})
         self.assertTrue(o.schema_fatale)

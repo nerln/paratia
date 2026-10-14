@@ -34,11 +34,16 @@ CATENA = CASA / "registro" / "catena.jsonl"
 SYSTEM = Path("/Library/Logs/Paratia")
 SUPPORT = Path("/Library/Application Support/Paratia")
 ETICHETTA = "it.paratia.registro"
-EVENTI = ("open", "close", "write", "create", "rename", "unlink", "mount",
-          "unmount", "truncate", "exec", "fork", "exit")
-# Historical/imported records remain readable. These high-volume notifications
-# are deliberately not subscribed to by the live collector.
-TIPI_SUPPORTATI = (*EVENTI, "lookup", "mmap")
+EVENTI = ("open", "write", "create", "rename", "unlink", "truncate", "exec", "fork", "exit")
+# Historical/imported records remain readable. These notifications are not
+# subscribed to by the live collector: close, mount and unmount were dropped on
+# 14/10 to reduce eslogger load (lookup and mmap were excluded earlier).
+# open says who opened a path; write, create, rename, unlink and truncate say
+# who changed it.
+TIPI_SUPPORTATI = (*EVENTI, "close", "mount", "unmount", "lookup", "mmap")
+# A counted loss stays in the cumulative total, but only reports a health
+# reason for this many seconds after it was observed.
+PERDITE_RECENTI_SECONDI = 600
 # Values are from Apple's ESTypes.h; old values are never renumbered.
 NUMERI = {9: "exec", 10: "open", 11: "fork", 12: "close", 13: "create",
           15: "exit", 20: "mmap", 22: "mount", 23: "unmount", 25: "rename",
@@ -50,6 +55,8 @@ LIMITI = [
     "eslogger ha uno schema non stabile e può perdere eventi; i buchi vengono segnalati.",
     "La catena rileva modifiche interne; non prova da sola che la coda non sia stata troncata.",
     "Il registro locale delle operazioni GUI è modificabile dall'utente; quello kernel è root-owned.",
+    "Le modifiche solo via mmap non hanno più un evento di chiusura: il registro kernel non le riporta.",
+    "Montaggi e smontaggi non sono nel registro kernel; apertura e chiusura di una cartella protetta restano nel registro di Paratia.",
 ]
 
 
@@ -331,11 +338,19 @@ def corrisponde(record, protetti):
 
 
 class Osservatore:
-    def __init__(self, protetti, sink, snapshot=None):
+    """Sequence tracking and health for one collector run.
+
+    ``sano`` stays False for the run after a diagnostic or a sequence restart.
+    Counted losses do not clear or set it: they add to ``persi`` (cumulative)
+    and set ``ultima_perdita``, which only drives a time-limited health reason.
+    """
+    def __init__(self, protetti, sink, snapshot=None, orologio=time.time):
         self.protetti, self.sink = protetti, sink
         self.discendenza = Discendenza(snapshot)
         self.sequenze, self.globale = {}, None
         self.sano, self.persi = True, 0
+        self.ultima_perdita = None
+        self.orologio = orologio
         self.rileva_perdite = False
         self.diagnostici = {}
         self.schema_fatale = False
@@ -353,9 +368,13 @@ class Osservatore:
             dopo = globale if globale is not None else sequenza
             if prima is not None and dopo is not None and dopo != prima + 1:
                 persi = max(0, dopo - prima - 1)
-                self.persi += persi
-                records.insert(0, _diagnostico("eventi-persi" if persi else "sequenza-riavviata", persi=persi))
-                self.sano = False
+                if persi:
+                    self.persi += persi
+                    self.ultima_perdita = self.orologio()
+                    records.insert(0, _diagnostico("eventi-persi", persi=persi))
+                else:
+                    records.insert(0, _diagnostico("sequenza-riavviata", persi=0))
+                    self.sano = False
             if globale is not None:
                 self.globale = globale
             if sequenza is not None and isinstance(tipo, (str, int)):
@@ -1117,6 +1136,7 @@ def raccolta_kernel(filters=None):
         "acknowledged": acknowledged, "watched_count": len(ids),
         "drop_detection_available": salute.get("drop_detection_available") is True,
         "dropped_events": _intero(salute.get("dropped_events")),
+        "last_dropped_at": _numero_finito(salute.get("last_dropped_at")),
         "watch_status": watched, "health_reasons": salute.get("health_reasons", []),
         "event_lag_seconds": _numero_finito(salute.get("event_lag_seconds")),
         "last_event_received_at": _numero_finito(salute.get("last_event_received_at")),
@@ -1356,8 +1376,23 @@ def _stati_sorveglianza(values):
     return result
 
 
-def motivi_salute(dati):
-    """Explain observed problems without treating an idle stream as a delay."""
+def _perdita_recente(dati, ora):
+    """True only for a loss timestamp inside the reporting window.
+
+    A timestamp more than a minute in the future is invalid, not a permanent
+    warning. ``dropped_events`` stays the cumulative count in the state file.
+    """
+    ultima = _numero_finito(dati.get("last_dropped_at"))
+    return ultima is not None and ora - PERDITE_RECENTI_SECONDI < ultima <= ora + 60
+
+
+def motivi_salute(dati, ora=None):
+    """Explain observed problems without treating an idle stream as a delay.
+
+    ``ora`` is the wall-clock time used for the loss window; tests pass it
+    explicitly, the daemon and stato() leave it to time.time().
+    """
+    ora = time.time() if ora is None else ora
     reasons = []
     def add(code, message):
         reasons.append({"code": code, "message": message})
@@ -1368,8 +1403,8 @@ def motivi_salute(dati):
     lag = _numero_finito(dati.get("event_lag_seconds"))
     if lag is not None and lag > 2:
         add("event_delay", "Gli ultimi eventi ricevuti erano in ritardo di oltre 2 secondi.")
-    if (_intero(dati.get("dropped_events")) or 0) > 0:
-        add("dropped_events", "Endpoint Security ha perso eventi: la copertura di questa sessione è incompleta.")
+    if _perdita_recente(dati, ora):
+        add("dropped_events", "Endpoint Security ha perso eventi negli ultimi %d minuti: la copertura di quel periodo è incompleta." % (PERDITE_RECENTI_SECONDI // 60))
     rejected = [value for value in _stati_sorveglianza(dati.get("watch_status")) if value["status"] == "rejected"]
     if rejected:
         add("rejected_watches", "Il raccoglitore ha rifiutato una o più cartelle: consulta il motivo per ciascun ID.")
@@ -1415,7 +1450,8 @@ def stato():
             "fda_entry": "/Applications/Paratia.app", "fda_regrant_after_build": True,
             "fda_message": "Dopo l'installazione abilita /Applications/Paratia.app in Accesso completo al disco. Con firma ad hoc, dopo ogni nuova build rimuovi e aggiungi di nuovo l'app. Python non va autorizzato.",
             "needs_fda": dati.get("needs_fda") if fresco and isinstance(dati.get("needs_fda"), bool) else None,
-            "dropped_events": _intero(dati.get("dropped_events")), "limits": list(LIMITI),
+            "dropped_events": _intero(dati.get("dropped_events")),
+            "last_dropped_at": _numero_finito(dati.get("last_dropped_at")), "limits": list(LIMITI),
             "drop_detection_available": dati.get("drop_detection_available") is True,
             "watched_ids": sorted(_ids_confermati(dati)) if fresco else [],
             "watch_status": _stati_sorveglianza(dati.get("watch_status")) if fresco else [],
@@ -1429,7 +1465,7 @@ def stato():
     received = result["last_event_received_at"]
     result["last_event_age_seconds"] = max(0.0, now - received) if received is not None and received <= now else None
     result.update(_aggiornamento_build(dati, installed))
-    reasons = motivi_salute(result)
+    reasons = motivi_salute(result, now)
     if not fresco:
         reasons.insert(0, {"code": "stale_state", "message": "Lo stato del raccoglitore non è recente o non è leggibile."})
     if result["needs_update"]:

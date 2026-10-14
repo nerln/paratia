@@ -161,8 +161,14 @@ path and its descendants, excluding `/a/bc`; paths normalize slashes and NFC/NFD
 Relative text uses case-insensitive `casefold` matching. New log timestamps use
 colon-separated offsets; legacy offsets remain readable with Python 3.9.
 
-The default subscription excludes `lookup` and `mmap` to reduce system-wide
-traffic; `exec`, `fork` and `exit` remain for ancestry. Before JSON decoding,
+The default subscription is `open`, `write`, `create`, `rename`, `unlink`,
+`truncate`, plus `exec`, `fork` and `exit` for ancestry. It excludes `close`,
+`mount`, `unmount`, `lookup` and `mmap` to reduce system-wide traffic. The live
+measurement of 14 October was taken with the previous, larger subscription; the
+effect of this reduction has not been measured live yet. `open` says who opened a path; `write`, `create`, `rename`,
+`unlink` and `truncate` say who changed it. Writes made only through `mmap` are
+no longer reported. Mounts and unmounts are not in the kernel registry; opening and
+closing a protected folder stays in Paratia's own log. Before JSON decoding,
 the collector filters unrelated raw lines, recognizing Data/private path aliases
 and JSON encodings, while retaining sequence numbers for loss detection.
 Roots containing JSON control escapes use full decoding to preserve events.
@@ -170,6 +176,8 @@ This does not add a guarantee for inherited mappings or byte reads.
 `paratia registro stato` reports observed event latency, last receive time,
 lines/s and readable `health_reasons`. The app shows delayed events, losses,
 refused watches and absence of confirmed folders; idle time alone is not delay.
+A loss is counted in `dropped_events` for the whole run, but it blocks `healthy`
+and shows as a health reason only for the ten minutes after it was observed.
 The repeatable synthetic throughput measurement is documented in
 [the October status](docs/stato-2026-10.md). It measures Python processing,
 excluding eslogger and log fsync; live idle CPU and delay must be measured again

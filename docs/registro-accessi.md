@@ -6,16 +6,27 @@ operazioni dell'app (`paratia`) e gli eventi kernel osservati da `eslogger`.
 
 ## Eventi e limiti
 
-Il demone sottoscrive `open`, `close`, `write`, `create`, `rename`, `unlink`,
-`mount`, `unmount`, `truncate`; `exec`, `fork` ed `exit` servono
-alla mappa dei processi. Non salva il JSON grezzo di eslogger: gli eventi exec
-possono includere dati riservati negli argomenti e nell'ambiente.
+Il demone sottoscrive `open`, `write`, `create`, `rename`, `unlink`, `truncate`;
+`exec`, `fork` ed `exit` servono alla mappa dei processi. Non salva il JSON grezzo
+di eslogger: gli eventi exec possono includere dati riservati negli argomenti e
+nell'ambiente.
 
-`lookup` e `mmap` sono esclusi dalla sottoscrizione predefinita: il traffico
-globale aveva provocato CPU elevata, perdite e minuti di ritardo nella misura
-live del 14 ottobre. Il parser li riconosce per le fixture e i formati storici,
-ma questo giro non aggiunge un'opzione per riattivarli. Un mapping ereditato
-senza nuova apertura non produce quindi un evento `mmap` nel nuovo registro.
+`open` dice chi ha aperto un percorso; `write`, `create`, `rename`, `unlink` e
+`truncate` dicono chi lo ha modificato. Il registro non ha più un evento di
+chiusura: il flag `close.modified` e `was_mapped_writable` non arrivano dal
+raccoglitore attuale.
+
+`close`, `mount`, `unmount`, `lookup` e `mmap` sono esclusi dalla sottoscrizione
+predefinita: il traffico globale aveva provocato CPU elevata, perdite e minuti di
+ritardo nella misura live del 14 ottobre (con la sottoscrizione precedente eslogger
+arrivava in media al 70% di CPU). Il parser li riconosce per le fixture e i formati
+storici, ma non c'è un'opzione per riattivarli. Un mapping ereditato senza nuova
+apertura non produce quindi un evento `mmap` nel nuovo registro.
+
+Conseguenze da tenere presenti: le scritture fatte solo tramite `mmap` non
+risultano più come modifiche nel registro kernel. Montaggi e smontaggi non
+compaiono nel registro kernel; l'apertura e la chiusura di una cartella protetta
+restano nel registro di Paratia come `cartella-aperta` e `cartella-chiusa`.
 
 Il raccoglitore cerca le radici sorvegliate nei byte prima di `json.loads`,
 includendo `/System/Volumes/Data`, alias `/private`, Unicode e escape JSON;
@@ -44,8 +55,10 @@ ma non produce una certezza di discendenza. Non vengono lette trascrizioni.
 
 **ES non offre un evento per ogni lettura dei byte.** Una apertura con FREAD
 significa apertura per lettura. Non prova che una lettura sia avvenuta, né ne
-misura quantità o contenuto. `close.modified` non copre tutte le modifiche via
-mmap: viene conservato anche `was_mapped_writable`, quando disponibile.
+misura quantità o contenuto. Le modifiche sono quelle di `write`, `create`,
+`rename`, `unlink` e `truncate`; non coprono le modifiche solo via mmap, perché
+la sottoscrizione non include più `close`, che le riportava in parte con
+`modified` e `was_mapped_writable`. Le righe storiche con quei campi restano leggibili.
 
 **ES non osserva ogni tentativo fallito.** La decisione di autorizzazione ES
 non è il return code o errno della syscall. Un ENOENT su una cartella chiusa
@@ -339,7 +352,14 @@ prefiltrate e decodificate. Il silenzio non viene classificato da solo come
 ritardo. Una latenza osservata oltre due secondi, eventi persi, voci rifiutate,
 assenza di cartelle confermate e altri impedimenti sono spiegati in
 `health_reasons`. Stato, metriche e ACK scaduti non dimostrano raccolta corrente.
-Query ed export del worker includono questi dettagli in `kernel_collection`.
+Le perdite contate da eslogger restano nel totale `dropped_events` per tutta la
+sessione del raccoglitore. Il motivo `dropped_events` e `healthy: false` valgono
+soltanto per i dieci minuti dopo l'ultima perdita osservata (`last_dropped_at`);
+poi lo stato torna sano, salvo altri motivi. Una perdita con timestamp assente,
+non valido o più di un minuto nel futuro non produce un avviso permanente.
+Una sequenza ripartita da capo (`sequenza-riavviata`) non è contata come perdita e
+resta un impedimento per la sessione. Query ed export del worker includono questi
+dettagli in `kernel_collection`.
 Le frazioni di secondo fino a nove cifre e gli offset compatti sono
 normalizzati anche per Python 3.9; la precisione è troncata ai microsecondi.
 Aggiorna invalida lo stato della ricerca precedente preservando eventi e
