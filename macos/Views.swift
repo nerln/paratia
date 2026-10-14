@@ -419,6 +419,7 @@ struct BankView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 PageHeading(title: tr("Prima, chiusa, aperta, richiusa"), subtitle: tr("Il banco usa la cartella di prova sul Desktop e conserva gli esiti reali di ogni fase."))
+                Banner(text: tr("A cosa serve: è una prova facoltativa, per vedere con i tuoi occhi che la protezione funziona. Paratia protegge una cartella di prova e controlla quattro momenti: prima della protezione i file si leggono; con la cartella chiusa nessun programma li legge; riaperta tornano leggibili; richiusa spariscono di nuovo. Per ogni momento mostra anche cosa ha visto il registro. Per usare Paratia non serve."), icon: "questionmark.circle", color: .accentColor)
                 Banner(text: tr("I tuoi file vengono esaminati solo attraverso metadati. I file sintetici vengono creati soltanto se la cartella di prova è vuota."), icon: "doc.text", color: .blue)
                 HStack {
                     Text(model.bankDestination.isEmpty ? tr("Destinazione sul disco esterno da scegliere") : model.bankDestination).font(.callout).textSelection(.enabled)

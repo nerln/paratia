@@ -165,18 +165,23 @@ final class AppModel: ObservableObject {
 
     func refreshAction() { perform(tr("Aggiornamento dello stato…")) { try await self.refresh() } }
 
-    func chooseDirectory(title: String) -> String? {
+    func chooseDirectory(title: String, message: String? = nil, startAt: String? = nil, canCreate: Bool = false) -> String? {
         let panel = NSOpenPanel()
         panel.title = title
+        if let message { panel.message = message }
+        if let startAt { panel.directoryURL = URL(fileURLWithPath: startAt, isDirectory: true) }
         panel.canChooseFiles = false; panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false; panel.canCreateDirectories = false
+        panel.allowsMultipleSelection = false; panel.canCreateDirectories = canCreate
         return panel.runModal() == .OK ? panel.url?.resolvingSymlinksInPath().path : nil
     }
 
     func protectFolder() {
         guard !fixtures, busy == nil else { return }
-        guard let source = chooseDirectory(title: tr("Scegli la cartella da proteggere")),
-              let destination = chooseDirectory(title: tr("Scegli la destinazione sul disco esterno")) else { return }
+        guard let source = chooseDirectory(title: tr("Scegli la cartella da proteggere"),
+                                           message: tr("Passo 1 di 2: la cartella da cifrare. Dopo la verifica il suo contenuto passa nell'immagine cifrata.")),
+              let destination = chooseDirectory(title: tr("Scegli la destinazione sul disco esterno"),
+                                                message: tr("Passo 2 di 2: dove salvare l'immagine cifrata. Serve una cartella su un disco esterno fisico, diversa dalla cartella da proteggere e fuori da essa."),
+                                                startAt: "/Volumes", canCreate: true) else { return }
         perform(tr("Controllo della cartella e del disco…")) {
             _ = try await self.worker.request("cartelle.prepara_protezione", parameters: ["origine": source, "dove": destination, "minutes": self.minutes])
             self.keyRequest = KeyRequest(action: "cartelle.proteggi", title: tr("Proteggi %@", "\(URL(fileURLWithPath: source).lastPathComponent)"),

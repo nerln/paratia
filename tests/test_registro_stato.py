@@ -28,6 +28,8 @@ def write_state(R, value):
 
 def test_legacy_service_has_exact_reinstall_and_app_fda_instructions(R, monkeypatch):
     monkeypatch.setattr(R, "_servizio_installato", lambda uid: (True, "legacy-python"))
+    # The real /Applications copy may be signed with a stable identity on this Mac.
+    monkeypatch.setattr(R, "_modo_firma_app", lambda: "adhoc")
     write_state(R, {"heartbeat": time.time(), "running": False, "healthy": False, "needs_fda": True,
                     "message": "Old eslogger advice"})
     status = R.stato()

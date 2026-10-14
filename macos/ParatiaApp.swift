@@ -27,6 +27,9 @@ struct ParatiaApp: App {
                 CommandGroup(after: .appInfo) {
                     Button(tr("Aggiorna lo stato")) { model.refreshAction() }.keyboardShortcut("r")
                 }
+                CommandGroup(replacing: .appSettings) {
+                    Button(tr("Impostazioni…")) { model.section = .settings }.keyboardShortcut(",", modifiers: .command)
+                }
             }
     }
 }
