@@ -1120,6 +1120,8 @@ def _esegui_registro(registro, args):
     elif args.operazione == "smetti":
         identificatore = _registro_id(registro, args.cartella, solo_sorveglianza=True)
         risultato = registro.rimuovi_sorveglianza(identificatore)
+    elif args.operazione == "rotte-paranco":
+        return _rotte_paranco(registro, args.esegui)
     else:
         salute = registro.stato()
         if not (salute["running"] and salute["healthy"]):
@@ -1142,6 +1144,278 @@ def _registro_id(registro, cartella, solo_sorveglianza=False):
         return registro.risolvi_cartella(cartella, solo_sorveglianza=solo_sorveglianza)
     except ValueError as error:
         raise Rifiuto(str(error)) from None
+
+
+# paranco's route file. It is read here and never written, imported or run.
+PARANCO_ROTTE = ("Library", "Application Support", "paranco", "routes.json")
+PARANCO_CARTELLA = ("Library", "Application Support", "paranco")
+PARANCO_NOME = "paranco: rotte e log"
+PARANCO_MASSIMO_ROTTE = 16
+PARANCO_LUNGHEZZA_NOME = 64
+PARANCO_MOTIVI = {
+    "assente": "paranco non risulta installato su questo Mac: nessuna rotta da leggere.",
+    "illeggibile": "routes.json non è leggibile o non è una lista di rotte: nessuna proposta.",
+    "disabilitata": "disabilitata in routes.json: non viene proposta.",
+    "destinazione": "destinazione non valida: serve un percorso file:// assoluto, senza '..'.",
+    "home": "è la tua cartella utente intera: scegli una sottocartella.",
+    "fuori": "fuori dalla tua cartella utente: paratia sorveglia solo cartelle dentro la home.",
+    "mancante": "la cartella non esiste ancora: paranco la crea al primo sollevamento, poi la si può configurare.",
+    "simbolico": "il percorso contiene un collegamento simbolico.",
+    "file": "è un file, non una cartella.",
+    "non_ammessa": "percorso non ammesso per la sorveglianza.",
+    "permessi": "non leggibile: permessi insufficienti per vedere il percorso.",
+    "protetta": "è una cartella protetta da paratia o sta dentro una. Da chiusa è una directory vuota sul disco interno, e paranco ci scriverebbe in chiaro.",
+    "montaggio": "sta dentro un punto di montaggio. Da chiuso è una directory vuota sul disco interno, e paranco ci scriverebbe in chiaro.",
+    "libreria": "dentro ~/Library: paranco la rifiuta come destinazione.",
+    "gia": "già in sorveglianza: nessuna modifica.",
+    "da_aggiungere": "cartella esistente e libera da conflitti: con --esegui viene configurata. Configurata non vuol dire raccolta attiva.",
+}
+PARANCO_NOTA = ("Configurata non vuol dire raccolta attiva: una cartella conta come sorvegliata "
+                "solo quando il raccoglitore la conferma (vedi: paratia registro sorveglianza).")
+
+
+def _testo_rotta(valore, lunghezza):
+    """Replace controls and format marks with spaces, then cap the length.
+
+    Cc (C0 and C1 controls), Cf (format marks: the bidi embeddings, overrides and
+    isolates that can reverse displayed text), Cs (lone surrogates, which JSON can
+    carry and UTF-8 cannot encode) and Zl and Zp (U+2028, U+2029) are all replaced.
+    """
+    import unicodedata
+
+    if not isinstance(valore, str):
+        return ""
+    pulito = "".join(" " if unicodedata.category(c) in ("Cc", "Cf", "Cs", "Zl", "Zp") else c for c in valore)
+    return pulito.strip()[:lunghezza].strip()
+
+
+def _mostra_percorso(valore):
+    """A path as it is printed: format marks, controls, separators and surrogates as \\uXXXX.
+
+    Only the printed text changes. The configured path keeps its real characters,
+    so a folder name that reverses the text on screen is still visible as it is.
+    """
+    import unicodedata
+
+    if not isinstance(valore, str):
+        return valore
+    return "".join(f"\\u{ord(c):04x}" if unicodedata.category(c) in ("Cc", "Cf", "Cs", "Co", "Zl", "Zp") else c
+                   for c in valore)
+
+
+def _destinazione_rotta(registro, valore):
+    """A file:// destination as a normal absolute path, or None when it is not one."""
+    import urllib.parse
+
+    if not isinstance(valore, str):
+        return None
+    try:
+        valore.encode("utf-8")  # a lone surrogate from JSON cannot be printed or used as a path
+    except UnicodeEncodeError:
+        return None
+    try:
+        url = urllib.parse.urlparse(valore)
+    except ValueError:
+        return None
+    if url.scheme != "file" or url.netloc not in ("", "localhost") or url.params or url.query or url.fragment:
+        return None
+    grezzo = urllib.parse.unquote(url.path)
+    if not grezzo.startswith("/") or "\0" in grezzo or ".." in grezzo.split("/"):
+        return None
+    return registro.percorso_normale(grezzo)
+
+
+def _radici_protette(registro, uid):
+    """origine and montaggio of every folder in cartelle.json, including the ones it rejects.
+
+    A closed protected folder is an empty directory on the internal disk, so a
+    rejected entry still counts as a place paranco must not write to.
+    """
+    cartelle = registro.CASA / "cartelle.json"
+    radici = set()
+    for voce in registro.leggi_cartelle(cartelle, uid, esiti=[]):
+        radici.update(registro.percorso_normale(voce[campo]) for campo in ("origine", "montaggio"))
+    bruto = registro._leggi_json_posseduto(str(cartelle), uid)
+    voci = bruto.get("cartelle") if isinstance(bruto, dict) else None
+    for voce in (voci.values() if isinstance(voci, dict) else []):
+        for campo in ("origine", "montaggio"):
+            valore = voce.get(campo) if isinstance(voce, dict) else None
+            if isinstance(valore, str) and os.path.isabs(valore):
+                radici.add(registro.percorso_normale(valore))
+    return radici
+
+
+def _chiave_rotta(registro, percorso):
+    """Comparison key: APFS on the data volume ignores case, so `lavoro` is `Lavoro`."""
+    import unicodedata
+    return unicodedata.normalize("NFC", registro.percorso_normale(str(percorso))).casefold()
+
+
+def _sorvegliate(registro, uid):
+    voci = registro.leggi_sorveglianza(registro.CASA / "registro" / "sorveglianza.json", uid, esiti=[], rifiutate=[])
+    return {_chiave_rotta(registro, voce["origine"]) for voce in voci}
+
+
+def _conflitto_rotta(registro, p, protette):
+    """'protetta' or 'montaggio' when p is, or lies inside, a protected folder or mount point."""
+    normale = _chiave_rotta(registro, p)
+    chiavi = {_chiave_rotta(registro, radice) for radice in protette}
+    if any(normale == radice or normale.startswith(radice.rstrip("/") + "/") for radice in chiavi):
+        return "protetta"
+    home = Path.home()
+    q = p
+    while q != home and home in q.parents:
+        if os.path.ismount(str(q)):
+            return "montaggio"
+        q = q.parent
+    return None
+
+
+def _stato_rotta(registro, p, uid, protette, sorvegliate, da_rotta=True):
+    """(stato, motivo) for one destination. Order: home, conflict, validation, already watched.
+
+    The conflict check runs before validation, so a protected folder gets its own
+    reason even when the mounted volume would refuse it as well. Nothing here writes.
+    """
+    home = Path.home()
+    if p == home:
+        return "rifiutata", PARANCO_MOTIVI["home"]
+    if home not in p.parents:
+        return "rifiutata", PARANCO_MOTIVI["fuori"]
+    libreria = _chiave_rotta(registro, home / "Library")
+    chiave = _chiave_rotta(registro, p)
+    if da_rotta and (chiave == libreria or chiave.startswith(libreria + "/")):
+        return "rifiutata", PARANCO_MOTIVI["libreria"]
+    conflitto = _conflitto_rotta(registro, p, protette)
+    if conflitto:
+        return "conflitto", PARANCO_MOTIVI[conflitto]
+    try:
+        registro._valida_sorveglianza(str(p), uid, richiedi_esistente=True)
+    except (OSError, ValueError) as errore:
+        if getattr(errore, "code", None) == "symlink":
+            return "rifiutata", PARANCO_MOTIVI["simbolico"]
+        try:
+            esiste, cartella = p.exists(), p.is_dir()
+        except OSError:
+            # Python 3.9 raises PermissionError here, not False, under a closed folder.
+            return "rifiutata", PARANCO_MOTIVI["permessi"]
+        if not esiste:
+            return "rifiutata", PARANCO_MOTIVI["mancante"]
+        if not cartella:
+            return "rifiutata", PARANCO_MOTIVI["file"]
+        return "rifiutata", PARANCO_MOTIVI["non_ammessa"]
+    if _chiave_rotta(registro, p) in sorvegliate:
+        return "gia-sorvegliata", PARANCO_MOTIVI["gia"]
+    return "da-aggiungere", PARANCO_MOTIVI["da_aggiungere"]
+
+
+def _risposta_rotte(presente, messaggio=None, proposte=(), ignorate=0, applicate=None):
+    risposta = {"paranco_presente": presente}
+    if messaggio:
+        risposta["messaggio"] = messaggio
+    conteggio = {stato: 0 for stato in ("da-aggiungere", "gia-sorvegliata", "conflitto", "rifiutata", "disabilitata")}
+    for riga in proposte:
+        conteggio[riga["stato"]] += 1
+    risposta.update(proposte=[{**riga, "percorso": _mostra_percorso(riga["percorso"])} for riga in proposte],
+                    riepilogo={**conteggio, "voci_ignorate": ignorate})
+    if presente:
+        risposta["nota"] = PARANCO_NOTA
+    if applicate is not None:
+        risposta["applicate"] = [{**esito, "percorso": _mostra_percorso(esito["percorso"])} for esito in applicate]
+    print(json.dumps(risposta, ensure_ascii=False, indent=1))
+    return 0
+
+
+def _rotte_paranco(registro, esegui):
+    """Propose which folders to watch from paranco's routes. Reads routes.json only.
+
+    The file is opened through the registry's owned, symlink-free reader and is
+    never written. esegui adds only the proposals marked da-aggiungere, and
+    refuses inside an agent session: the decision is a person's.
+    """
+    import uuid
+
+    if esegui and dentro_un_agente():
+        raise Rifiuto("--esegui non si esegue in una sessione agente: la sorveglianza la decide una persona.")
+    uid = os.getuid()
+    file_rotte = Path.home().joinpath(*PARANCO_ROTTE)
+    if not os.path.lexists(file_rotte):
+        return _risposta_rotte(False, PARANCO_MOTIVI["assente"])
+    try:
+        rotte = registro._leggi_json_posseduto(str(file_rotte), uid)
+    except (OSError, ValueError, RecursionError):
+        # A deeply nested JSON file raises RecursionError, which is not a ValueError.
+        return _risposta_rotte(True, PARANCO_MOTIVI["illeggibile"])
+    if rotte is None:
+        return _risposta_rotte(False, PARANCO_MOTIVI["assente"])
+    if not isinstance(rotte, list):
+        return _risposta_rotte(True, PARANCO_MOTIVI["illeggibile"])
+
+    dizionari = [voce for voce in rotte if isinstance(voce, dict)]
+    considerate = dizionari[:PARANCO_MASSIMO_ROTTE]
+    ignorate = len(rotte) - len(considerate)
+    try:
+        protette = _radici_protette(registro, uid)
+        sorvegliate = _sorvegliate(registro, uid)
+    except (OSError, ValueError, RecursionError):
+        raise Rifiuto("Registro: la configurazione delle cartelle o delle sorveglianze non è leggibile; nessuna proposta.") from None
+
+    # One entry per destination. An enabled route wins over a disabled one.
+    voci = {}
+    for indice, voce in enumerate(considerate):
+        percorso = _destinazione_rotta(registro, voce.get("destination"))
+        chiave = _chiave_rotta(registro, percorso) if percorso is not None else ("non-valida", indice)
+        candidata = {"percorso": percorso, "abilitata": voce.get("enabled") is True,
+                     "nome": _testo_rotta(voce.get("name"), PARANCO_LUNGHEZZA_NOME),
+                     "sorgente": _testo_rotta(voce.get("sourceID"), PARANCO_LUNGHEZZA_NOME)}
+        if chiave not in voci or (candidata["abilitata"] and not voci[chiave]["abilitata"]):
+            voci[chiave] = candidata
+
+    proposte = []
+    for c in voci.values():
+        percorso = c["percorso"]
+        nome = c["nome"] or _testo_rotta(Path(percorso).name if percorso else "", PARANCO_LUNGHEZZA_NOME) or "rotta"
+        if not c["abilitata"]:
+            stato, motivo = "disabilitata", PARANCO_MOTIVI["disabilitata"]
+        elif percorso is None:
+            stato, motivo = "rifiutata", PARANCO_MOTIVI["destinazione"]
+        else:
+            stato, motivo = _stato_rotta(registro, Path(percorso), uid, protette, sorvegliate)
+        proposte.append({"percorso": percorso, "nome": nome, "stato": stato, "motivo": motivo,
+                         "sorgente": c["sorgente"] or None})
+
+    # The folder that holds routes.json: watching it shows who rewrites the file.
+    cartella = Path.home().joinpath(*PARANCO_CARTELLA)
+    if _chiave_rotta(registro, cartella) not in voci:
+        try:
+            presente = cartella.is_dir()
+        except OSError:
+            presente = None  # unreadable: say so rather than guess
+        if presente is None:
+            proposte.append({"percorso": str(cartella), "nome": PARANCO_NOME, "stato": "rifiutata",
+                             "motivo": PARANCO_MOTIVI["permessi"], "sorgente": None})
+        elif presente:
+            stato, motivo = _stato_rotta(registro, cartella, uid, protette, sorvegliate, da_rotta=False)
+            if stato == "da-aggiungere":
+                proposte.append({"percorso": str(cartella), "nome": PARANCO_NOME, "stato": stato,
+                                 "motivo": motivo, "sorgente": None})
+
+    applicate = None
+    if esegui:
+        applicate = []
+        for riga in proposte:
+            if riga["stato"] != "da-aggiungere":
+                continue
+            try:
+                registro.sorveglia(uuid.uuid4().hex, riga["percorso"], riga["nome"])
+            except OSError:
+                esito, motivo = "errore", "scrittura della sorveglianza non riuscita."
+            except ValueError:
+                esito, motivo = "errore", "il registro ha rifiutato la cartella."
+            else:
+                esito, motivo = "configurata", "configurata: raccolta attiva solo dopo la conferma del raccoglitore."
+            applicate.append({"percorso": riga["percorso"], "nome": riga["nome"], "esito": esito, "motivo": motivo})
+    return _risposta_rotte(True, proposte=proposte, ignorate=ignorate, applicate=applicate)
 
 
 def conferma_chiusura_forzata() -> bool:
@@ -1412,6 +1686,10 @@ def costruisci() -> argparse.ArgumentParser:
         r.add_argument("--da")
         r.add_argument("--a")
         r.set_defaults(fn=cmd_registro)
+    rp = res.add_parser("rotte-paranco", help="propone cosa sorvegliare dalle rotte di paranco, in sola lettura")
+    rp.add_argument("--esegui", action="store_true",
+                    help="configura le proposte da-aggiungere; mai in una sessione agente")
+    rp.set_defaults(fn=cmd_registro)
 
     return p
 
