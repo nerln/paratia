@@ -129,6 +129,11 @@ is active. Repeating a path keeps its ID; an explicit `--nome Nuovo` renames the
 watch and reports the effective name. Omitting the name preserves an existing
 label. Nonexistent folders and unknown removals are refused. A protected folder's
 mount path is already registered and cannot create a separate ambiguous watch.
+On an external physical volume mounted with ownership ignored (`noowners`),
+the collector cannot use `stat` UID as proof of ownership. It accepts a selected
+folder only through the validated user-owned configuration and an external,
+non-system volume check. Invalid entries are refused individually, preserving
+other watches; the CLI and app show each collector refusal and its reason.
 The CLI offers the
 same operations:
 
@@ -151,6 +156,19 @@ ID. This does not guarantee coverage of every access. An absolute `--file /a/b` 
 path and its descendants, excluding `/a/bc`; paths normalize slashes and NFC/NFD Unicode.
 Relative text uses case-insensitive `casefold` matching. New log timestamps use
 colon-separated offsets; legacy offsets remain readable with Python 3.9.
+
+The default subscription excludes `lookup` and `mmap` to reduce system-wide
+traffic; `exec`, `fork` and `exit` remain for ancestry. Before JSON decoding,
+the collector filters unrelated raw lines, recognizing Data/private path aliases
+and JSON encodings, while retaining sequence numbers for loss detection.
+This does not add a guarantee for inherited mappings or byte reads.
+`paratia registro stato` reports observed event latency, last receive time,
+lines/s and readable `health_reasons`. The app shows delayed events, losses,
+refused watches and absence of confirmed folders; idle time alone is not delay.
+The repeatable synthetic throughput measurement is documented in
+[the Giro 5 status](docs/stato-2026-10.md). It measures Python processing,
+excluding eslogger and log fsync; live idle CPU and delay must be measured again
+after installing this build.
 
 The registry keeps metadata from Paratia operations and observed kernel events,
 with distinct sources. An open event does not prove a byte read; missing events
@@ -205,15 +223,20 @@ for **Impostazioni → Installa il registro…** and the macOS administrator dia
 Before the dialog, the bootstrap checks its signature, every bundle member and
 all ancestors for root ownership and absence of group/other or ACL write access.
 It retains the same signature as the normal app; ownership changes preserve
-CDHash. TCC recognition across copies still needs live verification. Refresh
-the bootstrap copy after every new build before reinstalling the service.
+CDHash. The supervisor observed working TCC propagation and kernel events on
+14 October 2026 after the human installation. Refresh the bootstrap copy after
+every new build before reinstalling the service and verifying the new identity.
 
 The daemon launches a native executable in a root-protected copy of the signed
 app at `/Library/Application Support/Paratia/Paratia.app`, separate from the
 bootstrap copy; it keeps Python and eslogger as children. In Full Disk Access, enable
 **`/Applications/Paratia.app`**; remove and re-add it after every new ad hoc
 build, and reinstall the registry copy. Do not enable Python 3.9.
-Privileged installation and live TCC/kernel verification remain pending.
+Giro 4 was published as `f54b403` and installed. This Giro 5 update still requires
+a new build, bootstrap copy, registry installation and renewed Full Disk Access.
+The app compares the installed collector's CDHash with `/Applications/Paratia.app`
+and shows the update steps in order. Older collectors without an identity report
+are shown as unverified, without claiming two hashes were compared.
 
 See the [GUI guide](docs/gui-mac.md), [registry limits](docs/registro-accessi.md)
 and [October 2026 implementation and verification status](docs/stato-2026-10.md).

@@ -7,9 +7,26 @@ operazioni dell'app (`paratia`) e gli eventi kernel osservati da `eslogger`.
 ## Eventi e limiti
 
 Il demone sottoscrive `open`, `close`, `write`, `create`, `rename`, `unlink`,
-`mount`, `unmount`, `mmap`, `truncate`, `lookup`; `exec`, `fork` ed `exit` servono
+`mount`, `unmount`, `truncate`; `exec`, `fork` ed `exit` servono
 alla mappa dei processi. Non salva il JSON grezzo di eslogger: gli eventi exec
 possono includere dati riservati negli argomenti e nell'ambiente.
+
+`lookup` e `mmap` sono esclusi dalla sottoscrizione predefinita: il traffico
+globale aveva provocato CPU elevata, perdite e minuti di ritardo nella misura
+live del 14 ottobre. Il parser li riconosce per le fixture e i formati storici,
+ma questo giro non aggiunge un'opzione per riattivarli. Un mapping ereditato
+senza nuova apertura non produce quindi un evento `mmap` nel nuovo registro.
+
+Il raccoglitore cerca le radici sorvegliate nei byte prima di `json.loads`,
+includendo `/System/Volumes/Data`, alias `/private`, Unicode e escape JSON;
+i candidati incerti passano al parser completo. Le notifiche di discendenza
+restano sempre elaborate. Le sequenze delle righe scartate intenzionalmente
+continuano ad aggiornare il rilevamento dei buchi: il filtro non deve simulare
+perdite ES. Le righe grezze e i campi riservati non vengono salvati.
+I nomi degli account sono uno snapshot di sessione in una cache limitata a
+256 UID, inclusi gli account sconosciuti: eventuali rinomine si riflettono
+al riavvio del servizio. L'UID numerico e l'identità PID/pidversion restano
+quelli dell'evento.
 
 Ogni evento conserva ora, percorso e destinazione quando presente, processo,
 PID e pidversion, UID/utente, app responsabile quando identificabile, esito ES,
@@ -88,11 +105,30 @@ directory descriptor e O_NOFOLLOW, controllo del proprietario, limite 4 MiB,
 allowlist dei campi, rifiuto di radici universali e di cartelle di altri utenti.
 Originali, montaggi e recuperi appartengono all'utente; il bundle deve avere il
 nome generato per quell'identificatore e, se presente, lo stesso proprietario.
+Sui volumi con `MNT_IGNORE_OWNERSHIP`, rilevato nei flag reali di `statfs`,
+il proprietario apparente restituito da `stat` non dimostra la proprietà.
+La richiesta deve provenire dal file dell'utente già verificato, senza
+scrittura gruppo/altri o ACL di scrittura. Si accetta la cartella soltanto
+su un volume esterno fisico e non di sistema, risalendo tutti gli store APFS.
+La stessa regola vale per cartelle protette, bundle e recuperi sulla SSD.
+Questa scelta autorizza il percorso selezionato dall'utente; non dimostra chi
+possiede i dati su un disco che ignora i proprietari. I controlli di radice,
+symlink e provenienza restano necessari. I probe del volume sono condivisi
+fra le voci di un singolo caricamento e hanno una scadenza di un secondo
+per volume; non vengono conservati indefinitamente dopo uno scollegamento.
+
+Ogni voce è validata separatamente. Una voce rifiutata viene esclusa subito,
+mentre le altre continuano a essere sorvegliate. `watch_status` riporta ID,
+`confirmed` o `rejected`, codice e motivo fisso; un ID non valido viene
+anonimizzato. Anche una configurazione interamente illeggibile è segnalata,
+senza mantenere silenziosamente autorizzazioni precedenti di quel file.
+ID duplicati fra i due file sono rifiutati. CLI e GUI distinguono richiesta
+salvata, conferma e «rifiutata dal raccoglitore: …».
 Backup e residui plaintext sono sorvegliati solo nei percorsi previsti dalla
 migrazione o dal recupero. I percorsi del collector sono sempre esclusi. Il bundle registra accessi al
 cifrato, non prova accessi al testo in chiaro.
 
-## Installazione e autorizzazioni ancora necessarie
+## Installazione e aggiornamento
 
 Dopo aver installato l'app normale in `/Applications`, chiudi tutte le copie
 di Paratia e prepara personalmente nel Terminale la copia di bootstrap:
@@ -130,8 +166,9 @@ root e ACL; se il controllo fallisce, il dialogo resta bloccato.
 
 La copia conserva la firma dell'app normale. Cambiare proprietario e permessi
 non modifica il CDHash; il solo `chown` non cambia l'identità firmata. Il
-riconoscimento TCC fra le copie resta da verificare live. Dopo ogni nuova build,
-aggiorna anche la copia di bootstrap prima di reinstallare il servizio.
+riconoscimento TCC e gli eventi kernel sono stati osservati dal supervisore
+il 14 ottobre sul giro 4 installato. Dopo ogni nuova build, aggiorna anche la
+copia di bootstrap prima di reinstallare il servizio e ripeti la verifica.
 
 `registro_installa.piano()` prepara gli argv e la plist senza installare nulla.
 Il pulsante **Installa il registro** consegna quel piano al dialogo amministratore
@@ -153,9 +190,19 @@ essere reinstallato. `registro stato` indica `launch_mode`, `needs_reinstall`,
 
 Le copie normale, di bootstrap e del servizio mantengono la stessa firma
 verificata. Questa architettura mantiene l'eseguibile dell'app come padre del raccoglitore; il riconoscimento
-dell'identità da parte di TCC e il permesso a eslogger restano da verificare live.
+dell'identità da parte di TCC e il permesso a eslogger sono stati osservati
+sulla build pubblicata; vanno nuovamente verificati sulla nuova build.
 Il servizio riprova con throttling dopo un errore; un heartbeat recente e sano
 è necessario per considerare la raccolta attiva.
+
+Il daemon pubblica `installed_cdhash`; il worker legge l'identità di
+`/Applications/Paratia.app` tramite `codesign -d`, senza firmare o accedere
+al portachiavi. `build_comparison` distingue `equal`, `different` e
+`unavailable`. Una build diversa o un vecchio servizio senza identità porta
+`needs_update: true`: la GUI mostra `update_message` e sei `update_steps`
+numerati nelle Impostazioni. Un'identità mancante non viene presentata come
+un confronto riuscito. I passi minimi sono nella sezione
+[Aggiornare il registro dopo questo giro](stato-2026-10.md#aggiornare-il-registro-dopo-questo-giro).
 
 La preparazione e i test sintetici non attestano root, FDA, copertura live,
 persistenza al riavvio o correttezza delle ACL installate: questi controlli
@@ -183,7 +230,8 @@ anche `--file`, `--agente true|false|unknown` oppure il nome dell'agente
 
 `sorveglia(id, percorso, nome)` registra una cartella plaintext nel file separato
 `~/.paratia/registro/sorveglianza.json`; non la spaccia per un compartimento.
-La cartella deve esistere ed essere di proprietà dell'utente. Ripetere la
+La cartella deve esistere ed essere di proprietà dell'utente, oppure soddisfare
+la regola documentata per volumi esterni `noowners`. Ripetere la
 richiesta per lo stesso percorso normalizzato conserva l'ID e restituisce
 `riutilizzata: true`. Un nome esplicito non vuoto, per esempio `--nome Nuovo`,
 rinomina la richiesta e restituisce `rinominata: true` e `nome` effettivo.
@@ -235,6 +283,19 @@ aperto in un foglio di calcolo. `verifica()` controlla separatamente le due
 catene. `stato()` distingue installazione, processo attivo, salute, necessità di
 root/FDA, perdite e integrità del registro locale.
 
+Lo stato include `event_lag_seconds` (timestamp dell'ultimo evento rispetto
+alla sua ricezione), `last_event_received_at`, `last_event_age_seconds`
+(tempo senza nuove righe), `lines_per_second` e contatori di righe ricevute,
+prefiltrate e decodificate. Il silenzio non viene classificato da solo come
+ritardo. Una latenza osservata oltre due secondi, eventi persi, voci rifiutate,
+assenza di cartelle confermate e altri impedimenti sono spiegati in
+`health_reasons`. Stato, metriche e ACK scaduti non dimostrano raccolta corrente.
+Query ed export del worker includono questi dettagli in `kernel_collection`.
+Le frazioni di secondo fino a nove cifre e gli offset compatti sono
+normalizzati anche per Python 3.9; la precisione è troncata ai microsecondi.
+Aggiorna invalida lo stato della ricerca precedente preservando eventi e
+conteggio: ripetere Cerca per rinnovare i dettagli di quella ricerca.
+
 I nuovi timestamp locali usano l'offset ISO con i due punti, per esempio
 `+02:00`. La lettura accetta anche gli offset storici `+0200` e `Z` con Python
 3.9, senza riscrivere le righe o alterare la catena di hash.
@@ -261,3 +322,15 @@ e immagini disco sono simulate, senza CLI degli agenti o Desktop personale.
 Questa prova e `strumenti/prova-banco-temporaneo.py` rispettano `TMPDIR` e
 accettano soltanto la propria fixture al suo interno; anche il Desktop sintetico
 rimane nella home temporanea.
+
+Benchmark del solo trattamento Python, senza eslogger, root, FDA o log reali:
+
+```sh
+/Library/Developer/CommandLineTools/usr/bin/python3 -I -S -B strumenti/prova-registro-throughput.py --lines 50000 --repeats 3
+```
+
+Confronta decodifica completa e prefilter sullo stesso normalizzatore e sulle
+stesse righe sintetiche; il sink conta i record senza I/O. Riporta mediane di
+righe/s, secondi CPU e microsecondi CPU per riga. La stima CPU a un input
+ipotetico non è una misura live: il limite complessivo sotto il 10% a riposo
+e il ritardo sotto due secondi richiedono la nuova installazione e misura.

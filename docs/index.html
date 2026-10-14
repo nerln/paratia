@@ -239,6 +239,12 @@ the same folder ID or exact configured path; an unknown path produces an error.
 Inactive collection produces a warning in CLI queries and exports. The app
 shows kernel collection status beside the event count, including zero events;
 active status does not guarantee coverage of every access.
+Refused IDs stay visible with a readable collector reason, including on
+protected-folder cards; one invalid entry does not hide valid watches.
+On an external physical, non-system disk mounted <code>noowners</code>, the
+collector accepts an owned, validated user configuration instead of treating
+the directory's unreliable UID as proof of ownership. This permits collection;
+it does not establish file ownership or separation between accounts on that disk.
 Absolute file filters match the exact path or its descendants, so
 <code>/a/b</code> excludes <code>/a/bc</code>.</p>
 
@@ -255,6 +261,17 @@ informative; missing indexing does not fail a phase. Shell and both agents
 still require their measurements and open-phase kernel matches. The human
 Desktop bank has not run.</p>
 
+<p>Registry and Settings show readable health reasons, event latency and received
+lines per second. Time since the last received event is shown separately:
+silence is not proof of collector delay. Query and CSV metadata retain these
+measurements, even for zero results. The default subscription includes
+<code>open close write create rename unlink mount unmount truncate exec fork exit</code>,
+excluding the high-volume <code>lookup</code> and <code>mmap</code> events; historical
+records remain readable. A raw-byte prefilter skips unrelated file events
+before JSON parsing, handles watched-root aliases and escaped or normalized
+paths, and keeps exec/fork/exit for ancestry. Sequence checks include skipped
+lines, preserving reported dropped-event detection.</p>
+
 <p>Build the app with <code>python3 strumenti/build-app.py --render-fixtures</code>.
 After installing it, follow the GUI guide's single manual administrator command
 to prepare <code>/Library/Application Support/ParatiaBootstrap/Paratia.app</code>.
@@ -266,7 +283,21 @@ binary in a signed, root-protected app copy, keeping Python and eslogger as
 children. Enable <strong>/Applications/Paratia.app</strong> in Full Disk Access;
 remove and re-add that entry after every new ad hoc build and reinstall the
 registry after refreshing the bootstrap copy. Do not enable Python 3.9.
-The supervisor built Giro 3; Giro 4 requires a new build and live TCC verification.</p>
+The supervisor published Giro 4 (<code>f54b403</code>) and Eugenio installed app,
+bootstrap and service and completed Full Disk Access. On 14 October 2026,
+03:40–03:46 Europe/Madrid, the supervisor confirmed live zsh create/write,
+cat and ls open/close, Claude access marked as agent, Finder, Spotlight and
+Open/Save-panel events. That run also exposed excessive CPU, delayed events and
+reported drops. The Giro 5 changes await a new build, reinstallation/FDA refresh
+and live performance verification; synthetic throughput does not establish
+the live idle-CPU and latency targets.</p>
+
+<p>When the installed service requires an update, Registry links to Settings,
+which displays the steps in order: close the app, refresh the bootstrap, install
+from that copy, close it, remove/re-add the normal app's Full Disk Access entry,
+then reopen and verify the service, acknowledged IDs and a new eslogger event.
+A differing build identity and an unavailable installed identity produce
+distinct messages; an unknown identity is not called a verified difference.</p>
 
 <p>While a compartment is open, the gate allows <code>paratia cartella chiudi &lt;id&gt;</code>,
 <code>paratia cartella chiudi-tutte</code>, <code>paratia cartella elenco</code>,

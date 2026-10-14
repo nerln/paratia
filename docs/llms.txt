@@ -22,6 +22,14 @@ and `registro esporta` accept --cartella (ID or exact configured path), --file,
 --processo, --agente true|false|unknown or an agent name, --da and --a. Configuration is not proof
 of collection: healthy daemon state and watched_ids acknowledgement are separate.
 The directory must exist; requesting the same normalized path reuses its ID.
+Each ID is validated independently. A rejected entry remains visible as
+"rifiutata dal raccoglitore" with a fixed safe reason, while valid entries remain
+collectable. This applies to protected folders as well as plain watches.
+On a noowners volume, the daemon cannot use stat's UID to prove ownership. It
+checks MNT_IGNORE_OWNERSHIP with statfs and accepts an already owned, validated
+user configuration only when the volume is confirmed as external, physical and
+non-system. This permits collection; it does not establish file ownership or
+separation between accounts on that volume.
 An explicit --nome Nuovo renames the watch and returns its effective name;
 omitting the name preserves the label. A protected folder's mount cannot create
 a separate watch: select its existing folder ID. Worker query/CSV
@@ -47,9 +55,16 @@ The normal app and a build copy cannot perform this bootstrap.
 Full Disk Access must name /Applications/Paratia.app, never Python 3.9.
 After every new ad hoc build, the human removes/re-adds that app entry and
 refreshes the bootstrap copy, then reinstalls the registry. Ownership changes
-preserve CDHash; signature identity and TCC propagation still need live checks.
-Do not alter TCC or supply administrator credentials. The supervisor built
-Giro 3; Giro 4 still awaits a build and live verification. Hook installation
+preserve CDHash. The supervisor published Giro 4 (f54b403); Eugenio installed the
+app, bootstrap and service and completed Full Disk Access. On 14 October 2026,
+03:40–03:46 Europe/Madrid, the supervisor observed live zsh create/write,
+cat and ls open/close, Claude access classified as agent, Finder, Spotlight and
+Open/Save-panel events. These are registry observations, not a completed bank.
+The same run exposed excessive CPU, delayed events and dropped events. The
+Giro 5 changes still require a new build, installation/FDA refresh and live
+performance measurements; synthetic throughput does not prove the idle-CPU
+and sub-two-second live-latency targets. Do not alter TCC or supply administrator
+credentials. Hook installation
 uses the protected bootstrap copy when verified and replaces old Paratia
 handlers while preserving foreign hooks and backups. An unprotected fallback
 cannot execute close/status exceptions while a folder is open.
@@ -75,7 +90,31 @@ Worker query and export include kernel_active and kernel_collection. The view
 shows collection status beside the event count, including zero. A selected
 folder also requires watched_ids acknowledgement; no active state guarantees
 complete kernel coverage. Unknown and ambiguous folders reach the app as
-specific safe errors, without raw exception diagnostics.
+specific safe errors, without raw exception diagnostics. Registry state,
+query and CSV metadata expose event_lag_seconds (event timestamp to receipt),
+lines_per_second, last_event_received_at and last_event_age_seconds. Silence
+increases age, not measured latency, and does not prove collector delay.
+health_reasons lists readable reasons for unhealthy state, including delay,
+lost events, refused IDs and no acknowledged folders. The app shows reasons
+and metrics in Registry and Settings, and per-ID refusals in folder cards.
+
+The default EVENTI subscription includes open, close, write, create, rename,
+unlink, mount, unmount, truncate, exec, fork and exit; lookup and mmap are
+excluded. Historical/imported lookup and mmap remain readable. Before
+json.loads, a raw-byte prefilter skips unrelated file-event lines, including
+alternate roots such as /System/Volumes/Data and /private aliases. Escaped
+paths and NFC/NFD variants are retained; uncertain forms use the full parser.
+exec/fork/exit stay available for ancestry. Sequence metadata is checked even
+for skipped lines, so filtering cannot hide reported dropped events.
+
+When needs_update is true, Settings shows numbered update_steps: close the
+app, refresh the bootstrap with the existing single manual command, install
+from the bootstrap, close it, remove/re-add /Applications/Paratia.app in Full
+Disk Access, then reopen the normal app and verify acknowledged IDs and a new
+eslogger event. Registry links directly to these steps. A differing CDHash and
+an unavailable installed-build identity have distinct messages; an absent
+identity is not described as a successful hash comparison. See the exact
+minimum update procedure in stato-2026-10.md.
 
 Registry records contain metadata only. Paratia annotations and eslogger events
 retain separate sources. An open event does not prove bytes were read; failed

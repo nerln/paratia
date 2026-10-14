@@ -3,7 +3,13 @@
 L'app nativa richiede macOS 13 o successivo. Le cinque sezioni sono
 **Cartelle**, **Registro**, **Etichette**, **Banco di prova** e **Impostazioni**.
 Le operazioni quotidiane si svolgono nella GUI; **Aggiorna** rilegge lo stato.
-L'installazione della nuova build e del servizio è un passo umano successivo.
+Il giro 4 è stato pubblicato dal supervisore (`f54b403`) ed Eugenio ha installato
+app, bootstrap e servizio e completato Accesso completo al disco. Il registro
+è stato verificato dal vivo il 14 ottobre 2026, dalle 03:40 alle 03:46: create/write
+di zsh, open/close di cat e ls, accessi di Claude classificati come agente,
+Finder, Spotlight e pannello Apri/Salva. Questi riscontri riguardano il registro;
+il banco pubblico resta non eseguito. La build del giro 5 e la misura delle sue
+prestazioni dal vivo richiedono ancora i passi del supervisore e dell'utente.
 Lo stato delle verifiche è in [stato di ottobre 2026](stato-2026-10.md).
 
 ## Cartelle
@@ -49,7 +55,17 @@ Premi **Sorveglia una cartella…** e scegli una directory nel selettore del
 Finder. Puoi scegliere anche una cartella senza cifrarla. **Cartelle sorvegliate**
 mostra le richieste configurate; **Rimuovi** rimuove la richiesta senza modificare
 i file. Lo stato distingue una richiesta salvata dalla conferma del demone:
-soltanto un registro attivo può raccogliere gli eventi successivi.
+soltanto un registro attivo può raccogliere gli eventi successivi. Una voce
+rifiutata mostra **Rifiutata dal raccoglitore** e il motivo; il rifiuto di un ID
+non nasconde le altre cartelle. La conferma dell'ID e la salute complessiva del
+flusso sono informazioni distinte. Anche le schede delle cartelle protette
+mostrano lo stato della raccolta.
+Sui dischi esterni con proprietari ignorati, come AppsAndFiles, l'UID della
+directory può risultare diverso tra CLI utente e demone root. Il raccoglitore
+accetta la richiesta dal file di configurazione posseduto e validato dell'utente
+dopo aver confermato un volume esterno fisico e non di sistema. Lo stesso vale
+per le cartelle protette; questa scelta permette la sorveglianza e non attesta
+la proprietà dei file né l'isolamento tra account sul volume.
 Scegliere di nuovo una cartella conserva il suo nome. Per rinominarla dalla CLI,
 usa `registro sorveglia <percorso> --nome Nuovo`: l'ID resta invariato.
 Il montaggio di una cartella protetta usa già il suo ID e non ammette una
@@ -71,6 +87,21 @@ un messaggio specifico; non viene creato un CSV vuoto al suo posto. Un'apertura
 per lettura non prova una lettura dei
 byte e ogni tentativo fallito non produce necessariamente un evento kernel.
 Vedi [Registro degli accessi](registro-accessi.md).
+
+Registro e Impostazioni mostrano i motivi di **registro non sano**, fra cui
+ritardo, eventi persi, cartelle rifiutate e nessuna cartella confermata. **Latenza
+degli eventi** confronta il timestamp dell'ultimo evento con la sua ricezione;
+**Flusso ricevuto** mostra tutte le righe eslogger al secondo, incluse quelle
+scartate prima del parser perché estranee alle cartelle. **Ultimo evento ricevuto
+N s fa** segnala il tempo trascorso dalla ricezione: il silenzio non prova un
+ritardo. Una metrica assente è indicata come non misurata. Query e CSV riportano
+gli stessi metadati di raccolta, anche quando non ci sono righe.
+
+La raccolta predefinita del giro 5 esclude `lookup` e `mmap`; i relativi eventi
+storici restano leggibili. Un filtro economico prima della decodifica JSON
+riconosce le radici sorvegliate e le loro forme alternative, senza scartare la
+discendenza exec/fork/exit. I numeri di sequenza restano controllati anche per
+le righe scartate: il filtro non può mascherare perdite dichiarate da eslogger.
 
 ## Etichette
 
@@ -101,6 +132,14 @@ e **Esporta CSV…** mantengono i dati completi. La prova live è ancora
 **non eseguita**: [workflow e stato del banco](banco-folder-test.md).
 
 ## Impostazioni
+
+Quando il servizio appartiene a una build diversa da `/Applications/Paratia.app`,
+il Registro mostra **Passi per aggiornare…** e apre le Impostazioni, dove
+**Aggiorna il registro** elenca i passi numerati in ordine. Se la vecchia build
+non pubblica la sua identità, il messaggio dice che l'identità è indisponibile
+e chiede di aggiornare per verificarla: non dichiara un confronto riuscito.
+I passi minimi sono riportati anche in
+[Aggiornare il registro dopo questo giro](stato-2026-10.md#aggiornare-il-registro-dopo-questo-giro).
 
 Gli hook preferiscono la copia bootstrap protetta e sostituiscono i vecchi
 handler Paratia, conservando gli hook estranei e i backup. Se il codice o i suoi
@@ -177,8 +216,10 @@ aggiungi e abilita **`/Applications/Paratia.app`**. Dopo ogni nuova build con
 firma ad hoc, rimuovi la voce precedente e aggiungi di nuovo l'app installata;
 aggiorna la copia bootstrap e reinstalla il registro per aggiornare la copia
 del servizio. Non abilitare
-Python 3.9. Il passaggio del permesso ai figli e la raccolta kernel devono
-ancora essere verificati sulla macchina dopo questi clic.
+Python 3.9. Il passaggio del permesso ai figli e la raccolta kernel sono stati
+verificati sulla build del giro 4. Per la nuova build del giro 5, ripeti i passi
+numerati e verifica un nuovo evento eslogger dopo **Aggiorna**; il registro
+precedente funzionante non prova che la nuova firma sia già autorizzata.
 **Verifica il registro** controlla le due catene presenti, senza attestare da sola
 la copertura continua o una coda eliminata.
 
@@ -210,4 +251,5 @@ in `/Applications` è a carico del supervisore. Le immagini generate usano
 fixture dichiarate sintetiche. La build firma
 **ad hoc**, senza identità dal portachiavi, e non è notarizzata. Il percorso
 amministratore locale usa l'API deprecata `AuthorizationExecuteWithPrivileges`,
-limitata al piano fisso del registro e al runtime root protetto; non è stato eseguito.
+limitata al piano fisso del registro e al runtime root protetto. Eugenio ha già
+eseguito l'installazione del giro 4; quella della nuova build resta un passo umano.
