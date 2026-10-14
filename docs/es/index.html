@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>paratia, carpetas cifradas para agentes de programación</title>
+<meta name="description" content="paratia mantiene cifradas las carpetas que eliges, para que un agente de programación no pueda leerlas mientras están bloqueadas, y guarda un registro de accesos de los archivos que vigilas. Para macOS.">
+<meta property="og:title" content="paratia">
+<meta property="og:description" content="Carpetas cifradas para agentes de programación, una barrera para sus llamadas a herramientas y un registro de accesos. Para macOS.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://nerln.github.io/paratia/es/">
+<meta property="og:locale" content="es_ES">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:locale:alternate" content="it_IT">
+<meta property="og:image" content="https://nerln.github.io/paratia/immagini/paratia-icona.png">
+<link rel="canonical" href="https://nerln.github.io/paratia/es/">
+<link rel="alternate" hreflang="en" href="https://nerln.github.io/paratia/">
+<link rel="alternate" hreflang="es" href="https://nerln.github.io/paratia/es/">
+<link rel="alternate" hreflang="it" href="https://nerln.github.io/paratia/it/">
+<link rel="alternate" hreflang="x-default" href="https://nerln.github.io/paratia/">
+<link rel="icon" type="image/png" sizes="64x64" href="../immagini/paratia-icona-64.png">
+<link rel="apple-touch-icon" sizes="180x180" href="../immagini/paratia-icona-180.png">
+<link rel="alternate" type="text/plain" href="../llms.txt" title="llms.txt">
+<style>
+  :root {
+    --bg: #f4f2ec;
+    --surface: #fdfcf8;
+    --ink: #15262a;
+    --muted: #4a5d5f;
+    --petrol: #1f4f52;
+    --copper: #8e4a1c;
+    --copper-tint: #f5e6da;
+    --line: #dcd8cc;
+    --hero: #1f4f52;
+    --hero-ink: #f4f2ec;
+    --hero-copper: #f0b88a;
+    --on-hero: #15262a;
+    --btn: #1f4f52;
+    --btn-ink: #fdfcf8;
+    --shadow: 0 1px 2px rgba(21, 38, 42, .06), 0 10px 28px rgba(21, 38, 42, .08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1d1f;
+      --surface: #15292c;
+      --ink: #e6efec;
+      --muted: #a7bcb8;
+      --petrol: #8fd0c9;
+      --copper: #eeb07f;
+      --copper-tint: #33241b;
+      --line: #2b4649;
+      --hero: #1a3f42;
+      --hero-ink: #e6efec;
+      --hero-copper: #f0b88a;
+      --on-hero: #15262a;
+      --btn: #8fd0c9;
+      --btn-ink: #0e1d1f;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 12px 30px rgba(0, 0, 0, .3);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
+    font-size: 1.0625rem;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    overflow-wrap: break-word;
+  }
+  .wrap { max-width: 60rem; margin: 0 auto; padding: 0 1rem; }
+  h1, h2, h3, h4 {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", system-ui, sans-serif;
+    line-height: 1.2;
+  }
+  h1 { font-size: 3rem; font-weight: 700; letter-spacing: -.02em; line-height: 1.05; margin: 0 0 .8rem; }
+  h2 { font-size: 1.6rem; font-weight: 650; letter-spacing: -.01em; color: var(--petrol); margin: 0 0 1rem; }
+  h3 { font-size: 1.2rem; font-weight: 650; color: var(--petrol); margin: 2rem 0 1rem; }
+  h4 { font-size: 1.1rem; font-weight: 650; margin: 0 0 .6rem; }
+  p { margin: 0 0 1rem; }
+  section { margin-top: 3.5rem; }
+  a { color: var(--petrol); text-underline-offset: 3px; text-decoration-thickness: 1px; overflow-wrap: anywhere; }
+  a:focus-visible { outline: 3px solid var(--copper); outline-offset: 3px; border-radius: 4px; }
+  code {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    background: var(--copper-tint); color: var(--ink);
+    padding: .08em .35em; border-radius: 5px; font-size: .88em;
+    overflow-wrap: anywhere;
+  }
+  ul { padding-left: 1.2rem; margin: 0 0 1rem; }
+  li { margin-bottom: .55rem; }
+  li:last-child { margin-bottom: 0; }
+  .eyebrow {
+    font-size: .76rem; text-transform: uppercase; letter-spacing: .09em;
+    font-weight: 700; color: var(--copper); margin: 0 0 .5rem;
+  }
+
+  /* language switch: the same page in each language */
+  .lang { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; padding-top: .3rem; }
+  .lang a, .lang span {
+    display: inline-flex; align-items: center; min-height: 44px; padding: 0 .55rem;
+    font-size: .92rem; font-weight: 650; text-decoration: none; color: var(--muted);
+  }
+  .lang a:hover { color: var(--ink); text-decoration: underline; }
+  .lang span[aria-current] { color: var(--ink); }
+  .lang .sep { min-height: 0; padding: 0; }
+
+  /* top bar */
+  .topbar {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+    gap: .2rem 1rem; padding-top: .5rem;
+  }
+  .brand {
+    display: inline-flex; align-items: center; gap: .55rem; min-height: 44px;
+    font-weight: 700; font-size: 1.05rem; color: var(--ink); text-decoration: none;
+  }
+  .brand img { width: 28px; height: 28px; border-radius: 7px; }
+  .topbar nav { display: flex; flex-wrap: wrap; gap: 0 .9rem; }
+  .topbar nav a {
+    display: inline-flex; align-items: center; min-height: 44px;
+    color: var(--muted); text-decoration: none; font-size: .95rem;
+  }
+  .topbar nav a:hover { color: var(--ink); text-decoration: underline; }
+
+  /* hero: the petrol panel of the icon */
+  .hero {
+    margin-top: 1rem;
+    background: var(--hero); color: var(--hero-ink);
+    border-radius: 24px; padding: 2rem 1.25rem 2.2rem;
+    display: grid; gap: 1.5rem; align-items: center;
+  }
+  .hero-icon { width: 112px; height: 112px; display: block; }
+  .hero .eyebrow { color: var(--hero-copper); }
+  .hero p { margin: 0 0 1rem; }
+  .hero .lede { font-size: 1.16rem; line-height: 1.55; }
+  .hero .gloss { font-size: .98rem; color: var(--hero-ink); opacity: .92; }
+  .hero .meta { font-size: .95rem; margin-bottom: 1.4rem; }
+  .actions { display: flex; flex-wrap: wrap; gap: .6rem; }
+  .btn {
+    display: inline-flex; align-items: center; min-height: 44px;
+    padding: .55rem 1.1rem; border-radius: 999px;
+    font-weight: 600; font-size: .95rem; line-height: 1.2; text-decoration: none;
+  }
+  .btn-primary { background: var(--btn); color: var(--btn-ink); }
+  .hero .btn-primary { background: var(--hero-copper); color: var(--on-hero); }
+  .btn-ghost { border: 1px solid var(--petrol); color: var(--petrol); }
+  .hero .btn-ghost { border-color: var(--hero-ink); color: var(--hero-ink); }
+  .hero a { color: var(--hero-ink); }
+  .btn:hover { filter: brightness(1.06); }
+  @media (min-width: 46rem) {
+    .hero { grid-template-columns: 9.5rem 1fr; padding: 2.8rem 3rem; gap: 2.4rem; }
+    .hero-icon { width: 144px; height: 144px; }
+    h1 { font-size: 3.6rem; }
+  }
+
+  /* cards: soft surfaces, as in the app */
+  .cards { display: grid; gap: 1rem; }
+  @media (min-width: 52rem) {
+    .cards.two { grid-template-columns: 1fr 1fr; align-items: start; }
+  }
+  .card {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 16px; padding: 1.35rem;
+    box-shadow: var(--shadow); min-width: 0;
+  }
+  .card h3 { margin: 0 0 .9rem; font-size: 1.2rem; }
+  .card h4 { margin: 0 0 .9rem; }
+  .card p:last-child { margin-bottom: 0; }
+  .half + .half { margin-top: 2.4rem; }
+  .cards + p { margin-top: 1.2rem; }
+
+  /* app captures */
+  .shots { display: grid; gap: 2.2rem; }
+  @media (min-width: 46rem) {
+    .shots { grid-template-columns: 1fr 1fr; gap: 2.4rem 1.6rem; }
+  }
+  .shot { margin: 0; min-width: 0; }
+  .shot.wide { grid-column: 1 / -1; }
+  .shot a.zoom { display: block; }
+  .shot img {
+    display: block; width: 100%; height: auto;
+    border: 1px solid var(--line); border-radius: 12px;
+    background: var(--surface); box-shadow: var(--shadow);
+  }
+  .shot figcaption { margin: .85rem 0 .2rem; color: var(--muted); font-size: .97rem; line-height: 1.5; }
+  .shot figcaption strong { color: var(--ink); }
+  .full {
+    display: inline-flex; align-items: center; min-height: 44px;
+    font-weight: 600; font-size: .95rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    .shot img { filter: brightness(.96); }
+  }
+
+  /* limits */
+  .limits-card { padding: 1.25rem 1.35rem 1.25rem 1.35rem; }
+  .limits-card ol { margin: 0; padding-left: 2.6rem; }
+  .limits-card li { margin-bottom: .9rem; padding-left: .2rem; }
+  .limits-card li:last-child { margin-bottom: 0; }
+  .limits-card li::marker { color: var(--copper); font-weight: 700; }
+
+  /* links */
+  .links { list-style: none; padding: 0; margin: 0 0 1.4rem; }
+  .links li { padding: .8rem 0; border-bottom: 1px solid var(--line); margin: 0; }
+  .links li:last-child { border-bottom: 0; }
+  .links a { font-weight: 600; }
+  .links span { display: block; color: var(--muted); font-size: .95rem; }
+
+  /* family table: scrolls inside its own box if a narrow screen cannot fit it */
+  .table-wrap { overflow-x: auto; margin: 0 0 1.2rem; }
+  table { width: 100%; border-collapse: collapse; font-size: .95rem; }
+  th, td { text-align: left; vertical-align: top; padding: .65rem .6rem; border-bottom: 1px solid var(--line); }
+  th { color: var(--petrol); font-weight: 650; }
+
+  .name-block { color: var(--muted); }
+  footer {
+    margin-top: 4rem; padding: 1.5rem 0 2.6rem;
+    border-top: 1px solid var(--line);
+    color: var(--muted); font-size: .92rem;
+  }
+  footer a { color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<nav class="lang" aria-label="Idioma">
+  <a lang="en" hreflang="en" href="../" title="English">EN</a><span class="sep" aria-hidden="true">/</span><span lang="es" aria-current="page">ES</span><span class="sep" aria-hidden="true">/</span><a lang="it" hreflang="it" href="../it/" title="Italiano">IT</a>
+</nav>
+
+<header class="topbar">
+  <a class="brand" href="./"><img src="../immagini/paratia-icona-64.png" width="28" height="28" alt="">paratia</a>
+  <nav aria-label="Secciones de la página">
+    <a href="#problem">El problema</a>
+    <a href="#how">Cómo funciona</a>
+    <a href="#family">La familia</a>
+    <a href="#app">App para Mac</a>
+    <a href="#install">Instalación</a>
+    <a href="#limits">Límites</a>
+  </nav>
+</header>
+
+<main id="main">
+
+<section class="hero" aria-labelledby="top">
+  <img class="hero-icon" src="../immagini/paratia-icona.png" width="144" height="144" alt="icono de paratia: una carpeta clara con una puerta estanca de acero y una rueda de cobre, sobre un cuadrado redondeado verde petróleo">
+  <div>
+    <p class="eyebrow">Herramienta de línea de comandos y app para macOS</p>
+    <h1 id="top">paratia</h1>
+    <p class="lede">paratia mantiene cifradas las carpetas que eliges, de modo que un agente de programación no pueda leerlas mientras están bloqueadas. También guarda un registro de quién abre o cambia los archivos que vigilas.</p>
+    <p class="gloss">Un agente de programación es un programa de IA que edita archivos y ejecuta comandos en tu equipo.</p>
+    <p class="meta">Funciona en macOS. Licencia GPL-3.0.</p>
+    <div class="actions">
+      <a class="btn btn-primary" href="https://github.com/nerln/paratia">Código fuente en GitHub</a>
+      <a class="btn btn-ghost" href="#install">Instalación</a>
+    </div>
+  </div>
+</section>
+
+<section id="problem" aria-labelledby="h-problem">
+  <h2 id="h-problem">El problema, en dos partes</h2>
+  <p>Un agente de programación funciona con tus permisos, así que puede leer todos los archivos que tu cuenta puede leer.</p>
+  <div class="cards two">
+    <article class="card">
+      <p class="eyebrow">Primera parte</p>
+      <h3>Un archivo que el agente no puede leer</h3>
+      <p>La respuesta habitual es escribir la regla: una línea en un archivo de configuración, una ruta en una lista de bloqueo (una lista de rutas que el agente no puede tocar) o una frase en una skill (un conjunto de instrucciones que el agente carga para un tipo de tarea). Las tres cosas están donde están las instrucciones propias del agente, así que un modelo que las interpreta mal las elude todas. Una página web también puede llevar una instrucción, y el agente puede abrir esa página en medio de una tarea.</p>
+      <p>Una lista de bloqueo cubre solo las variantes de escritura que alguien ha previsto. La ruta <code>/Volumes/vault/token</code> puede estar en la lista. El comando <code>cat "$(printf '/Volumes/va''ult/token')"</code> lee el mismo archivo, y la lista no lo detecta. Las variantes de escritura no tienen fin, así que cualquier lista está incompleta.</p>
+    </article>
+    <article class="card">
+      <p class="eyebrow">Segunda parte</p>
+      <h3>Capacidades que se combinan</h3>
+      <p>Dos agentes de distintos fabricantes siguen cada uno su propia política, y nadie aplica una política sobre el par. Un agente sujeto a una restricción puede pedirle a un segundo agente, que nunca estuvo sujeto a esa regla, que haga lo que el primero no puede. Juntos pueden hacer lo que ninguno puede hacer por sí solo.</p>
+      <p>Un <a href="https://arxiv.org/abs/2607.07097">preprint en arXiv (2607.07097)</a> (en inglés) mide este efecto. Informa de que la proporción de escenarios dañinos cumplidos sube del 8,9&nbsp;% al 38,9&nbsp;%. Encuentra que Gemini es el modelo más seguro con instrucciones directas, y el más amplificado bajo un planificador de Claude.</p>
+    </article>
+  </div>
+</section>
+
+<section id="how" aria-labelledby="h-how">
+  <h2 id="h-how">Qué hace paratia con cada parte</h2>
+  <p>La primera parte necesita archivos que el agente no pueda leer, y un control sobre las acciones que el agente pide realizar que no dependa de lo que el agente diga. La segunda parte necesita una regla sobre lo que un agente puede pedirle a otro.</p>
+
+  <div class="half">
+    <h3>Primera parte: un archivo que el agente no puede leer</h3>
+    <div class="cards two">
+      <article class="card">
+        <h4>Carpetas protegidas</h4>
+        <p>Una carpeta protegida es una imagen de disco cifrada, un archivo que macOS monta como volumen cuando lo abres. El cifrado es AES-256, un método de cifrado estándar, y cada carpeta tiene su propia frase de contraseña. Mientras una carpeta está bloqueada, sus archivos son texto cifrado: bytes ilegibles que solo se leen con la frase de contraseña. Esto vale para todos los procesos, con cualquier nivel de privilegios, incluido root, la cuenta de administrador del sistema.</p>
+        <p>La frase de contraseña existe solo en tu cabeza. La configuración la pide dos veces y no la escribe en ningún sitio, así que no hay nada que un agente pueda encontrar. Si la pierdes, el contenido se pierde.</p>
+        <p>Una carpeta abierta es un volumen normal, legible por tus procesos. Un temporizador la cierra tras un retardo que tú eliges, de 1 a 1440 minutos. Si la carpeta está ocupada, el temporizador vuelve a intentarlo y nunca fuerza el cierre. Forzar el cierre es una acción aparte, con un paso de confirmación, porque puede hacer perder cambios sin guardar.</p>
+      </article>
+      <article class="card">
+        <h4>Mover una carpeta que ya existe</h4>
+        <p>Puedes proteger una carpeta que ya existe. Su copia cifrada va a un disco físico externo, porque se rechazan los discos internos y las imágenes de disco. paratia copia los datos y los comprueba. Después cierra y vuelve a abrir la imagen para comprobar la copia de nuevo, y solo tras un segundo cierre confirmado elimina el original.</p>
+        <p>El origen debe quedarse quieto durante el traslado, así que cierra antes los documentos y las apps que puedan cambiarlo. Si el traslado se interrumpe, la app deja visibles los pasos de recuperación.</p>
+      </article>
+      <article class="card">
+        <h4>Barrera</h4>
+        <p>La barrera es un hook PreToolUse, una comprobación que el programa del agente ejecuta antes de cada llamada a una herramienta (una acción que el agente pide realizar, como ejecutar un comando). Mientras una carpeta cifrada está abierta, la barrera deniega las llamadas a herramientas de las sesiones que la ejecutan. Hace al kernel, la parte de macOS que gestiona el hardware, una sola pregunta: ¿está montado el volumen? Nunca mira una ruta, así que no hay ninguna forma de escribir que sortear.</p>
+        <p>La barrera tiene pocas excepciones: los comandos que cierran o inspeccionan carpetas. Solo cuentan cuando se ejecutan con la copia del programa protegida por root. La regla es simple a propósito. Comprueba un solo hecho, si el volumen está montado, y ese hecho no depende de cómo esté escrito un comando.</p>
+      </article>
+      <article class="card">
+        <h4>Intermediario</h4>
+        <p>El intermediario ejecuta un comando fijo con un secreto que rellena paratia. Los comandos que puede ejecutar, llamados verbos (comandos con nombre), se declaran dentro de la carpeta cifrada, donde el agente no puede leerlos ni cambiarlos. El agente nombra un verbo y lee la salida. Nunca tiene el secreto y nunca elige el comando.</p>
+      </article>
+    </div>
+  </div>
+
+  <div class="half">
+    <h3>Segunda parte: capacidades que se combinan</h3>
+    <div class="cards two">
+      <article class="card">
+        <h4>Delegación</h4>
+        <p>Cuando un agente pide ayuda a otro, el hook lee la transcripción de la sesión, el registro que escribe el programa del agente y que el modelo no controla. Si quien habló por última vez es otro agente, el hook quita de la lista, para ese turno, las acciones reservadas a personas. Esas acciones son el uso del equipo, el navegador, el simulador, el propio paratia, security (el comando de macOS para los llaveros), sudo (el comando para acciones de administrador) y osascript (el comando de macOS que ejecuta AppleScript).</p>
+      </article>
+      <article class="card">
+        <h4>Puente SSH</h4>
+        <p>SSH es un acceso remoto seguro. El puente conecta dos equipos que ejecutan sesiones de agentes. Su acceso puede ejecutar un solo programa y nada más, así que quien lo tenga no puede abrir una shell, un puerto, un agente ni una terminal. El puente calcula el origen de cada mensaje a partir de la transcripción, así que quien hace la llamada no puede proporcionarlo. Además limita cuántas veces se puede reenviar un mensaje, y lleva un registro en el que cada entrada incluye una huella (un hash) de la anterior, de modo que cualquier edición se nota.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section id="log" aria-labelledby="h-log">
+  <h2 id="h-log">Registro de quién tocó qué</h2>
+  <p>El registro de accesos anota quién abrió y quién cambió los archivos de las carpetas que vigilas. Puedes vigilar cualquier carpeta que sea tuya, cifrada o no.</p>
+  <div class="cards two">
+    <article class="card">
+      <h3>Qué se registra</h3>
+      <p>Cada evento guarda la ruta, el proceso y su usuario, la app responsable cuando se puede identificar, y el ID del proceso (PID). También indica si el actor parece un agente de programación, con las pruebas en que se basa esa suposición. El registro guarda solo metadatos. No guarda contenidos de archivos, ni transcripciones, ni argumentos de comandos, ni variables de entorno.</p>
+      <p>Abrir una ruta muestra quién la consultó. Escribir, crear, renombrar, borrar (unlink) y truncar muestran quién la cambió. Puedes filtrar por carpeta, archivo, proceso, agente y hora, y exportar el resultado a CSV, un formato de tabla en texto plano.</p>
+      <p>El nombre del agente sale del ejecutable del programa y de su firma. No hay ninguna prueba autenticada de la identidad del fabricante que lo respalde.</p>
+    </article>
+    <article class="card">
+      <h3>Dos fuentes, separadas</h3>
+      <p>Las operaciones propias de la app, como abrir o cerrar una carpeta protegida, forman una fuente. Los eventos del kernel forman la otra. Vienen de eslogger, una herramienta de línea de comandos de Apple que lee Endpoint Security, el marco de macOS que informa de los eventos de archivos y procesos a las herramientas de seguridad. Apple no presenta eslogger como una interfaz estable.</p>
+      <p>Cada fuente es una cadena: cada entrada lleva una huella (un hash) de la anterior, así que una edición dentro de la cadena rompe la verificación. Los registros de la app pertenecen a tu cuenta, así que un programa que se ejecute como tú puede reescribirlos. El registro del kernel es un archivo propiedad de root, y tu cuenta solo tiene acceso de lectura. Cortar entradas al final no se detecta sin un punto de control externo.</p>
+    </article>
+  </div>
+  <p>Las rutas que escribe paranco se pueden leer con <code>paratia registro rotte-paranco</code>, que propone las carpetas que vigilar.</p>
+</section>
+
+<section id="family" aria-labelledby="h-family">
+  <h2 id="h-family">paratia y paranco</h2>
+  <p>paratia y paranco son dos programas pequeños del mismo autor. Funcionan en el mismo Mac y no se llaman entre sí. El único vínculo entre ellos es un archivo.</p>
+  <div class="cards two">
+    <article class="card">
+      <p class="eyebrow">paratia</p>
+      <h3>Mantiene los datos lejos de los agentes</h3>
+      <p>Carpetas cifradas que ningún agente lee mientras están cerradas. Un registro de quién toca qué. Un control que bloquea a los agentes mientras una carpeta está abierta. También comprueba que un agente no pida a otro lo que no puede hacer. Esa comprobación solo vale en el lado de Claude (véase Límites).</p>
+    </article>
+    <article class="card">
+      <p class="eyebrow">paranco</p>
+      <h3>Abre una puerta controlada</h3>
+      <p>paranco tiene el Acceso total al disco (Acceso completo al disco en Latinoamérica), el permiso de macOS para archivos protegidos, de modo que los programas que leen los archivos copiados no lo necesitan. Copia archivos en una sola dirección, desde una carpeta que macOS protege, como Notas de voz, hacia una carpeta normal. Sigue las rutas que tú configuras. Sus orígenes están compilados en el programa, así que una ruta no puede añadir uno escribiendo un archivo.</p>
+    </article>
+  </div>
+
+  <h3>Quién tiene el Acceso total al disco</h3>
+  <p>Cada programa tiene su propia entrada en la lista de macOS, y cada uno necesita su propio permiso.</p>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th scope="col">Programa</th><th scope="col">Para qué se usa el Acceso total al disco</th><th scope="col">Tras una nueva compilación</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>paratia</code><br>Paratia.app</td><td>Leer eventos del kernel a través de su servicio de registro</td><td>Quitar la entrada, añadirla de nuevo y reinstalar el servicio</td></tr>
+        <tr><td><code>paranco</code><br>Paranco.app</td><td>Leer la carpeta de Notas de voz</td><td>Quitar la entrada y añadir Paranco.app de nuevo</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Son dos entradas separadas. El permiso de paranco no hace innecesario el de paratia.</p>
+
+  <h3>Por qué no un solo programa</h3>
+  <ul>
+    <li>Tienen objetivos opuestos. Uno cierra el acceso, y el otro abre una puerta controlada.</li>
+    <li>Cada compilación ad hoc nueva tiene un hash de código nuevo, y sus permisos de privacidad hay que concederlos de nuevo. Recompilar uno no debe detener el otro.</li>
+    <li>Tienen licencias distintas: GPL-3.0 para paratia y MIT para paranco.</li>
+  </ul>
+
+  <h3>El único archivo que comparten</h3>
+  <p>paranco escribe <code>routes.json</code>. paratia puede leer ese archivo en modo de solo lectura con <code>paratia registro rotte-paranco</code>. El comando propone vigilar las carpetas en las que escriben las rutas, así puedes ver quién abre los archivos copiados. Sin paranco, el comando informa de que no hay rutas. Sin paratia, paranco no cambia.</p>
+  <p><a class="btn btn-ghost" href="https://github.com/nerln/paranco">paranco en GitHub</a></p>
+</section>
+
+<section id="app" aria-labelledby="h-app">
+  <h2 id="h-app">La app para Mac</h2>
+  <p>La app necesita macOS 13 o posterior. Tiene cinco secciones. Sus nombres están en italiano, tal como aparecen en la app, y cada uno se explica aquí.</p>
+  <ul>
+    <li><strong>Cartelle</strong> (carpetas): carpetas protegidas, su estado, sus temporizadores y sus traslados.</li>
+    <li><strong>Registro</strong> (log): el registro de accesos, sus filtros y la exportación a CSV, y si la recogida de eventos del kernel está activa.</li>
+    <li><strong>Etichette</strong> (etiquetas): decisiones sobre qué proteger. Una etiqueta registra una decisión y no mueve nada.</li>
+    <li><strong>Banco di prova</strong> (banco de pruebas): cuatro fases, antes, cerrada, abierta y cerrada de nuevo, cada una con su resultado de comprobación y las pruebas del kernel que haya.</li>
+    <li><strong>Impostazioni</strong> (ajustes): actualizaciones del servicio de registro, configuración de los hooks y permisos de privacidad. Las contraseñas de administrador se quedan en los diálogos de macOS.</li>
+  </ul>
+  <p>Las capturas muestran una vista previa con datos de ejemplo sintéticos, como indica la franja de arriba de cada una. No se ha ejecutado ninguna operación real.</p>
+
+  <div class="shots">
+    <figure class="shot wide">
+      <a class="zoom" href="../immagini/app-cartelle.png"><img src="../immagini/app-cartelle.png" width="1240" height="860" loading="lazy" alt="Pantalla Cartelle con dos carpetas de ejemplo: una cerrada, con un candado verde, y otra abierta, con un candado naranja y un temporizador de 15 minutos."></a>
+      <figcaption><strong>Cartelle.</strong> Cada carpeta protegida muestra su estado, su tamaño y su temporizador. Una carpeta ocupada se vuelve a intentar, y forzar su cierre requiere una confirmación aparte.</figcaption>
+      <a class="full" href="../immagini/app-cartelle.png">Abrir a tamaño completo (1240 por 860 píxeles)</a>
+    </figure>
+
+    <figure class="shot">
+      <a class="zoom" href="../immagini/app-registro.png"><img src="../immagini/app-registro.png" width="1240" height="860" loading="lazy" alt="Pantalla Registro titulada «Chi ha aperto cosa» (quién abrió qué), con una carpeta de ejemplo que el recolector rechazó y una fila de evento: una carpeta cerrada por paratia."></a>
+      <figcaption><strong>Registro.</strong> El recolector rechazó la carpeta de ejemplo, y la app muestra el motivo. El estado de la recogida aparece junto al número de eventos, también cuando hay cero eventos.</figcaption>
+      <a class="full" href="../immagini/app-registro.png">Abrir a tamaño completo (1240 por 860 píxeles)</a>
+    </figure>
+
+    <figure class="shot">
+      <a class="zoom" href="../immagini/app-etichette.png"><img src="../immagini/app-etichette.png" width="1240" height="860" loading="lazy" alt="Pantalla Etichette con dos carpetas de ejemplo: una marcada como riservato en rojo, y otra marcada como pubblico en gris."></a>
+      <figcaption><strong>Etichette.</strong> Una etiqueta registra una decisión. La protección empieza cuando proteges la carpeta.</figcaption>
+      <a class="full" href="../immagini/app-etichette.png">Abrir a tamaño completo (1240 por 860 píxeles)</a>
+    </figure>
+
+    <figure class="shot">
+      <a class="zoom" href="../immagini/app-banco.png"><img src="../immagini/app-banco.png" width="1240" height="860" loading="lazy" alt="Pantalla Banco di prova titulada «Prima, chiusa, aperta, richiusa» (antes, cerrada, abierta, cerrada de nuevo), con un ejemplo de ejecución cuya primera fase no tiene pruebas del kernel, marcada en naranja."></a>
+      <figcaption><strong>Banco di prova.</strong> Cada fase muestra su resultado de comprobación junto a las pruebas del kernel que encontró. Las pruebas que faltan se marcan como ausentes.</figcaption>
+      <a class="full" href="../immagini/app-banco.png">Abrir a tamaño completo (1240 por 860 píxeles)</a>
+    </figure>
+
+    <figure class="shot">
+      <a class="zoom" href="../immagini/app-impostazioni.png"><img src="../immagini/app-impostazioni.png" width="1240" height="860" loading="lazy" alt="Pantalla Impostazioni con seis pasos numerados para actualizar el servicio de registro, y un aviso de que hace falta autorización o verificación."></a>
+      <figcaption><strong>Impostazioni.</strong> Los pasos numerados actualizan el servicio de registro. Las contraseñas de administrador y los permisos de privacidad se quedan en los diálogos de macOS.</figcaption>
+      <a class="full" href="../immagini/app-impostazioni.png">Abrir a tamaño completo (1240 por 860 píxeles)</a>
+    </figure>
+  </div>
+</section>
+
+<section id="install" aria-labelledby="h-install">
+  <h2 id="h-install">Instalación</h2>
+  <ul>
+    <li><strong>Herramienta de línea de comandos:</strong> macOS y Python 3.11 o posterior. No usa paquetes de terceros.</li>
+    <li><strong>App para Mac:</strong> macOS 13 o posterior. La compilas desde el repositorio con las Command Line Tools de Apple (las herramientas gratuitas para desarrolladores de Apple) y rsvg-convert, una herramienta que convierte imágenes SVG. La app se firma ad hoc, lo que significa que lleva una firma local y ninguna identidad de desarrollador. No está notarizada, así que la comprobación automática de Apple no se ha ejecutado sobre ella.</li>
+    <li>Guarda la app en <code>/Applications</code>.</li>
+  </ul>
+  <p>El README (en inglés) tiene los comandos exactos para ambas.</p>
+  <p>La barrera necesita el hook de sesión, un control registrado en los ajustes del agente. Sin el hook, una carpeta cifrada sigue funcionando. La barrera no cubre esa sesión.</p>
+  <p>La app muestra los cambios previstos en la configuración de hooks de Claude Code y Codex antes de aplicarlos. Guarda copias de seguridad de los archivos que cambia y conserva los ajustes que ya había. Los hooks de Codex deben aprobarse a mano en el gestor de hooks de la app de Codex.</p>
+  <p>Los eventos del kernel llegan de un servicio del sistema. Lo instalas ejecutando tú mismo un comando de preparación en Terminal, y después aprobando un diálogo de administrador en macOS. La app también necesita el Acceso total al disco, un permiso de privacidad de macOS. Tras cada compilación nueva, quita la entrada de la app, vuelve a añadirla y reinstala el servicio. Los pasos están en la <a href="https://github.com/nerln/paratia/blob/master/docs/gui-mac.md">guía de la app para Mac</a> (en italiano).</p>
+  <p><a class="btn btn-primary" href="https://github.com/nerln/paratia#install">Pasos de instalación en el README (en inglés)</a></p>
+</section>
+
+<section id="limits" aria-labelledby="h-limits">
+  <h2 id="h-limits">Límites</h2>
+  <p>El proyecto documenta estos límites. Léelos antes de confiar en una garantía.</p>
+  <div class="card limits-card">
+    <ol>
+      <li>Mientras una carpeta está bloqueada, sus archivos son texto cifrado. Mientras está abierta, es un volumen normal, y un secreto que un agente haya leído mientras estaba abierta permanece en el contexto del modelo. Sustituye todo lo que un agente haya visto.</li>
+      <li>Mientras una carpeta está abierta, la barrera deniega las llamadas a herramientas de las sesiones que la ejecutan. Un agente no puede trabajar en esas sesiones hasta que cierres la carpeta.</li>
+      <li>En un Mac con una sola cuenta, la barrera deja rastro de los cambios. No los impide. Un agente que se ejecute como tú puede reescribir tus archivos de política y los ajustes de los agentes, incluido el hook que se ejecuta. <code>paratia seal</code> y <code>paratia attest</code> informan de esos cambios después. No los impiden. La protección que no depende de la colaboración del agente es el cifrado mientras la carpeta está bloqueada.</li>
+      <li>La barrera cubre solo las sesiones que ejecutan su hook. Otros programas de agentes, como Cursor y Aider, aplican sus propios hooks o ninguno. Todo lo de aquí es local a una sola máquina: un agente con acceso a la red y una credencial de API puede llegar a un modelo sin ninguno de estos hooks.</li>
+      <li>La delegación se comprueba solo en el lado de Claude. Una conversación que empieza en el lado de Codex no tiene restricciones hasta que Codex ejecute su parte de la comprobación.</li>
+      <li>El registro de accesos no es un historial completo. Un evento de apertura no prueba que se haya leído un byte. La recogida del kernel no informa de cada acceso ni de cada intento fallido, las escrituras hechas solo mediante mapeo en memoria no se informan, y los montajes y desmontajes no aparecen en el registro del kernel. No se garantiza la cobertura de todos los accesos.</li>
+      <li>Una etiqueta registra una decisión y no protege nada por sí sola. Es un archivo JSON (un formato de datos en texto plano) en tu carpeta personal, y la cuenta del agente puede reescribirlo. La protección viene del cifrado de los archivos.</li>
+      <li>Borrar el original después de un traslado no es un borrado seguro. Las copias de seguridad, las instantáneas de APFS (estados guardados del disco que macOS conserva) y las copias en la nube hechas antes conservan sus versiones, y los bloques físicos de un SSD (disco de estado sólido) no se borran.</li>
+      <li>Algunas mediciones siguen pendientes. A octubre de 2026, la ejecución en vivo del banco de pruebas no se ha realizado. El uso de CPU en reposo y el retardo de los eventos deben medirse de nuevo después de instalar una compilación nueva.</li>
+      <li>El plan de vigilancia sale de un archivo que cualquier programa que se ejecute como tú puede reescribir. Te ayuda a configurar la vigilancia, y no es un límite de seguridad.</li>
+    </ol>
+  </div>
+</section>
+
+<section id="read" aria-labelledby="h-read">
+  <h2 id="h-read">Para leer más</h2>
+  <ul class="links">
+    <li><a href="https://github.com/nerln/paratia">github.com/nerln/paratia</a><span>El código fuente, el README (en inglés) y los pasos de instalación.</span></li>
+    <li><a href="../llms.txt">Manual del agente (llms.txt, en inglés)</a><span>El manual de funcionamiento para agentes de programación.</span></li>
+  </ul>
+  <p>Los documentos siguientes están en italiano.</p>
+  <ul class="links">
+    <li><a href="https://github.com/nerln/paratia/blob/master/docs/architettura.md">architettura.md</a><span>Los nueve mecanismos y lo que garantiza cada uno.</span></li>
+    <li><a href="https://github.com/nerln/paratia/blob/master/docs/gui-mac.md">gui-mac.md</a><span>La app para Mac, sección por sección.</span></li>
+    <li><a href="https://github.com/nerln/paratia/blob/master/docs/cartelle-blindate.md">cartelle-blindate.md</a><span>Carpetas protegidas: traslados, frases de contraseña, temporizadores y cierres.</span></li>
+    <li><a href="https://github.com/nerln/paratia/blob/master/docs/registro-accessi.md">registro-accessi.md</a><span>El registro de accesos: eventos, fuentes y límites.</span></li>
+    <li><a href="https://github.com/nerln/paratia/blob/master/docs/confini.md">confini.md</a><span>Una segunda cuenta para los agentes, y los dos casos en los que no sirve de nada.</span></li>
+    <li><a href="https://github.com/nerln/paratia/blob/master/docs/ponte-ssh.md">ponte-ssh.md</a><span>El puente SSH, y la parte que no puede hacer.</span></li>
+    <li><a href="https://github.com/nerln/paratia/blob/master/docs/stato-2026-10.md">stato-2026-10.md</a><span>Estado de implementación y verificación, octubre de 2026.</span></li>
+    <li><a href="https://github.com/nerln/paratia/tree/master/docs/ricerca">ricerca/</a><span>La investigación de la que nace el diseño.</span></li>
+  </ul>
+</section>
+
+<section id="name" aria-labelledby="h-name">
+  <h2 id="h-name">Sobre el nombre</h2>
+  <p class="name-block">Una <em>paratia stagna</em> es un mamparo estanco: un tabique que atraviesa el barco y evita que un compartimento inundado arrastre al resto del barco.</p>
+</section>
+
+</main>
+
+<footer>
+  <p><a href="https://github.com/nerln/paratia">github.com/nerln/paratia</a> · GPL-3.0</p>
+</footer>
+
+</div>
+</body>
+</html>

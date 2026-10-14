@@ -9,8 +9,16 @@
 <meta property="og:title" content="paratia">
 <meta property="og:description" content="Encrypted folders for coding agents, a gate for their tool calls, and an access log. For macOS.">
 <meta property="og:type" content="website">
+<meta property="og:url" content="https://nerln.github.io/paratia/">
+<meta property="og:locale" content="en_US">
+<meta property="og:locale:alternate" content="es_ES">
+<meta property="og:locale:alternate" content="it_IT">
 <meta property="og:image" content="https://nerln.github.io/paratia/immagini/paratia-icona.png">
 <link rel="canonical" href="https://nerln.github.io/paratia/">
+<link rel="alternate" hreflang="en" href="https://nerln.github.io/paratia/">
+<link rel="alternate" hreflang="es" href="https://nerln.github.io/paratia/es/">
+<link rel="alternate" hreflang="it" href="https://nerln.github.io/paratia/it/">
+<link rel="alternate" hreflang="x-default" href="https://nerln.github.io/paratia/">
 <link rel="icon" type="image/png" sizes="64x64" href="immagini/paratia-icona-64.png">
 <link rel="apple-touch-icon" sizes="180x180" href="immagini/paratia-icona-180.png">
 <link rel="alternate" type="text/plain" href="llms.txt" title="llms.txt">
@@ -89,6 +97,16 @@
     font-size: .76rem; text-transform: uppercase; letter-spacing: .09em;
     font-weight: 700; color: var(--copper); margin: 0 0 .5rem;
   }
+
+  /* language switch: the same page in each language */
+  .lang { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; padding-top: .3rem; }
+  .lang a, .lang span {
+    display: inline-flex; align-items: center; min-height: 44px; padding: 0 .55rem;
+    font-size: .92rem; font-weight: 650; text-decoration: none; color: var(--muted);
+  }
+  .lang a:hover { color: var(--ink); text-decoration: underline; }
+  .lang span[aria-current] { color: var(--ink); }
+  .lang .sep { min-height: 0; padding: 0; }
 
   /* top bar */
   .topbar {
@@ -208,6 +226,10 @@
 </head>
 <body>
 <div class="wrap">
+
+<nav class="lang" aria-label="Language">
+  <span lang="en" aria-current="page">EN</span><span class="sep" aria-hidden="true">/</span><a lang="es" hreflang="es" href="es/" title="Español">ES</a><span class="sep" aria-hidden="true">/</span><a lang="it" hreflang="it" href="it/" title="Italiano">IT</a>
+</nav>
 
 <header class="topbar">
   <a class="brand" href="./"><img src="immagini/paratia-icona-64.png" width="28" height="28" alt="">paratia</a>
