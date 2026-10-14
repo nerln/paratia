@@ -9,10 +9,11 @@ import os
 import plistlib
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BOOTSTRAP_ROOT = Path("/Library/Application Support/ParatiaBootstrap/Paratia.app/Contents/Resources/python")
+BOOTSTRAP_ROOT = Path("/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app/Contents/Resources/python")
 MODULES = ("paratia.py", "gui_worker.py", "cartelle.py", "etichette.py", "registro.py", "catena.py",
            "registro_installa.py", "registro_daemon.py", "banco.py", "hookinstaller.py")
 
@@ -25,7 +26,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--render-fixtures", action="store_true")
     args = parser.parse_args()
-    build = ROOT / "build"
+    build = ROOT / "build.noindex"
     app = build / "Paratia.app"
     contents = app / "Contents"
     binary = contents / "MacOS" / "Paratia"
@@ -54,6 +55,8 @@ def main():
          "-sdk", sdk, "-module-cache-path", cache, "-import-objc-header", ROOT / "macos" / "AuthorizationBridge.h",
          *sorted((ROOT / "macos").glob("*.swift")), bridge, launcher, "-framework", "SwiftUI", "-framework", "AppKit",
          "-framework", "Security", "-o", binary])
+    run([sys.executable, ROOT / "strumenti" / "make-icon.py", "--output",
+         contents / "Resources" / "Paratia.icns"])
     for name in MODULES:
         shutil.copyfile(ROOT / name, resources / name)
     for name in ("hooks/paratia-gate.py", "strumenti/banco-probe.py"):
@@ -81,7 +84,8 @@ def main():
     cli_copy.write_text("".join(lines), encoding="utf-8")
     cli_copy.chmod(0o755)
     info = {"CFBundleIdentifier": "it.paratia.app", "CFBundleName": "Paratia", "CFBundleDisplayName": "Paratia",
-            "CFBundleExecutable": "Paratia", "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "1.0",
+            "CFBundleExecutable": "Paratia", "CFBundleIconFile": "Paratia.icns",
+            "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "1.0",
             "CFBundleVersion": "1", "LSMinimumSystemVersion": "13.0", "NSHighResolutionCapable": True,
             "ParatiaRegistryLauncherVersion": 1,
             "NSDesktopFolderUsageDescription": "Il banco di prova esamina i metadati della cartella folder-test sul Desktop, solo quando lo avvii."}
