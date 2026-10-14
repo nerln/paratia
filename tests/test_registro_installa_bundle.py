@@ -183,6 +183,7 @@ class BundleInstallerTests(unittest.TestCase):
         self.assertFalse(state["healthy"])
         self.assertIsNone(state["needs_fda"])
         self.assertEqual(state["fda_entry"], "/Applications/Paratia.app")
+        self.assertEqual(state["installed_cdhash"], self.identity)
         self.assertFalse(list(self.support.glob(".installazione-*")))
 
     def test_bad_copied_signature_preserves_previous_before_bootout(self):

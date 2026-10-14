@@ -500,6 +500,7 @@ def installa(fonte, uid):
             candidato_stato = stage / "stato.json"
             _scrivi(candidato_stato, json.dumps({"running": False, "healthy": False, "needs_fda": None,
                     "launch_mode": "app", "fda_entry": FDA_APP, "fda_regrant_after_build": True,
+                    "installed_cdhash": identita,
                     "message": "Registro installato; attendi la verifica delle autorizzazioni di /Applications/Paratia.app."}).encode(), 0o600)
             replacements.append((candidato_stato, stato))
             candidato_plist = stage / "servizio.plist"
