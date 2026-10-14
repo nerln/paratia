@@ -65,10 +65,12 @@ def bank(tmp_path, monkeypatch):
             else:
                 shutil.copy2(p, destination / p.name)
 
+    system_dir_on_open = []
+
     def protect(origin, destination, key, minutes):
         events.append(("protect", str(origin)))
         keys.append(key)
-        assert origin == source and destination == disk
+        assert origin == source and destination in (disk, None)
         assert not entries
         inventory = b._inventario(source)
         assert set(inventory) == {"LEGGIMI-SINTETICO.txt", "campione.bin", "grande.bin", "sottocartella", "sottocartella/note.txt"}
@@ -83,11 +85,16 @@ def bank(tmp_path, monkeypatch):
         keys.append(key)
         assert folder in entries
         copy_children(protected, source)
+        if system_dir_on_open:
+            # A real APFS volume shows a root-only .fseventsd once mounted.
+            (source / ".fseventsd").mkdir(mode=0)
         entries[folder]["stato"] = "aperta"
         return dict(entries[folder])
 
     def close_folder(folder):
         events.append(("close", folder))
+        if (source / ".fseventsd").exists():
+            (source / ".fseventsd").rmdir()
         if entries[folder]["stato"] == "aperta":
             empty(protected)
             copy_children(source, protected)
@@ -95,9 +102,18 @@ def bank(tmp_path, monkeypatch):
             entries[folder]["stato"] = "chiusa"
         return dict(entries[folder])
 
-    fake_c = SimpleNamespace(_chiave=real_c._chiave, _minuti=real_c._minuti,
+    def remove(folder, key):
+        events.append(("remove", folder))
+        keys.append(key)
+        assert entries[folder]["stato"] == "chiusa" and not list(source.iterdir())
+        copy_children(protected, source)
+        empty(protected)
+        del entries[folder]
+        return {"id": folder, "stato": "non-protetta"}
+
+    fake_c = SimpleNamespace(togli_protezione=remove, _chiave=real_c._chiave, _minuti=real_c._minuti,
                              DIR_SISTEMA=real_c.DIR_SISTEMA,
-                             _esterno=lambda p: events.append(("external", str(p))),
+                             _disco_fisico=lambda p: events.append(("external", str(p))),
                              elenco=lambda: list(entries.values()), Rifiuto=real_c.Rifiuto,
                              proteggi=protect, apri=open_folder, chiudi=close_folder)
     watches = {}
@@ -143,6 +159,7 @@ def bank(tmp_path, monkeypatch):
 
     monkeypatch.setattr(b, "_probe", probe)
     return SimpleNamespace(b=b, home=home, source=source, disk=disk, events=events,
+                           system_dir_on_open=system_dir_on_open,
                            entries=entries, keys=keys, kernel=kernel, watches=watches,
                            readiness=readiness, real_r=real_r, protected=protected, ident=ident,
                            original_probe=load("banco_probe_test", ROOT / "strumenti" / "banco-probe.py"))
@@ -747,3 +764,42 @@ def test_csv_quotes_formula_fields_and_empty_history_is_truthful(bank):
     rows = list(csv.DictReader(io.StringIO(b.export_csv())))
     assert rows[0]["attore"] == "'@formula" and rows[0]["percorso"] == "'=formula" and rows[0]["processo"] == "'\tformula"
     assert rows[0]["riuscito"] == "False" and rows[0]["errno"] == str(errno.ENOENT)
+
+
+def test_without_a_key_the_bench_uses_a_one_time_key_and_restores_folder_test(bank):
+    b = bank.b
+    result = b.esegui(minutes=15, agenti_reali=True)
+    assert result["stato"] == "completo" and result["stato_finale"] == "ripristinata"
+    assert result["chiave_usa_e_getta"] is True and result["ripristinata"] is True
+    assert [p["nome"] for p in result["fasi"]] == ["prima", "chiusa", "riaperta", "richiusa"]
+    assert ("remove", bank.ident) in bank.events and not bank.entries
+    assert "LEGGIMI-SINTETICO.txt" in {p.name for p in bank.source.iterdir()}
+    assert not any(e[0] == "external" for e in bank.events)
+    one_time = bank.keys[0]
+    assert len(one_time) >= 32 and all(k is one_time for k in bank.keys)
+    for path in (b.ARCHIVIO, bank.real_r.CATENA):
+        assert one_time not in path.read_bytes()
+
+
+def test_one_time_bench_refuses_a_folder_protected_with_a_persons_key(bank):
+    b = bank.b
+    b.esegui(bank.disk, KEY)
+    assert bank.entries[bank.ident]["stato"] == "chiusa"
+    with pytest.raises(b.Rifiuto, match="Togli la protezione"):
+        b.esegui(minutes=15, agenti_reali=True)
+    assert bank.entries[bank.ident]["stato"] == "chiusa"
+
+
+def test_reopened_volume_with_a_root_only_system_directory_is_not_a_failure(bank):
+    bank.system_dir_on_open.append(True)
+    result = bank.b.esegui(minutes=15, agenti_reali=False)
+    assert result["stato"] == "completo" and result["stato_finale"] == "ripristinata"
+    assert [p["file_visibili"] for p in result["fasi"]] == [4, 0, 4, 0]
+
+
+def test_preview_recognises_the_synthetic_files_of_an_earlier_test(bank):
+    b = bank.b
+    assert b.anteprima()["stato"] == "vuota"
+    b.esegui(minutes=15, agenti_reali=False)
+    preview = b.anteprima()
+    assert preview["stato"] == "sintetici" and "riusa" in preview["messaggio"]

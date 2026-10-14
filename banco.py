@@ -27,6 +27,7 @@ import importlib.util
 import io
 import json
 import os
+import secrets
 import select
 import shlex
 import shutil
@@ -110,7 +111,7 @@ def storico():
     dati = _leggi_storico()
     if not dati["prove"]:
         return {"versione": 1, "stato": "non-eseguito", "prove": [], "fasi": [],
-                "messaggio": _t("Il banco non è stato eseguito. Installa e autorizza il registro prima di iniziare."),
+                "messaggio": _t("La prova non è ancora stata eseguita. Premi Esegui la prova: non serve nessuna chiave."),
                 "limiti": LIMITI}
     return {**dati["prove"][-1], "prove": dati["prove"], "limiti": LIMITI}
 
@@ -174,7 +175,7 @@ def _directory_fd(p):
 
 def anteprima(path=None, dove=None):
     if dove is not None:
-        C._esterno(Path(dove).absolute())
+        C._disco_fisico(Path(dove).absolute())
     p = Path(path or Path.home() / "Desktop" / "folder-test").absolute()
     cartella = next((v for v in C.elenco() if v["origine"] == str(p)), None)
     if cartella:
@@ -189,6 +190,12 @@ def anteprima(path=None, dove=None):
                 "richiede_autorizzazione": True,
                 "messaggio": _t("macOS protegge il Desktop. Consenti l'accesso a Paratia quando richiesto, poi riprova.")}
     file = [v for v in inventario.values() if v["tipo"] == "file"]
+    vecchia = next((x for x in reversed(_leggi_storico()["prove"]) if x.get("percorso") == str(p)
+                    and x.get("sintetici") and x.get("inventario")), None)
+    if inventario and vecchia and vecchia["inventario"] == inventario:
+        return {"stato": "sintetici", "percorso": str(p), "file": len(file),
+                "byte": sum(v["byte"] for v in file), "richiede_autorizzazione": not R.stato()["healthy"],
+                "messaggio": _t("Contiene i file sintetici di una prova precedente: la prova li riusa.")}
     return {"stato": "vuota" if not inventario else "contiene-file", "percorso": str(p),
             "file": len(file), "byte": sum(v["byte"] for v in file),
             "richiede_autorizzazione": not R.stato()["healthy"],
@@ -423,7 +430,8 @@ def _riscontri(probe):
 def _fase(prova, nome, target, cartella_id, chiusa, directory, agenti_reali):
     _pronto()
     voce = next((v for v in C.elenco() if v["id"] == cartella_id), {})
-    visibili = _inventario(target.parent, escluso=voce.get("metadir"))
+    # An open volume has root-only system directories (.fseventsd): not files of the test.
+    visibili = _inventario(target.parent, escluso=voce.get("metadir"), sistema_assenti=C.DIR_SISTEMA)
     fase = {"nome": nome, "iniziata": _ora(), "atteso": "rifiuto" if chiusa else "accesso", "prove": [],
             "stato_cartella": "chiusa" if chiusa else "aperta",
             "file_visibili": sum(v["tipo"] == "file" for v in visibili.values()),
@@ -432,9 +440,12 @@ def _fase(prova, nome, target, cartella_id, chiusa, directory, agenti_reali):
     _salva(prova)
     for attore in ("shell", "mdls", "codex", "claude"):
         r = _probe(attore, target, nome, directory, agenti_reali)
-        r["obbligatoria"] = attore != "mdls"
-        if not r["obbligatoria"]:
+        # Agent CLIs count only when the person allowed them: unrun, they are not a failure.
+        r["obbligatoria"] = attore == "shell" or (attore in ("codex", "claude") and agenti_reali)
+        if attore == "mdls":
             r["nota"] = _t("Sonda Spotlight informativa: cache e volumi non indicizzati non determinano l'esito della fase.")
+        elif not r["obbligatoria"]:
+            r["nota"] = _t("Sonda non eseguita: per provare anche questo agente abilita le CLI reali.")
         r["riscontri_kernel"] = _riscontri(r) if r["misurato"] else []
         if r["riscontri_kernel"]:
             r["agente"] = r["riscontri_kernel"][0].get("agente")
@@ -461,21 +472,55 @@ def _operazione(prova, risultato):
     return risultato
 
 
-def esegui(dove, passphrase: bytes, minutes=15, agenti_reali=True):
+def _scarta_banco(identificatore, fonte):
+    """Drop a bench image whose one-time key is gone: it holds only synthetic files."""
+    with C._registro() as r:
+        v = r["cartelle"].get(identificatore)
+        temporaneo = v.get("montaggio_temporaneo") if v else None
+        if (not v or v["origine"] != str(fonte) or v["stato"] != "chiusa" or C._montato(fonte)
+                or (temporaneo and C._montato(Path(temporaneo)))
+                or not fonte.is_dir() or any(fonte.iterdir())):
+            raise Rifiuto(_t("folder-test è ancora protetta da una prova precedente: in Cartelle scegli Togli la protezione con la chiave di quella prova, poi riprova."))
+        bundle = C._percorso(v["bundle"])
+        del r["cartelle"][identificatore]
+        C._salva(r)
+    if bundle.suffix == ".sparsebundle" and bundle.is_dir():
+        shutil.rmtree(bundle)
+
+
+def esegui(dove=None, passphrase: bytes | None = None, minutes=15, agenti_reali=True):
+    """Run the four phases on folder-test.
+
+    Without a passphrase the bench makes a one-time key that never leaves this
+    process, and at the end removes the protection so folder-test is back as
+    it was. Without ``dove`` the image goes on the folder's own disk.
+    """
+    una_tantum = passphrase is None
+    if una_tantum:
+        passphrase = secrets.token_urlsafe(32).encode("ascii")
     C._chiave(passphrase)
     C._minuti(minutes)
     _pronto()  # Before Desktop access, fixture creation, or migration.
     fonte = Path.home() / "Desktop" / "folder-test"
-    disco = Path(dove).absolute()
-    C._esterno(disco)
+    disco = Path(dove).absolute() if dove else None
+    if disco is not None:
+        C._disco_fisico(disco)
     esistenti = [v for v in C.elenco() if v["origine"] == str(fonte)]
     vecchia = next((p for p in reversed(_leggi_storico()["prove"]) if p.get("percorso") == str(fonte)
                    and p.get("sintetici") and p.get("inventario")), None)
+    da_scartare = None
+    if esistenti and una_tantum:
+        if not (vecchia and vecchia.get("chiave_usa_e_getta") and vecchia.get("cartella_id") == esistenti[0]["id"]):
+            raise Rifiuto(_t("folder-test è ancora protetta da una prova precedente: in Cartelle scegli Togli la protezione con la chiave di quella prova, poi riprova."))
+        da_scartare = esistenti[0]["id"]  # Dropped only once this run holds the lock.
+        esistenti = []
     if esistenti and (not vecchia or vecchia.get("cartella_id") != esistenti[0]["id"]):
         raise Rifiuto(_t("Questa cartella protetta non appartiene al banco sintetico. Non verrà aperta o migrata dalla prova."))
     identificatore = esistenti[0]["id"] if esistenti else None
+    creata_ora = False
     prova = {"versione": 1, "id": uuid.uuid4().hex, "stato": "in-corso", "percorso": str(fonte),
-             "iniziata": _ora(), "fasi": [], "sintetici": False, "cartella_id": identificatore, "bundle": None}
+             "iniziata": _ora(), "fasi": [], "sintetici": False, "cartella_id": identificatore, "bundle": None,
+             "chiave_usa_e_getta": una_tantum}
     guardia = CASA / "banco"
     guardia.mkdir(mode=0o700, parents=True, exist_ok=True)
     fd = os.open(guardia / "esecuzione.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
@@ -487,6 +532,8 @@ def esegui(dove, passphrase: bytes, minutes=15, agenti_reali=True):
     watch = None
     watch_id = None
     try:
+        if da_scartare:
+            _scarta_banco(da_scartare, fonte)
         requested = "banco-" + prova["id"]
         if identificatore:
             # A protected source is already in the collector's folder registry.
@@ -529,6 +576,7 @@ def esegui(dove, passphrase: bytes, minutes=15, agenti_reali=True):
                     raise Rifiuto(_t("folder-test è cambiata durante la prova: nessun nuovo dato verrà migrato. Chiudi le app che la modificano e riprova."))
                 v = _operazione(prova, C.proteggi(fonte, disco, passphrase, minutes))
                 identificatore = v["id"]
+                creata_ora = True
                 prova.update(cartella_id=identificatore, bundle=v["bundle"])
                 prova["verifica_migrazione"] = {"file_prima": prova["file"], "byte_prima": prova["byte"],
                                                 "file_dopo": v["file"], "byte_dopo": v["byte"],
@@ -568,6 +616,15 @@ def esegui(dove, passphrase: bytes, minutes=15, agenti_reali=True):
                 prova["stato_finale"] = "da-verificare"
                 prova["stato"] = "incompleto"
                 prova["avviso_chiusura"] = _t("La cartella non è stata chiusa: chiudi i documenti aperti e premi Chiudi tutte.")
+            if una_tantum and creata_ora and prova.get("stato_finale") == "chiusa":
+                # The one-time key dies with this process: put folder-test back as it was.
+                try:
+                    C.togli_protezione(identificatore, passphrase)
+                    prova["stato_finale"] = "ripristinata"
+                    prova["ripristinata"] = True
+                except Exception:
+                    prova["stato"] = "incompleto"
+                    prova["avviso_chiusura"] = _t("folder-test è rimasta protetta con la chiave usa e getta della prova. Contiene solo file sintetici: alla prossima prova Paratia la rimette a posto da sola.")
         if watch:
             try:
                 R.rimuovi_sorveglianza(watch)

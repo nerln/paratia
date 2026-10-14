@@ -91,7 +91,9 @@ def test_ipc_bank_four_phases_really_open_fstat_restore_and_reclose(integration)
             assert all(r["riscontri_kernel"] == [] and r["agente"] is None for r in p["prove"])
             assert all(not r["misurato"] and r["riuscito"] is None and r["errno"] is None
                        for r in p["prove"] if r["attore"] in ("codex", "claude"))
-            assert p["ok"] is False
+            # Agent CLIs were not allowed, so they do not count. Readable phases still
+            # need kernel evidence, which this fixture has not got.
+            assert p["ok"] is (not expected)
         assert not list(e.source.iterdir()) and not integration.configured["disks"].montati
         assert len(e.acknowledgements) == 2 and e.acknowledgements[0].startswith("banco-")
         assert e.acknowledgements[1] == result["cartella_id"]
