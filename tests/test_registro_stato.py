@@ -185,6 +185,34 @@ def test_anonymous_file_rejection_has_visible_specific_reason_once(R, monkeypatc
     assert not status["healthy"]
 
 
+@pytest.mark.parametrize("warning", ["folder_absent", "volume_validation_timeout"])
+def test_retained_confirmed_watch_keeps_safe_warning_without_losing_health(R, monkeypatch, warning):
+    monkeypatch.setattr(R, "_servizio_installato", lambda uid: (True, "app"))
+    write_state(R, healthy_state(watch_status=[{
+        "id": "first", "status": "confirmed", "warning_code": warning,
+        "warning_message": "RAW_PRIVATE_PAYLOAD", "configuration_token": "a" * 64,
+    }]))
+    status = R.stato()
+    assert status["healthy"] and status["watched_ids"] == ["first"]
+    reported = status["watch_status"][0]
+    assert reported["warning_code"] == warning
+    assert reported["warning_message"] == R.AVVISI_CONFIGURAZIONE[warning]
+    assert reported["configuration_token"] == "a" * 64
+    assert "RAW_PRIVATE_PAYLOAD" not in json.dumps(status)
+    monkeypatch.setattr(R, "stato", lambda: status)
+    assert R.raccolta_kernel({"folder": "first"})["kernel_active"]
+
+
+def test_unknown_warning_or_untrusted_confirmation_token_is_not_reflected(R):
+    status = R._stati_sorveglianza([{
+        "id": "first", "status": "confirmed", "warning_code": "RAW_PRIVATE_PAYLOAD",
+        "warning_message": "RAW_PRIVATE_PAYLOAD", "configuration_token": "RAW_PRIVATE_PAYLOAD",
+    }])[0]
+    assert status["status"] == "confirmed"
+    assert "warning_code" not in status and "configuration_token" not in status
+    assert "RAW_PRIVATE_PAYLOAD" not in json.dumps(status)
+
+
 @pytest.mark.parametrize("installed_hash,current_hash,required,comparison", [
     ("a" * 40, "a" * 40, False, "equal"),
     ("a" * 40, "b" * 40, True, "different"),

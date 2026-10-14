@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import datetime
 import json
 import os
 import unicodedata
@@ -80,6 +81,109 @@ def test_unicode_normalization_and_json_path_escapes_never_hide_a_watch(encoding
     s, _, records = stream(root)
     s.ricevi(r)
     assert s.parsed_lines == 1 and records[-1]["cartella"] == "watch"
+
+
+def escaped_raw(msg, spelling):
+    """Use valid JSON spellings without changing the decoded event."""
+    line = raw(msg)
+    if spelling.startswith("unicode"):
+        for control in ("\t", "\n", "\r", "\b", "\f"):
+            short = json.dumps(control)[1:-1].encode()
+            escaped = ("\\u%04x" % ord(control)).encode()
+            if spelling == "unicode_upper":
+                escaped = escaped[:-4] + escaped[-4:].upper()
+            line = line.replace(short, escaped)
+    if spelling == "slash":
+        line = line.replace(b"/", b"\\/")
+    return line
+
+
+@pytest.mark.parametrize("control", ["\t", "\n", "\r", "\b", "\f"],
+                         ids=["tab", "newline", "carriage-return", "backspace", "form-feed"])
+@pytest.mark.parametrize("position", ["parent", "root"])
+@pytest.mark.parametrize("spelling", ["short", "unicode_lower", "unicode_upper", "slash"])
+def test_control_path_records_match_full_parser_including_lineage_and_loss(control, position, spelling):
+    root = ("/Users/paratia-synthetic/parent" + control + "/watch" if position == "parent"
+            else "/Users/paratia-synthetic/parent/watch" + control)
+    s, filtered, actual = stream(root)
+    expected = []
+    full = R.Osservatore([{"id": "watch", "origine": root}], expected.append)
+    rows = [message("/System/Library/unrelated", 1, "exec"),
+            message("/System/Library/unrelated", 2, "fork"),
+            message("/System/Library/unrelated", 3),
+            message(root + "/file", 4), message(root, 6),
+            message("/System/Library/unrelated", 7, "exit"),
+            message(root + "/later", 8)]
+    # The exec target keeps the same executable for subsequent parent events.
+    for parent_event in (rows[1], rows[2], rows[4], rows[5]):
+        parent_event["process"]["executable"]["path"] = "/usr/local/bin/codex"
+    for access in (rows[3], rows[6]):
+        access["process"]["audit_token"].update(pid=21, pidversion=2)
+        access["process"]["parent_audit_token"] = {"pid": 20, "pidversion": 1}
+    rows[4]["event_type"] = "ES_EVENT_TYPE_NOTIFY_CREATE"
+    rows[4]["event"] = {"create": {"destination": {"new_path": {
+        "dir": {"path": str(Path(root).parent)}, "filename": Path(root).name}}}}
+
+    class FixedDatetime(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 10, 14, 0, 0, tzinfo=datetime.timezone.utc)
+
+    with mock.patch.object(R.datetime, "datetime", FixedDatetime):
+        for msg in rows:
+            line = escaped_raw(msg, spelling)
+            full.ricevi(json.loads(line))
+            s.ricevi(line)
+
+    assert actual == expected
+    accesses = [r for r in actual if r["evento"] != "diagnostico"]
+    assert len(accesses) == 3 and all(r["cartella"] == "watch" for r in accesses)
+    assert accesses[0]["nome_agente"] == "Codex" and accesses[0]["agente"] is True
+    assert accesses[1]["percorso"] == root
+    assert filtered.persi == full.persi == 1 and filtered.sano is full.sano is False
+    assert filtered.globale == full.globale == 8
+    assert s.codifica_incerta and s.parsed_lines == len(rows) and s.filtered_lines == 0
+
+
+@pytest.mark.parametrize("character", [chr(n) for n in range(32)] + ['"', "\\"],
+                         ids=["U+%04X" % n for n in range(32)] + ["quote", "backslash"])
+def test_json_required_escape_in_any_root_conservatively_disables_filter(character):
+    s, _, _ = stream("/Users/parent" + character + "/watch")
+    assert s.codifica_incerta
+    s.ricevi(raw(message("/System/Library/unrelated")))
+    assert s.parsed_lines == 1 and s.filtered_lines == 0
+
+
+@pytest.mark.parametrize("campo", D.CAMPI_RADICI)
+def test_control_characters_disable_filter_for_each_protected_root_field(campo):
+    root = "/Users/parent\n/watch"
+    actual, expected = [], []
+    filtered = R.Osservatore([{"id": "watch", campo: root}], actual.append)
+    full = R.Osservatore([{"id": "watch", campo: root}], expected.append)
+    s = D.FlussoEslogger(filtered)
+    line = raw(message(root + "/file"))
+    full.ricevi(json.loads(line))
+    s.ricevi(line)
+    assert actual == expected and actual[0]["cartella"] == "watch"
+    assert s.parsed_lines == 1 and s.filtered_lines == 0
+
+
+def test_uncertain_utf8_watch_root_falls_back_without_failing_recompile():
+    s, _, _ = stream("/Users/parent\udcff/watch")
+    assert s.codifica_incerta
+    s.ricevi(raw(message("/System/Library/unrelated")))
+    assert s.parsed_lines == 1 and s.filtered_lines == 0
+
+
+def test_refresh_from_control_root_restores_fast_filter_for_ordinary_paths():
+    s, o, records = stream("/Users/parent\t/watch")
+    s.ricevi(raw(message("/System/Library/unrelated", 1)))
+    o.protetti = [{"id": "watch", "origine": ROOT}]
+    s.ricompila_radici()
+    s.ricevi(raw(message("/System/Library/unrelated", 2)))
+    s.ricevi(raw(message(sequence=3)))
+    assert not s.codifica_incerta and s.filtered_lines == 1 and s.parsed_lines == 2
+    assert records[-1]["cartella"] == "watch" and o.persi == 0
 
 
 @pytest.mark.parametrize("numeric", [False, True])

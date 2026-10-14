@@ -20,7 +20,10 @@ senza nuova apertura non produce quindi un evento `mmap` nel nuovo registro.
 Il raccoglitore cerca le radici sorvegliate nei byte prima di `json.loads`,
 includendo `/System/Volumes/Data`, alias `/private`, Unicode e escape JSON;
 i candidati incerti passano al parser completo. Le notifiche di discendenza
-restano sempre elaborate. Le sequenze delle righe scartate intenzionalmente
+restano sempre elaborate. Se una radice o il suo genitore contiene caratteri
+di controllo, virgolette, backslash o una codifica incerta, tutte le righe
+passano al parser completo: gli escape brevi JSON non devono nascondere accessi.
+Le sequenze delle righe scartate intenzionalmente
 continuano ad aggiornare il rilevamento dei buchi: il filtro non deve simulare
 perdite ES. Le righe grezze e i campi riservati non vengono salvati.
 I nomi degli account sono uno snapshot di sessione in una cache limitata a
@@ -114,8 +117,13 @@ La stessa regola vale per cartelle protette, bundle e recuperi sulla SSD.
 Questa scelta autorizza il percorso selezionato dall'utente; non dimostra chi
 possiede i dati su un disco che ignora i proprietari. I controlli di radice,
 symlink e provenienza restano necessari. I probe del volume sono condivisi
-fra le voci di un singolo caricamento e hanno una scadenza di un secondo
-per volume; non vengono conservati indefinitamente dopo uno scollegamento.
+fra le voci e i poll della sessione: il risultato positivo resta in cache
+soltanto con identità kernel del volume invariata, controllata a ogni uso
+con statfs, fsid, sorgente, flag e radice del montaggio. Identità cambiate
+o volumi non più osservati invalidano la cache. Le chiamate diskutil hanno
+un timeout di tre secondi ciascuna, senza dividere un secondo fra più chiamate.
+Durante i poll un solo worker valida la configurazione, mentre il filo che
+legge eslogger continua a drenare lo stream; non ci sono probe sovrapposti.
 
 Ogni voce è validata separatamente. Una voce rifiutata viene esclusa subito,
 mentre le altre continuano a essere sorvegliate. `watch_status` riporta ID,
@@ -124,6 +132,17 @@ anonimizzato. Anche una configurazione interamente illeggibile è segnalata,
 senza mantenere silenziosamente autorizzazioni precedenti di quel file.
 ID duplicati fra i due file sono rifiutati. CLI e GUI distinguono richiesta
 salvata, conferma e «rifiutata dal raccoglitore: …».
+
+Una sorveglianza già confermata non viene esclusa per una breve assenza del
+percorso o un timeout di verifica del volume. Occorrono stesso ID, origine,
+tipo, genitore e identità kernel, più JSON ancora attendibile e assenza di
+symlink. Resta confermata con `warning_code` e messaggio fisso; il daemon
+annota «cartella assente» o «verifica volume in ritardo». Nuove voci assenti,
+cambi di percorso o volume, rifiuti espliciti e configurazioni non attendibili
+restano esclusi. `configuration_token` lega la conferma all'ID e al percorso
+senza pubblicare il percorso nel report: un vecchio ACK non rende attiva
+una nuova cartella assente con lo stesso ID. GUI ed elenco mostrano l'avviso
+della voce confermata; questi avvisi transitori non spengono la raccolta.
 Backup e residui plaintext sono sorvegliati solo nei percorsi previsti dalla
 migrazione o dal recupero. I percorsi del collector sono sempre esclusi. Il bundle registra accessi al
 cifrato, non prova accessi al testo in chiaro.

@@ -193,6 +193,15 @@ def test_gui_keeps_refused_folder_reason_visible_before_global_health_and_missin
     assert 'Text("Registro: " + model.watchStatus(folder.data))' in view
 
 
+def test_confirmed_watch_warning_is_visible_before_missing_path_with_matching_token():
+    status = swift_method("watchStatus")
+    assert 'let token = record.text("configuration_token", fallback: "")' in status
+    assert 'token.isEmpty || $0.text("configuration_token", fallback: "") == token' in status
+    warning = status.index('return "Confermata dal raccoglitore · " + warning')
+    assert status.index('return "Rifiutata dal raccoglitore: " + message') < warning
+    assert warning < status.index('record["esiste"] as? Bool == false')
+
+
 def test_gui_shows_health_reasons_and_separates_event_latency_from_silent_stream_age():
     app = (ROOT / "macos" / "AppModel.swift").read_text()
     query = app.split('private func refreshEvents()', 1)[1].split('\n    func ', 1)[0]

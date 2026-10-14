@@ -134,6 +134,10 @@ the collector cannot use `stat` UID as proof of ownership. It accepts a selected
 folder only through the validated user-owned configuration and an external,
 non-system volume check. Invalid entries are refused individually, preserving
 other watches; the CLI and app show each collector refusal and its reason.
+A confirmed watch survives a temporary disappearance of its unchanged path,
+with a warning. Volume proofs are cached while their kernel identity remains
+unchanged; a timeout preserves a confirmed watch, while new or replaced paths
+still require validation. Slow volume probes run outside the stream reader.
 The CLI offers the
 same operations:
 
@@ -161,6 +165,7 @@ The default subscription excludes `lookup` and `mmap` to reduce system-wide
 traffic; `exec`, `fork` and `exit` remain for ancestry. Before JSON decoding,
 the collector filters unrelated raw lines, recognizing Data/private path aliases
 and JSON encodings, while retaining sequence numbers for loss detection.
+Roots containing JSON control escapes use full decoding to preserve events.
 This does not add a guarantee for inherited mappings or byte reads.
 `paratia registro stato` reports observed event latency, last receive time,
 lines/s and readable `health_reasons`. The app shows delayed events, losses,

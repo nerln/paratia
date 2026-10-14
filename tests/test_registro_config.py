@@ -61,16 +61,17 @@ def ssd(R, tmp_path, monkeypatch):
     calls = []
 
     def metadata(path, *args, **kwargs):
-        s = actual_stat(path, *args, **kwargs)
-        if path == source.parent or source.parent in path.parents:
+        s = actual_stat(source.parent if path == Path(VOLUME) else path, *args, **kwargs)
+        if path == Path(VOLUME) or path == source.parent or source.parent in path.parents:
             values = list(s)
             values[2], values[4] = 999999, 0  # dev / apparent UID under root.
             return os.stat_result(values)
         return s
 
     def flags(path):
-        if path == source.parent or source.parent in path.parents:
-            return {"flags": R.MNT_IGNORE_OWNERSHIP, "mount": VOLUME}
+        if path == Path(VOLUME) or path == source.parent or source.parent in path.parents:
+            return {"flags": R.MNT_IGNORE_OWNERSHIP, "mount": VOLUME,
+                    "fsid": (999999, 17), "source": "/dev/disk9s2", "type": 17}
         return {"flags": 0, "mount": "/System/Volumes/Data"}
 
     monkeypatch.setattr(Path, "stat", metadata)
@@ -369,7 +370,7 @@ def test_external_proof_follows_all_physical_stores_and_parent_whole_disk(R, mon
     def command(args, **kwargs):
         calls.append(args[-1])
         assert args[:3] == ["/usr/sbin/diskutil", "info", "-plist"]
-        assert 0 < kwargs["timeout"] <= 1
+        assert kwargs["timeout"] == 3.0
         assert kwargs["stderr"] is subprocess.DEVNULL
         return disk_result(mapping[args[-1]])
 
@@ -451,4 +452,338 @@ def test_statfs_reads_real_flag_field_using_matching_darwin_abi(R, tmp_path, mon
     monkeypatch.setattr(ctypes, "CDLL", lambda *args, **kwargs: lib)
     monkeypatch.setattr(R.os, "uname", lambda: SimpleNamespace(machine=architecture))
     monkeypatch.setattr(R.sys, "platform", "darwin")
-    assert R._statfs_configurazione(tmp_path) == {"flags": R.MNT_IGNORE_OWNERSHIP, "mount": VOLUME}
+    assert R._statfs_configurazione(tmp_path) == {
+        "flags": R.MNT_IGNORE_OWNERSHIP, "mount": VOLUME, "fsid": (0, 0), "source": "", "type": 0}
+
+
+def test_confirmed_watch_keeps_root_during_two_missing_polls_then_clears_warning(R, tmp_path):
+    source = tmp_path.resolve() / "transient"
+    source.mkdir()
+    write_watch(R, {"stable": {"percorso": str(source)}})
+    cache = {}
+    first = R.leggi_configurazione(R._test_home, os.getuid(), cache_volumi=cache)
+    source.rename(source.with_name("temporarily-renamed"))
+    write_watch(R, {"stable": {"percorso": str(source)},
+                    "new": {"percorso": str(source.with_name("new-missing"))}})
+    for _ in range(2):
+        middle = R.leggi_configurazione(R._test_home, os.getuid(), precedenti=first, cache_volumi=cache)
+        assert [v["id"] for v in middle["voci"]] == ["stable"]
+        status = middle["watch_status"][0]
+        assert status["status"] == "confirmed" and status["reason_code"] is None
+        assert status["warning_code"] == "folder_absent"
+        assert middle["watch_status"][1]["reason_code"] == "folder_missing"
+        assert middle["diagnostics"] == [{"id": "stable", "code": "folder_absent",
+                                           "message": R.AVVISI_CONFIGURAZIONE["folder_absent"]}]
+        first = middle
+    source.with_name("temporarily-renamed").rename(source)
+    restored = R.leggi_configurazione(R._test_home, os.getuid(), precedenti=first, cache_volumi=cache)
+    assert restored["watch_status"][0]["status"] == "confirmed"
+    assert "warning_code" not in restored["watch_status"][0]
+    assert restored["diagnostics"] == []
+
+
+@pytest.mark.parametrize("change", ["path", "removed_then_reinserted", "symlink", "owner", "bad_config", "parent"])
+def test_missing_root_never_inherits_confirmation_after_unsafe_or_changed_configuration(R, tmp_path, monkeypatch, change):
+    source = tmp_path.resolve() / "parent" / "watched"
+    source.mkdir(parents=True)
+    store = write_watch(R, {"stable": {"percorso": str(source)}})
+    previous = R.leggi_configurazione(R._test_home, os.getuid())
+    source.rename(source.with_name("renamed"))
+    if change == "path":
+        write_watch(R, {"stable": {"percorso": str(source.with_name("different-missing"))}})
+    elif change == "removed_then_reinserted":
+        write_watch(R, {})
+        previous = R.leggi_configurazione(R._test_home, os.getuid(), precedenti=previous)
+        write_watch(R, {"stable": {"percorso": str(source)}})
+    elif change == "symlink":
+        source.symlink_to(source.with_name("renamed"), target_is_directory=True)
+    elif change == "owner":
+        inode, actual = store.stat().st_ino, os.fstat
+
+        def wrong_owner(fd):
+            s = actual(fd)
+            if s.st_ino == inode:
+                values = list(s)
+                values[4] += 1
+                return os.stat_result(values)
+            return s
+        monkeypatch.setattr(R.os, "fstat", wrong_owner)
+    elif change == "bad_config":
+        store.write_text("{" + SECRET)
+    else:
+        source.parent.rename(source.parent.with_name("old-parent"))
+        source.parent.mkdir()
+    after = R.leggi_configurazione(R._test_home, os.getuid(), precedenti=previous)
+    assert not after["voci"]
+    assert all(v["status"] == "rejected" for v in after["watch_status"])
+    assert after["validation"] == {} and after["diagnostics"] == []
+    assert SECRET not in json.dumps(after)
+
+
+@pytest.mark.parametrize("delay", [0.4, 2.0])
+def test_external_probe_allows_slow_individual_calls_without_shared_deadline(R, monkeypatch, delay):
+    mapping = {VOLUME: {"APFSPhysicalStores": [{"APFSPhysicalStore": "disk9s2"}]},
+               "disk9s2": {"DeviceIdentifier": "disk9s2", "ParentWholeDisk": "disk9"},
+               "disk9": {"DeviceIdentifier": "disk9", "VirtualOrPhysical": "Physical", "Internal": False}}
+    clock, calls = [0.0], []
+
+    def command(args, **kwargs):
+        assert kwargs["timeout"] >= delay
+        calls.append(args[-1])
+        clock[0] += delay
+        return disk_result(mapping[args[-1]])
+    monkeypatch.setattr(R.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(R.subprocess, "run", command)
+    R._volume_esterno_configurazione(VOLUME)
+    assert calls == [VOLUME, "disk9s2", "disk9"]
+    assert clock[0] == pytest.approx(3 * delay)
+
+
+def test_noowners_positive_proof_persists_across_polls_and_transient_root_absence(R, ssd):
+    source, calls = ssd
+    sibling = source.with_name("sibling")
+    sibling.mkdir()
+    write_watch(R, {"one": {"percorso": str(source)}, "two": {"percorso": str(sibling)}})
+    cache = {}
+    first = R.leggi_configurazione(R._test_home, os.getuid(), cache_volumi=cache)
+    assert calls == [VOLUME] and len(cache) == 1
+    second = R.leggi_configurazione(R._test_home, os.getuid(), precedenti=first, cache_volumi=cache)
+    assert len(second["voci"]) == 2 and calls == [VOLUME]
+    source.rename(source.with_name("renamed"))
+    middle = R.leggi_configurazione(R._test_home, os.getuid(), precedenti=second, cache_volumi=cache)
+    assert len(middle["voci"]) == 2 and calls == [VOLUME]
+    assert middle["watch_status"][0]["warning_code"] == "folder_absent"
+
+
+@pytest.mark.parametrize("identity", ["fsid", "source", "type", "mount_root"])
+def test_persistent_volume_proof_is_invalidated_when_mount_identity_changes_despite_reused_dev(R, ssd, monkeypatch, identity):
+    source, calls = ssd
+    write_watch(R, {"ssd": {"percorso": str(source)}})
+    cache = {}
+    previous = R.leggi_configurazione(R._test_home, os.getuid(), cache_volumi=cache)
+    original_flags, original_stat = R._statfs_configurazione, Path.stat
+
+    def flags(path):
+        values = original_flags(path)
+        if values["mount"] == VOLUME:
+            values = {**values, **({"fsid": (123456, 17)} if identity == "fsid" else
+                                   {"source": "/dev/disk10s2"} if identity == "source" else
+                                   {"type": 18} if identity == "type" else {})}
+        return values
+
+    def metadata(path, *args, **kwargs):
+        s = original_stat(path, *args, **kwargs)
+        if path == Path(VOLUME) and identity == "mount_root":
+            values = list(s)
+            values[1] += 1
+            return os.stat_result(values)
+        return s
+    monkeypatch.setattr(R, "_statfs_configurazione", flags)
+    monkeypatch.setattr(Path, "stat", metadata)
+    loaded = R.leggi_configurazione(R._test_home, os.getuid(), precedenti=previous, cache_volumi=cache)
+    assert len(loaded["voci"]) == 1 and calls == [VOLUME, VOLUME]
+    assert len(cache) == 1
+    assert loaded["validation"]["ssd"]["volume"] != previous["validation"]["ssd"]["volume"]
+
+
+def test_observed_unmount_clears_positive_cache_before_same_identity_remount(R, ssd, monkeypatch):
+    source, calls = ssd
+    write_watch(R, {"ssd": {"percorso": str(source)}})
+    cache = {}
+    first = R.leggi_configurazione(R._test_home, os.getuid(), cache_volumi=cache)
+    original = R._statfs_configurazione
+    monkeypatch.setattr(R, "_statfs_configurazione", lambda path: {
+        "flags": 0, "mount": "/System/Volumes/Data", "fsid": (1, 17), "source": "/dev/disk0s2", "type": 17})
+    unmounted = R.leggi_configurazione(R._test_home, os.getuid(), precedenti=first, cache_volumi=cache)
+    assert not unmounted["voci"] and cache == {}
+    monkeypatch.setattr(R, "_statfs_configurazione", original)
+    remounted = R.leggi_configurazione(R._test_home, os.getuid(), precedenti=unmounted, cache_volumi=cache)
+    assert len(remounted["voci"]) == 1 and calls == [VOLUME, VOLUME]
+
+
+@pytest.mark.parametrize("kind", ["watch", "protected"])
+def test_volume_probe_timeout_preserves_only_unchanged_previously_confirmed_entry(R, ssd, monkeypatch, kind):
+    source, _ = ssd
+    identifier = "ssd" if kind == "watch" else "a" * 32
+    if kind == "watch":
+        write_watch(R, {identifier: {"percorso": str(source)}})
+    else:
+        write_protected(R, source)
+    cache = {}
+    first = R.leggi_configurazione(R._test_home, os.getuid(), cache_volumi=cache)
+    cache.clear()  # Force a fresh volume probe without changing kernel identity.
+    calls = []
+
+    def timeout(mount):
+        calls.append(mount)
+        raise R._RifiutoConfigurazione("volume_validation_timeout")
+    monkeypatch.setattr(R, "_volume_esterno_configurazione", timeout)
+    retained = R.leggi_configurazione(R._test_home, os.getuid(), precedenti=first, cache_volumi=cache)
+    assert [v["id"] for v in retained["voci"]] == [identifier]
+    assert retained["watch_status"][0]["status"] == "confirmed"
+    assert retained["watch_status"][0]["warning_code"] == "volume_validation_timeout"
+    assert retained["diagnostics"][0]["code"] == "volume_validation_timeout"
+    assert calls == [VOLUME] and cache == {}
+    new = R.leggi_configurazione(R._test_home, os.getuid(), cache_volumi=cache)
+    assert not new["voci"] and new["watch_status"][0]["reason_code"] == "volume_validation_timeout"
+
+
+@pytest.mark.parametrize("change", ["explicit_refusal", "fingerprint", "noowners_cleared"])
+def test_previous_volume_confirmation_never_masks_explicit_refusal_or_changed_mount(R, ssd, monkeypatch, change):
+    source, _ = ssd
+    write_watch(R, {"ssd": {"percorso": str(source)}})
+    first = R.leggi_configurazione(R._test_home, os.getuid())
+    original = R._statfs_configurazione
+
+    def flags(path):
+        metadata = original(path)
+        if metadata["mount"] == VOLUME:
+            metadata = {**metadata, **({"fsid": (888888, 17)} if change == "fingerprint" else
+                                      {"flags": 0} if change == "noowners_cleared" else {})}
+        return metadata
+
+    def denied(mount):
+        raise R._RifiutoConfigurazione("noowners_volume_unverified" if change == "explicit_refusal"
+                                      else "volume_validation_timeout")
+    monkeypatch.setattr(R, "_statfs_configurazione", flags)
+    monkeypatch.setattr(R, "_volume_esterno_configurazione", denied)
+    loaded = R.leggi_configurazione(R._test_home, os.getuid(), precedenti=first)
+    assert not loaded["voci"] and loaded["watch_status"][0]["status"] == "rejected"
+    assert loaded["diagnostics"] == []
+
+
+def test_negative_volume_proof_is_retried_on_next_poll_and_removed_watches_drop_cache(R, ssd, monkeypatch):
+    source, calls = ssd
+    write_watch(R, {"ssd": {"percorso": str(source)}})
+    original, cache = R._volume_esterno_configurazione, {}
+    monkeypatch.setattr(R, "_volume_esterno_configurazione", lambda mount: (_ for _ in ()).throw(
+        R._RifiutoConfigurazione("noowners_volume_unverified")))
+    refused = R.leggi_configurazione(R._test_home, os.getuid(), cache_volumi=cache)
+    assert not refused["voci"] and cache == {}
+    monkeypatch.setattr(R, "_volume_esterno_configurazione", original)
+    restored = R.leggi_configurazione(R._test_home, os.getuid(), precedenti=refused, cache_volumi=cache)
+    assert len(restored["voci"]) == 1 and calls == [VOLUME]
+    write_watch(R, {})
+    assert R.leggi_configurazione(R._test_home, os.getuid(), precedenti=restored, cache_volumi=cache)["voci"] == []
+    assert cache == {}
+
+
+@pytest.mark.parametrize("change", ["path", "symlink", "unowned_json", "unowned_parent"])
+def test_timeout_never_bypasses_fresh_path_or_configuration_security_checks(R, ssd, monkeypatch, change):
+    source, _ = ssd
+    store = write_watch(R, {"ssd": {"percorso": str(source)}})
+    first = R.leggi_configurazione(R._test_home, os.getuid())
+    if change == "path":
+        different = source.with_name("different")
+        different.mkdir()
+        write_watch(R, {"ssd": {"percorso": str(different)}})
+    elif change == "symlink":
+        source.rename(source.with_name("target"))
+        source.symlink_to(source.with_name("target"), target_is_directory=True)
+    elif change == "unowned_json":
+        inode, actual = store.stat().st_ino, os.fstat
+
+        def metadata(fd):
+            s = actual(fd)
+            if s.st_ino == inode:
+                values = list(s)
+                values[4] += 1
+                return os.stat_result(values)
+            return s
+        monkeypatch.setattr(R.os, "fstat", metadata)
+    else:
+        actual = Path.stat
+
+        def metadata(path, *args, **kwargs):
+            s = actual(path, *args, **kwargs)
+            if path == source.parent:
+                values = list(s)
+                values[4] += 1
+                return os.stat_result(values)
+            return s
+        monkeypatch.setattr(Path, "stat", metadata)
+    monkeypatch.setattr(R, "_volume_esterno_configurazione", lambda mount: (_ for _ in ()).throw(
+        R._RifiutoConfigurazione("volume_validation_timeout")))
+    after = R.leggi_configurazione(R._test_home, os.getuid(), precedenti=first)
+    assert not after["voci"]
+    assert all(v["status"] == "rejected" for v in after["watch_status"])
+    assert after["diagnostics"] == [] and after["validation"] == {}
+
+
+def test_elenco_keeps_absent_confirmed_watch_active_with_fixed_warning_and_matching_path_token(R, tmp_path, monkeypatch):
+    source = tmp_path.resolve() / "listed"
+    source.mkdir()
+    write_watch(R, {"watch": {"percorso": str(source)}})
+    first = R.leggi_configurazione(R._test_home, os.getuid())
+    source.rename(source.with_name("renamed"))
+    absent = R.leggi_configurazione(R._test_home, os.getuid(), precedenti=first)
+    absent["watch_status"][0]["warning_message"] = SECRET
+    monkeypatch.setattr(R, "stato", lambda: {
+        "running": True, "healthy": True, "needs_fda": False, "schema_supported": True,
+        "watched_ids": ["watch"], "watch_status": absent["watch_status"]})
+    row = R.elenco_sorveglianza()[0]
+    assert row["esiste"] is False and row["raccolta_attiva"] is True
+    assert row["raccolta"] == "confermata" and row["reason_code"] is None
+    assert row["warning_code"] == "folder_absent"
+    assert row["warning_message"] == R.AVVISI_CONFIGURAZIONE["folder_absent"]
+    assert SECRET not in json.dumps(row)
+    assert str(source) not in json.dumps(absent["watch_status"])
+    assert len(absent["watch_status"][0]["configuration_token"]) == 64
+
+
+@pytest.mark.parametrize("change", ["different_path", "different_id", "wrong_token", "missing_token", "symlink", "parent_owner", "unknown_warning"])
+def test_elenco_never_uses_absent_ack_for_new_root_or_unsafe_path(R, tmp_path, monkeypatch, change):
+    source = tmp_path.resolve() / "listed"
+    source.mkdir()
+    store = write_watch(R, {"watch": {"percorso": str(source)}})
+    first = R.leggi_configurazione(R._test_home, os.getuid())
+    source.rename(source.with_name("renamed"))
+    absent = R.leggi_configurazione(R._test_home, os.getuid(), precedenti=first)
+    remote = absent["watch_status"][0]
+    if change == "different_path":
+        write_watch(R, {"watch": {"percorso": str(source.with_name("new-missing"))}})
+    elif change == "different_id":
+        write_watch(R, {"new": {"percorso": str(source)}})
+    elif change == "wrong_token":
+        remote["configuration_token"] = "0" * 64
+    elif change == "missing_token":
+        remote.pop("configuration_token")
+    elif change == "symlink":
+        source.symlink_to(source.with_name("renamed"), target_is_directory=True)
+    elif change == "parent_owner":
+        actual = Path.stat
+
+        def metadata(path, *args, **kwargs):
+            s = actual(path, *args, **kwargs)
+            if path == source.parent:
+                values = list(s)
+                values[4] += 1
+                return os.stat_result(values)
+            return s
+        monkeypatch.setattr(Path, "stat", metadata)
+    else:
+        remote["warning_code"] = SECRET
+    monkeypatch.setattr(R, "stato", lambda: {
+        "running": True, "healthy": True, "needs_fda": False, "schema_supported": True,
+        "watched_ids": ["watch"], "watch_status": [remote]})
+    row = R.elenco_sorveglianza()[0]
+    assert row["raccolta_attiva"] is False and row["raccolta"] == "rifiutata"
+    assert "warning_code" not in row
+    assert SECRET not in json.dumps(row)
+
+
+def test_elenco_reports_confirmed_volume_timeout_as_warning_without_deactivating_watch(R, tmp_path, monkeypatch):
+    source = tmp_path.resolve() / "listed"
+    source.mkdir()
+    write_watch(R, {"watch": {"percorso": str(source)}})
+    token = R._token_configurazione("watch", str(source), "sorveglianza")
+    monkeypatch.setattr(R, "stato", lambda: {
+        "running": True, "healthy": True, "needs_fda": False, "schema_supported": True,
+        "watched_ids": ["watch"], "watch_status": [{"id": "watch", "status": "confirmed",
+            "reason_code": None, "warning_code": "volume_validation_timeout",
+            "warning_message": SECRET, "configuration_token": token}]})
+    row = R.elenco_sorveglianza()[0]
+    assert row["raccolta_attiva"] is True and row["raccolta"] == "confermata"
+    assert row["warning_code"] == "volume_validation_timeout"
+    assert row["warning_message"] == R.AVVISI_CONFIGURAZIONE["volume_validation_timeout"]
+    assert SECRET not in json.dumps(row)

@@ -447,8 +447,13 @@ ESITI_CONFIGURAZIONE = {
     "owner_mismatch": "La cartella non appartiene all'utente della configurazione.",
     "noowners_volume_unverified": "Il volume con proprietari ignorati non è stato confermato come disco esterno fisico e non di sistema.",
     "folder_missing": "La cartella configurata non è presente. Scegli una cartella esistente da sorvegliare.",
+    "volume_validation_timeout": "La verifica del volume esterno ha superato il tempo disponibile.",
     "config_unreadable": "Il file di configurazione non è leggibile o non ha proprietario e autorizzazioni validi.",
     "duplicate_id": "L'ID è usato da più voci di configurazione. Assegna un ID distinto alla sorveglianza.",
+}
+AVVISI_CONFIGURAZIONE = {
+    "folder_absent": "Cartella assente: la sorveglianza già confermata resta attiva sul percorso configurato.",
+    "volume_validation_timeout": "Verifica del volume in ritardo: la cartella già confermata resta attiva sullo stesso volume montato.",
 }
 
 
@@ -497,7 +502,10 @@ def _statfs_configurazione(dove):
         monte = os.fsdecode(dati.f_mntonname)
         if not monte or not os.path.isabs(monte) or os.path.normpath(monte) != monte:
             raise ValueError()
-        return {"flags": int(dati.f_flags), "mount": monte}
+        return {"flags": int(dati.f_flags), "mount": monte,
+                "fsid": tuple(int(v) for v in dati.f_fsid),
+                "source": os.fsdecode(dati.f_mntfromname),
+                "type": int(dati.f_type)}
     except (AttributeError, OSError, ValueError, UnicodeError) as e:
         raise _RifiutoConfigurazione("noowners_volume_unverified") from e
 
@@ -508,18 +516,14 @@ def _volume_esterno_configurazione(monte):
             or len(Path(monte).parts) != 3):
         raise _RifiutoConfigurazione("noowners_volume_unverified")
     cache = {}
-    scadenza = time.monotonic() + 1.0
 
     def info(percorso):
         if percorso not in cache:
             if len(cache) >= 16:
                 raise ValueError()
-            restante = scadenza - time.monotonic()
-            if restante <= 0:
-                raise ValueError()
             risultato = subprocess.run(["/usr/sbin/diskutil", "info", "-plist", percorso],
                                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                       timeout=restante, check=False,
+                                       timeout=3.0, check=False,
                                        env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"})
             if risultato.returncode or len(risultato.stdout) > 65536:
                 raise ValueError()
@@ -560,8 +564,30 @@ def _volume_esterno_configurazione(monte):
 
     try:
         fisico(monte)
-    except (OSError, ValueError, subprocess.TimeoutExpired, plistlib.InvalidFileException) as e:
+    except subprocess.TimeoutExpired as e:
+        raise _RifiutoConfigurazione("volume_validation_timeout") from e
+    except (OSError, ValueError, plistlib.InvalidFileException) as e:
         raise _RifiutoConfigurazione("noowners_volume_unverified") from e
+
+
+def _firma_volume_configurazione(p, s=None):
+    """Cheap kernel identity, re-read before using any session volume proof."""
+    s = s if s is not None else p.stat()
+    if sys.platform != "darwin":
+        return {"flags": 0, "mount": None, "identity": (s.st_dev,)}
+    volume = _statfs_configurazione(p)
+    monte = Path(volume["mount"])
+    radice = monte.stat()
+    montato = _statfs_configurazione(monte)
+    campi = ("flags", "mount", "fsid", "source", "type")
+    if (radice.st_dev != s.st_dev or any(volume.get(k) != montato.get(k) for k in campi)
+            or montato["mount"] != str(monte)):
+        raise _RifiutoConfigurazione("noowners_volume_unverified")
+    # Darwin's fsid and mount source distinguish reused st_dev values. The
+    # mount-root inode also prevents reusing a proof after the path is replaced.
+    identity = (s.st_dev, tuple(volume.get("fsid", ())), volume["mount"],
+                volume.get("source"), volume.get("type"), volume["flags"], radice.st_ino)
+    return {**volume, "identity": identity}
 
 
 def _cartella_posseduta_configurazione(p, uid, configurazione_validata=False, volumi=None):
@@ -574,32 +600,105 @@ def _cartella_posseduta_configurazione(p, uid, configurazione_validata=False, vo
     # A human CLI request is authenticated by its real UID; root must first
     # read the symlink-free, owned configuration with _leggi_json_posseduto.
     cache = volumi if volumi is not None else {}
-    if s.st_dev not in cache:
-        try:
-            volume = _statfs_configurazione(p)
-            cache[s.st_dev] = {**volume, "confirmed": False}
-        except _RifiutoConfigurazione as errore:
-            cache[s.st_dev] = {"error": errore.code}
-            raise
-    volume = cache[s.st_dev]
+    metadati = _firma_volume_configurazione(p, s)
+    identity = metadati["identity"]
+    persistenti = cache.get("_persistenti", {})
+    cache.setdefault("_visti", set()).add(identity)
+    if identity not in cache:
+        cache[identity] = {**metadati, "confirmed": identity in persistenti}
+    volume = cache[identity]
     if "error" in volume:
-        raise _RifiutoConfigurazione(volume["error"])
+        if (volume["error"] != "volume_validation_timeout"
+                or identity not in cache.get("_timeout_consentiti", set())):
+            raise _RifiutoConfigurazione(volume["error"])
     if volume["flags"] & MNT_IGNORE_OWNERSHIP:
         if not configurazione_validata and not (uid > 0 and uid == os.getuid()):
             raise _RifiutoConfigurazione("owner_mismatch")
-        if not volume["confirmed"]:
+        if not volume["confirmed"] and "error" not in volume:
             try:
                 _volume_esterno_configurazione(volume["mount"])
             except _RifiutoConfigurazione as errore:
                 volume["error"] = errore.code
                 raise
             volume["confirmed"] = True
+            persistenti[identity] = True
         return
     if s.st_uid != uid:
         raise _RifiutoConfigurazione("owner_mismatch")
 
 
-def leggi_cartelle(percorso, uid, esiti=None, volumi=None):
+def _identita_voce_configurazione(identificatore, origine, tipo):
+    p = Path(origine)
+    genitore = p.parent.stat()
+    presente = p.exists()
+    volume = _firma_volume_configurazione(p if presente else p.parent)
+    return {"id": identificatore, "origine": origine, "tipo": tipo,
+            "parent": (genitore.st_dev, genitore.st_ino, genitore.st_uid),
+            "volume": volume["identity"]}
+
+
+def _token_configurazione(identificatore, origine, tipo):
+    """Bind a public ID acknowledgement to its path without publishing paths."""
+    import hashlib
+    dati = json.dumps([identificatore, origine, tipo], ensure_ascii=True,
+                      separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(dati).hexdigest()
+
+
+def _conferma_configurazione(validatore, identificatore, origine, tipo, precedenti,
+                            volumi, validation, diagnostics):
+    """Keep a transient failure only for an unchanged, previously accepted root.
+
+    Owned JSON, symlink checks and ownership validation are still performed by
+    the validator on every poll. Previous roots never authorize changed entries.
+    """
+    precedente = None
+    if isinstance(precedenti, dict):
+        confermati = {v.get("id") for v in precedenti.get("watch_status", [])
+                      if isinstance(v, dict) and v.get("status") == "confirmed"}
+        candidato = precedenti.get("validation", {}).get(identificatore)
+        if (identificatore in confermati and isinstance(candidato, dict)
+                and candidato.get("origine") == origine and candidato.get("tipo") == tipo):
+            try:
+                attuale = _identita_voce_configurazione(identificatore, origine, tipo)
+            except (OSError, ValueError):
+                pass
+            else:
+                if attuale == candidato:
+                    precedente = candidato
+    richiedi_esistente, avvisi = True, []
+    try:
+        while True:
+            try:
+                risultato = validatore(richiedi_esistente)
+                break
+            except _RifiutoConfigurazione as errore:
+                if (errore.code == "folder_missing" and precedente is not None
+                        and richiedi_esistente and not Path(origine).exists()):
+                    richiedi_esistente = False
+                    avvisi.append("folder_absent")
+                elif (errore.code == "volume_validation_timeout" and precedente is not None
+                      and "volume_validation_timeout" not in avvisi):
+                    volumi["_timeout_consentiti"] = {precedente["volume"]}
+                    avvisi.append("volume_validation_timeout")
+                else:
+                    raise
+    finally:
+        volumi.pop("_timeout_consentiti", None)
+    if validation is not None:
+        validation[identificatore] = _identita_voce_configurazione(identificatore, origine, tipo)
+    esito = _esito_configurazione(identificatore)
+    esito["configuration_token"] = _token_configurazione(identificatore, origine, tipo)
+    if avvisi:
+        esito.update(warning_code=avvisi[0], warning_message=AVVISI_CONFIGURAZIONE[avvisi[0]])
+        if diagnostics is not None:
+            diagnostics.extend({"id": identificatore, "code": code,
+                                "message": AVVISI_CONFIGURAZIONE[code]} for code in avvisi)
+    return risultato, esito
+
+
+def leggi_cartelle(percorso, uid, esiti=None, volumi=None, precedenti=None,
+                  validation=None, diagnostics=None):
     r = _leggi_json_posseduto(percorso, uid)
     if r is None:
         return []
@@ -616,10 +715,12 @@ def leggi_cartelle(percorso, uid, esiti=None, volumi=None):
                 "backup", "plaintext_residuo")}
             if not pulita["id"] or any(not pulita[k] or not os.path.isabs(pulita[k]) for k in ("origine", "bundle", "montaggio")):
                 raise _RifiutoConfigurazione("invalid_path")
-            _valida_radici(pulita, uid, configurazione_validata=True, volumi=volumi)
+            _, esito = _conferma_configurazione(
+                lambda _: _valida_radici(pulita, uid, configurazione_validata=True, volumi=volumi),
+                identificatore, pulita["origine"], "protetta", precedenti, volumi, validation, diagnostics)
             risultato.append(pulita)
             if esiti is not None:
-                esiti.append(_esito_configurazione(identificatore))
+                esiti.append(esito)
         except (OSError, ValueError) as errore:
             if esiti is None:
                 raise
@@ -697,7 +798,8 @@ def _valida_sorveglianza(p, uid, richiedi_esistente=True, configurazione_validat
     return str(p)
 
 
-def leggi_sorveglianza(percorso, uid, esiti=None, rifiutate=None, volumi=None):
+def leggi_sorveglianza(percorso, uid, esiti=None, rifiutate=None, volumi=None, precedenti=None,
+                      validation=None, diagnostics=None):
     dati = _leggi_json_posseduto(percorso, uid)
     if dati is None:
         return []
@@ -709,15 +811,23 @@ def leggi_sorveglianza(percorso, uid, esiti=None, rifiutate=None, volumi=None):
         try:
             if not _id_configurazione(identificatore) or not isinstance(voce, dict):
                 raise _RifiutoConfigurazione("invalid_entry")
-            # Historical resolvers accept a temporarily missing source. The
-            # collector confirms only roots that exist at validation time.
-            percorso = _valida_sorveglianza(voce.get("percorso", ""), uid,
-                                            richiedi_esistente=esiti is not None,
-                                            configurazione_validata=True, volumi=volumi)
+            if esiti is None:
+                # Historical resolvers can still resolve a missing source.
+                percorso = _valida_sorveglianza(voce.get("percorso", ""), uid,
+                                                richiedi_esistente=False,
+                                                configurazione_validata=True, volumi=volumi)
+                esito = _esito_configurazione(identificatore)
+            else:
+                percorso, esito = _conferma_configurazione(
+                    lambda esistente: _valida_sorveglianza(
+                        voce.get("percorso", ""), uid, richiedi_esistente=esistente,
+                        configurazione_validata=True, volumi=volumi),
+                    identificatore, voce.get("percorso", ""), "sorveglianza",
+                    precedenti, volumi, validation, diagnostics)
             risultati.append({"id": identificatore, "nome": _testo(voce.get("nome")) or Path(percorso).name,
                               "origine": percorso, "tipo": "sorveglianza"})
             if esiti is not None:
-                esiti.append(_esito_configurazione(identificatore))
+                esiti.append(esito)
         except (OSError, ValueError) as errore:
             if esiti is None:
                 raise
@@ -732,20 +842,24 @@ def leggi_sorveglianza(percorso, uid, esiti=None, rifiutate=None, volumi=None):
     return risultati
 
 
-def leggi_configurazione(home, uid):
+def leggi_configurazione(home, uid, precedenti=None, cache_volumi=None):
     """Collector input: accepted roots plus a bounded, content-free ID report.
 
     Reject each unreadable/unowned file independently and remove its roots.
-    Individual bad entries are removed without retaining their old roots.
+    Changed or invalid entries are removed. Previously confirmed roots retain
+    transient absence/timeouts only with unchanged parent and kernel identity.
     """
     home = Path(home)
-    voci, esiti, volumi = [], [], {}
+    persistenti = cache_volumi if cache_volumi is not None else {}
+    voci, esiti, volumi = [], [], {"_persistenti": persistenti}
+    validation, diagnostics = {}, []
     for loader, percorso in (
             (leggi_cartelle, home / ".paratia" / "cartelle.json"),
             (leggi_sorveglianza, home / ".paratia" / "registro" / "sorveglianza.json")):
         esiti_file = []
         try:
-            valide = loader(percorso, uid, esiti=esiti_file, volumi=volumi)
+            valide = loader(percorso, uid, esiti=esiti_file, volumi=volumi,
+                            precedenti=precedenti, validation=validation, diagnostics=diagnostics)
         except (OSError, ValueError):
             esiti.append(_esito_configurazione(None, "config_unreadable"))
         else:
@@ -760,7 +874,13 @@ def leggi_configurazione(home, uid):
         voci = [voce for voce in voci if voce["id"] not in duplicati]
         esiti = [_esito_configurazione(voce["id"], "duplicate_id")
                  if voce["id"] in duplicati else voce for voce in esiti]
-    return {"voci": voci, "watch_status": esiti}
+        validation = {k: v for k, v in validation.items() if k not in duplicati}
+        diagnostics = [v for v in diagnostics if v["id"] not in duplicati]
+    for identity in list(persistenti):
+        if identity not in volumi.get("_visti", set()):
+            del persistenti[identity]
+    return {"voci": voci, "watch_status": esiti, "validation": validation,
+            "diagnostics": diagnostics}
 
 
 def _cambia_sorveglianza(identificatore, percorso=None, nome=""):
@@ -852,7 +972,7 @@ def sorveglia(identificatore, percorso, nome=""):
     return _cambia_sorveglianza(identificatore, str(percorso), nome)
 
 
-def _raccolta_voce(salute, identificatore, esito_locale=None):
+def _raccolta_voce(salute, identificatore, esito_locale=None, token_locale=None):
     """Use only fixed messages, including when collector status is untrusted."""
     esito = next((v for v in salute.get("watch_status", []) if isinstance(v, dict)
                   and v.get("id") == identificatore), None) if isinstance(salute.get("watch_status", []), list) else None
@@ -866,8 +986,14 @@ def _raccolta_voce(salute, identificatore, esito_locale=None):
         return {"raccolta": "rifiutata", "reason_code": code,
                 "message": "Configurazione rifiutata: " + ESITI_CONFIGURAZIONE[code]}
     if (esito and esito.get("status") == "confirmed") or identificatore in _ids_confermati(salute):
-        return {"raccolta": "confermata", "reason_code": None,
-                "message": "Cartella confermata dal raccoglitore."}
+        result = {"raccolta": "confermata", "reason_code": None,
+                  "message": "Cartella confermata dal raccoglitore."}
+        code = esito.get("warning_code") if esito else None
+        if (isinstance(code, str) and code in AVVISI_CONFIGURAZIONE and token_locale is not None
+                and esito.get("configuration_token") == token_locale):
+            result.update(warning_code=code, warning_message=AVVISI_CONFIGURAZIONE[code],
+                          message=AVVISI_CONFIGURAZIONE[code])
+        return result
     return {"raccolta": "configurata", "reason_code": None,
             "message": "Cartella configurata; conferma del raccoglitore ancora assente."}
 
@@ -881,12 +1007,29 @@ def elenco_sorveglianza():
     risultati = []
     esiti_per_id = {v["id"]: v for v in esiti if v["id"] is not None}
     for voce in [*voci, *rifiutate]:
-        raccolta = _raccolta_voce(salute, voce["id"], esiti_per_id.get(voce["id"]))
+        esito_locale = esiti_per_id.get(voce["id"])
+        token = _token_configurazione(voce["id"], voce["origine"], "sorveglianza")
+        remoto = next((v for v in salute.get("watch_status", []) if isinstance(v, dict)
+                       and v.get("id") == voce["id"]), None) if isinstance(salute.get("watch_status"), list) else None
+        if (esito_locale and esito_locale.get("reason_code") == "folder_missing"
+                and remoto and remoto.get("status") == "confirmed"
+                and remoto.get("warning_code") == "folder_absent"
+                and remoto.get("configuration_token") == token):
+            try:
+                _valida_sorveglianza(voce["origine"], os.getuid(), richiedi_esistente=False,
+                                    configurazione_validata=True)
+            except (OSError, ValueError):
+                pass
+            else:
+                esito_locale = None
+        raccolta = _raccolta_voce(salute, voce["id"], esito_locale, token_locale=token)
         esiste = bool(voce["origine"] and Path(voce["origine"]).is_dir())
         risultati.append({**voce, "percorso": voce["origine"], "esiste": esiste,
+                          "configuration_token": token,
                           "configurata": True, "raccolta_attiva": bool(_raccolta_pronta(salute)
                               and raccolta["raccolta"] != "rifiutata"
-                              and voce["id"] in _ids_confermati(salute) and esiste), **raccolta})
+                              and voce["id"] in _ids_confermati(salute)
+                              and (esiste or raccolta.get("warning_code") == "folder_absent")), **raccolta})
     return sorted(risultati, key=lambda voce: (voce["nome"].casefold(), voce["id"]))
 
 
@@ -1200,7 +1343,16 @@ def _stati_sorveglianza(values):
         if not isinstance(code, str) or code not in reasons:
             code = "invalid_entry" if status == "rejected" else None
         message = reasons.get(code, "La cartella non è stata accettata dal raccoglitore.") if status == "rejected" else "Cartella confermata dal raccoglitore."
-        result.append({"id": identifier, "status": status, "reason_code": code, "message": message})
+        record = {"id": identifier, "status": status, "reason_code": code, "message": message}
+        if status == "confirmed":
+            warning = value.get("warning_code")
+            warnings = globals().get("AVVISI_CONFIGURAZIONE", {})
+            if isinstance(warning, str) and warning in warnings:
+                record.update(warning_code=warning, warning_message=warnings[warning])
+            token = value.get("configuration_token")
+            if isinstance(token, str) and re.fullmatch(r"[0-9a-f]{64}", token):
+                record["configuration_token"] = token
+        result.append(record)
     return result
 
 

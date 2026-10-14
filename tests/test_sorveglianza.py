@@ -86,6 +86,7 @@ def test_listing_is_metadata_only_and_watch_does_not_encrypt_or_move(R, folder, 
     assert "raccolta non attiva" in result["messaggio"]
     assert rows == [{"id": "documenti-1", "nome": "Documenti di prova", "origine": str(folder),
                      "percorso": str(folder), "tipo": "sorveglianza", "esiste": True,
+                     "configuration_token": R._token_configurazione("documenti-1", str(folder), "sorveglianza"),
                      "configurata": True, "raccolta_attiva": False,
                      "raccolta": "configurata", "reason_code": None,
                      "message": "Cartella configurata; conferma del raccoglitore ancora assente."}]
@@ -127,7 +128,7 @@ def test_listing_projects_validated_metadata_from_user_configuration(R, folder):
         "password": KEY.decode(), "stato": "protetta", "healthy": True,
     }}}), encoding="utf-8")
     row = R.elenco_sorveglianza()[0]
-    assert set(row) == {"id", "nome", "origine", "percorso", "tipo", "esiste", "configurata", "raccolta_attiva",
+    assert set(row) == {"id", "nome", "origine", "percorso", "tipo", "esiste", "configuration_token", "configurata", "raccolta_attiva",
                         "raccolta", "reason_code", "message"}
     assert row["configurata"] is True and row["raccolta_attiva"] is False
     assert row["nome"] == "Nome umano"

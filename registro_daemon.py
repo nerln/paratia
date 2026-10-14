@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import datetime
 import fcntl
 import importlib.util
@@ -136,14 +137,23 @@ class FlussoEslogger:
                 p = voce.get(campo)
                 if not isinstance(p, str) or not os.path.isabs(p):
                     continue
-                self.codifica_incerta |= any(c in p for c in ('"', "\\"))
+                # JSON can spell controls with short escapes (\t, \n, ...) or
+                # Unicode escapes. A parent inherits them from its watched
+                # root. Decode every line for these uncommon paths, avoiding a
+                # fragile list of raw spellings and preserving create/rename.
+                self.codifica_incerta |= any(ord(c) < 32 or c in ('"', "\\") for c in p)
                 for variante in _varianti_radice(p):
                     # create/rename split a newly created watched directory into
                     # its parent and filename. Retain its parent as a candidate.
                     for candidato in (variante, os.path.dirname(variante)):
                         if candidato and candidato != "/":
                             for forma in ("NFC", "NFD"):
-                                radici.add(unicodedata.normalize(forma, candidato).encode("utf8"))
+                                try:
+                                    radici.add(unicodedata.normalize(forma, candidato).encode("utf8"))
+                                except UnicodeError:
+                                    # Surrogate-escaped filesystem paths do not
+                                    # have a trustworthy UTF-8 needle.
+                                    self.codifica_incerta = True
         self.radici = tuple(sorted(radici, key=len, reverse=True))
 
     def _pertinente(self, riga):
@@ -202,6 +212,47 @@ class FlussoEslogger:
                 "event_lag_seconds": round(lag, 3) if lag is not None else None}
 
 
+class CaricatoreConfigurazione:
+    """Validate owned configuration without pausing the eslogger pipe reader.
+
+    Call these methods from the reader thread. A single worker owns the volume
+    cache, and a completed result must be collected before another load starts.
+    A failed load preserves the previous successful configuration.
+    """
+    def __init__(self, load, precedenti=None, cache_volumi=None):
+        self._load = load
+        self._precedenti = precedenti
+        self._cache_volumi = cache_volumi if cache_volumi is not None else {}
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="paratia-configurazione")
+        self._future = None
+        self._chiuso = False
+
+    def richiedi(self):
+        if self._chiuso or self._future is not None:
+            return False
+        self._future = self._executor.submit(
+            self._load, precedenti=self._precedenti, cache_volumi=self._cache_volumi)
+        return True
+
+    def raccogli(self):
+        if self._chiuso or self._future is None or not self._future.done():
+            return None
+        risultato, self._future = self._future, None
+        configurazione = risultato.result()
+        self._precedenti = configurazione
+        return configurazione
+
+    def chiudi(self):
+        if self._chiuso:
+            return
+        self._chiuso = True
+        if self._future is not None:
+            self._future.cancel()
+        self._future = None
+        self._executor.shutdown(wait=False, cancel_futures=True)
+
+
 def contesto_launcher():
     return {"launch_mode": "app" if os.environ.get("PARATIA_REGISTRY_LAUNCHER") == "app" else "legacy-python",
             "fda_entry": FDA_APP, "fda_regrant_after_build": True}
@@ -237,6 +288,29 @@ def scrivi_stato(p, dati):
         f.flush()
         f.truncate()
         os.fsync(fd)
+
+
+def applica_configurazione(registro, osservatore, flusso, informazioni, configurazione, sink):
+    """Commit a finished snapshot on the main thread, with fixed diagnostics."""
+    if osservatore.protetti != configurazione["voci"]:
+        osservatore.protetti = configurazione["voci"]
+        flusso.ricompila_radici()
+    informazioni["watched_ids"] = [voce["id"] for voce in osservatore.protetti]
+    informazioni["watch_status"] = registro._stati_sorveglianza(configurazione["watch_status"])
+    motivi = {"folder_absent": "cartella-assente",
+              "volume_validation_timeout": "verifica-volume-in-ritardo"}
+    diagnostici = [{"id": voce["id"], "code": voce.get("warning_code")}
+                  for voce in informazioni["watch_status"]]
+    diagnostici += [voce for voce in configurazione.get("diagnostics", []) if isinstance(voce, dict)]
+    visti, ids = set(), set(informazioni["watched_ids"])
+    for voce in diagnostici:
+        code, identifier = voce.get("code"), voce.get("id")
+        if not isinstance(code, str) or not isinstance(identifier, str):
+            continue
+        motivo = motivi.get(code)
+        if motivo and identifier in ids and (code, identifier) not in visti:
+            visti.add((code, identifier))
+            sink(registro._diagnostico(motivo, cartella=identifier))
 
 
 def main(argv=None):
@@ -279,8 +353,10 @@ def main(argv=None):
         s = p.lstat()
         if not stat.S_ISREG(s.st_mode) or s.st_uid != 0 or s.st_mode & 0o077:
             raise ValueError("Un file del registro ha autorizzazioni POSIX non valide.")
-    def protetti():
-        return R.leggi_configurazione(Path(utente.pw_dir), args.uid)
+    cache_volumi = {}
+    def protetti(precedenti=None, cache_volumi=cache_volumi):
+        return R.leggi_configurazione(Path(utente.pw_dir), args.uid,
+                                     precedenti=precedenti, cache_volumi=cache_volumi)
     sink = R.ScrittoreDiagnostici(lambda record: R.appendi(catena, record))
     config_illeggibile = False
     try:
@@ -291,14 +367,16 @@ def main(argv=None):
         sink(R._diagnostico("registro-cartelle-illeggibile"))
     osservatore = R.Osservatore(configurazione["voci"], sink, R.snapshot_processi())
     flusso = FlussoEslogger(osservatore)
+    caricatore = CaricatoreConfigurazione(protetti, configurazione, cache_volumi)
     sink(R._diagnostico("osservatore-avviato", uid=args.uid))
     contesto = contesto_launcher()
     informazioni = {**contesto, "running": False, "healthy": False, "needs_fda": None,
                     "message": "Avvio del registro kernel in corso.", "dropped_events": 0,
                     "drop_detection_available": False, "watched_ids": [v["id"] for v in osservatore.protetti],
-                    "watch_status": configurazione["watch_status"], "schema_supported": None,
+                    "watch_status": [], "schema_supported": None,
                     "diagnostic_counts": {}, **flusso.metriche(),
                     "installed_cdhash": R._cdhash_app(SUPPORT / "Paratia.app")}
+    applica_configurazione(R, osservatore, flusso, informazioni, configurazione, sink)
     informazioni["health_reasons"] = R.motivi_salute(informazioni)
     scrivi_stato(stato, informazioni)
     processo = subprocess.Popen(["/usr/bin/eslogger", *R.EVENTI], stdout=subprocess.PIPE,
@@ -307,26 +385,26 @@ def main(argv=None):
     for numero in (signal.SIGTERM, signal.SIGINT):
         signal.signal(numero, lambda *_: fermati.__setitem__(0, True))
     buffer, errori, scarta = b"", b"", False
-    ultimo_stato, ultimo_config, visto = 0.0, 0.0, False
+    ultimo_stato, ultimo_config, visto = 0.0, time.monotonic(), False
     fdout, fderr = processo.stdout.fileno(), processo.stderr.fileno()
     aperti = {fdout, fderr}
     try:
         while not fermati[0]:
             ora = time.monotonic()
             if ora - ultimo_config >= 5:
-                try:
-                    configurazione = protetti()
-                    if osservatore.protetti != configurazione["voci"]:
-                        osservatore.protetti = configurazione["voci"]
-                        flusso.ricompila_radici()
-                    informazioni["watched_ids"] = [v["id"] for v in osservatore.protetti]
-                    informazioni["watch_status"] = configurazione["watch_status"]
+                if caricatore.richiedi():
+                    ultimo_config = ora
+            try:
+                nuova = caricatore.raccogli()
+                if nuova is not None:
+                    configurazione = nuova
+                    applica_configurazione(R, osservatore, flusso, informazioni, configurazione, sink)
                     config_illeggibile = False
-                except (OSError, ValueError):
-                    config_illeggibile = True
-                    sink(R._diagnostico("registro-cartelle-illeggibile"))
-                    # Keep last valid paths; never silently broaden to all files.
-                ultimo_config = ora
+            except (OSError, ValueError):
+                config_illeggibile = True
+                sink(R._diagnostico("registro-cartelle-illeggibile"))
+                # Explicitly unhealthy on an unexpected loader failure; owned
+                # file/entry refusals are handled independently by the loader.
             leggibili, _, _ = select.select(list(aperti), [], [], 1)
             for fd in leggibili:
                 pezzo = os.read(fd, 262144)
@@ -376,6 +454,7 @@ def main(argv=None):
             if processo.poll() is not None and not aperti:
                 break
     finally:
+        caricatore.chiudi()
         if processo.poll() is None:
             processo.terminate()
             try:

@@ -97,6 +97,13 @@ N s fa** segnala il tempo trascorso dalla ricezione: il silenzio non prova un
 ritardo. Una metrica assente è indicata come non misurata. Query e CSV riportano
 gli stessi metadati di raccolta, anche quando non ci sono righe.
 
+Una cartella già confermata che manca per un momento resta sorvegliata e
+mostra **Confermata dal raccoglitore · Cartella assente…**. Lo stesso vale
+per un timeout transitorio della verifica del volume, con il relativo avviso.
+Una nuova cartella assente o un percorso sostituito restano rifiutati: la
+conferma è legata al percorso corrente, senza riusare un vecchio ID per
+coprire una richiesta diversa.
+
 La raccolta predefinita del giro 5 esclude `lookup` e `mmap`; i relativi eventi
 storici restano leggibili. Un filtro economico prima della decodifica JSON
 riconosce le radici sorvegliate e le loro forme alternative, senza scartare la

@@ -69,13 +69,22 @@ final class AppModel: ObservableObject {
 
     func watchStatus(_ record: Record) -> String {
         let statuses = registry["watch_status"] as? [Record] ?? []
-        let status = statuses.first { $0.text("id") == record.text("id") }
+        let token = record.text("configuration_token", fallback: "")
+        let status = statuses.first {
+            $0.text("id") == record.text("id") &&
+            (token.isEmpty || $0.text("configuration_token", fallback: "") == token)
+        }
         let refused = status.map { $0.text("status") == "rejected" }
             ?? (record.text("raccolta", fallback: "") == "rifiutata")
         if refused {
             let message = status?.text("message", fallback: "La cartella non può essere sorvegliata.")
                 ?? record.text("message", fallback: "La cartella non può essere sorvegliata.")
             return "Rifiutata dal raccoglitore: " + message
+        }
+        let warning = status?.text("warning_message", fallback: "")
+            ?? record.text("warning_message", fallback: "")
+        if registry.flag("running"), !(warning.isEmpty) {
+            return "Confermata dal raccoglitore · " + warning
         }
         if record["esiste"] as? Bool == false { return "Configurata · cartella non presente" }
         let kernelIDs = registry["watched_ids"] as? [String] ?? []
