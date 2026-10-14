@@ -102,13 +102,19 @@ paratia unlock && paratia seal ~/dev/paratia/hooks/paratia-gate.py ~/.claude/set
 ## Mac app, existing folders and access history
 
 The native app for macOS 13+ has **Cartelle**, **Registro**, **Etichette**,
-**Banco di prova** and **Impostazioni**. Protect an existing folder on an external
-disk, choose its passphrase in the GUI, and open or close it there. Migration
-copies and verifies data before removing the source; an interrupted migration
-keeps recovery actions visible. Timed closure retries a busy mount without force.
-APFS destinations are checked through their physical stores to the whole disk;
-exFAT uses its parent whole disk. The destination must resolve to an external
-physical disk; internal disks and disk images are refused. Key verification
+**Banco di prova** and **Impostazioni**. To protect an existing folder, choose that
+one folder and its passphrase in the GUI. The encrypted image (AES-256) is saved
+automatically on the same disk, in a hidden place, so no external disk is needed.
+The folder's content moves into the image, and the plaintext is removed only after
+verification: closed, the folder is empty; opened with the passphrase, it shows its
+files again. **Togli la protezione** puts the files back into the folder as normal
+files, verified, and then deletes the image. If you prefer another location, you can
+pick any local physical disk, internal or external; disk images, network or
+cloud-synced folders, and a location inside the folder itself are refused. Migration
+verifies the data before removing the source; an interrupted migration keeps recovery
+actions visible. Timed closure retries a busy mount without force. Locations are
+checked through their physical stores to the whole disk: APFS through its physical
+stores, exFAT through its parent whole disk. Key verification
 checks an encrypted image without mounting it, independently of localized
 authentication messages. If the folder is busy, close apps using it and
 terminals whose current directory is inside it. **Forza chiusura…** requires
@@ -176,10 +182,11 @@ and JSON encodings, while retaining sequence numbers for loss detection.
 Roots containing JSON control escapes use full decoding to preserve events.
 This does not add a guarantee for inherited mappings or byte reads.
 `paratia registro stato` reports observed event latency, last receive time,
-lines/s and readable `health_reasons`. The app shows delayed events, losses,
-refused watches and absence of confirmed folders; idle time alone is not delay.
-A loss is counted in `dropped_events` for the whole run, but it blocks `healthy`
-and shows as a health reason only for the ten minutes after it was observed.
+lines/s and readable `health_reasons`. The app shows delayed events, refused
+watches and absence of confirmed folders as reasons for an unhealthy state; idle time
+alone is not delay. A loss is counted in `dropped_events` for the whole run. It is a
+notice, not a blocker: it does not make `healthy` false, and the app shows it as a
+notice only for the ten minutes after it was observed.
 The repeatable synthetic throughput measurement is documented in
 [the October status](docs/stato-2026-10.md). It measures Python processing,
 excluding eslogger and log fsync; live idle CPU and delay must be measured again
@@ -213,7 +220,9 @@ for inspection. Native ICNS conversion still needs the supervisor's build:
 `iconutil` rejected the valid PNG set in this sandbox.
 
 Close all copies of Paratia and run this yourself in Terminal to prepare a
-separate root-owned bootstrap copy. The current command is in the [GUI guide, section Impostazioni](docs/gui-mac.md#impostazioni): copy it from there.
+separate root-owned bootstrap copy. It is needed for the first installation of the
+service, and afterwards only when the service code changes: a new build alone does not
+need it. The current command is in the [GUI guide, section Impostazioni](docs/gui-mac.md#impostazioni): copy it from there.
 
 The command leaves `/Applications` permissions unchanged. It stages the copy
 in a root-only directory, refuses links and special files before ownership or
@@ -228,21 +237,21 @@ Before the dialog, the bootstrap checks its signature, every bundle member and
 all ancestors for root ownership and absence of group/other or ACL write access.
 It retains the same signature as the normal app; ownership changes preserve
 CDHash. The supervisor observed working TCC propagation and kernel events on
-14 October 2026 after the human installation. Refresh the bootstrap copy after
-every new build before reinstalling the service and verifying the new identity.
+14 October 2026 after the human installation. Refresh the bootstrap copy and reinstall the service, then verify the new identity, only when the service code changes.
 
 The daemon launches a native executable in a root-protected copy of the signed
 app at `/Library/Application Support/Paratia/Paratia.app`, separate from the
 bootstrap copy; it keeps Python and eslogger as children. In Full Disk Access, enable
 **`/Applications/Paratia.app`**; remove and re-add it after every new ad hoc build (with a stable identity, only when the signature changes),
-and reinstall the registry copy. Do not enable Python 3.9.
+and reinstall the registry copy only when the service code changes. Do not enable Python 3.9.
 Giro 6 was published as `91914a0` and installed. Its registry installation failed
 and left the service unloaded, as reported by the supervisor. Giro 7 waits for
 launchd removal, retries race errors, checks rollback and shows the installer
 message and error code in the app. This update requires a new build, bootstrap
 copy, registry installation and renewed Full Disk Access.
 The app compares the installed collector's CDHash with `/Applications/Paratia.app`
-and shows the update steps in order. Older collectors without an identity report
+and shows the update steps in order as a notice, not a blocker: the update is optional
+and needed only when the service code changes. Older collectors without an identity report
 are shown as unverified, without claiming two hashes were compared.
 
 The app is signed ad hoc by default and is not notarized. Keep the normal app in `/Applications`.

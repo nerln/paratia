@@ -294,7 +294,7 @@
       </article>
       <article class="card">
         <h4>Spostare una cartella esistente</h4>
-        <p>Puoi proteggere una cartella che esiste già. La sua copia cifrata va su un disco fisico esterno, perché i dischi interni e le immagini disco vengono rifiutati. paratia copia i dati e li verifica. Poi chiude e riapre l'immagine per controllare di nuovo la copia, e solo dopo una seconda chiusura confermata elimina l'originale.</p>
+        <p>Puoi proteggere una cartella che esiste già, scegliendo solo quella cartella. La sua immagine cifrata viene salvata in automatico sullo stesso disco, in una posizione nascosta, quindi non serve un disco esterno. Il contenuto passa nell'immagine e paratia lo verifica. Poi chiude e riapre l'immagine per controllare di nuovo la copia, e solo dopo una seconda chiusura confermata elimina i file in chiaro. La cartella resta dov'è: chiusa è vuota, e aperta con la frase d'accesso mostra di nuovo i file. Togli la protezione rimette i file nella cartella come file normali, dopo averli verificati, e poi elimina l'immagine cifrata.</p>
         <p>L'origine deve restare ferma durante lo spostamento, quindi chiudi prima i documenti e le app che possono modificarla. Se lo spostamento si interrompe, l'app mantiene visibili i passaggi di ripristino.</p>
       </article>
       <article class="card">
@@ -367,7 +367,7 @@
         <tr><th scope="col">Programma</th><th scope="col">A che cosa serve l'Accesso completo al disco</th><th scope="col">Dopo una nuova compilazione</th></tr>
       </thead>
       <tbody>
-        <tr><td><code>paratia</code><br>Paratia.app</td><td>Leggere gli eventi del kernel tramite il suo servizio di registro</td><td>Rimuovere la voce, aggiungerla di nuovo, poi reinstallare il servizio</td></tr>
+        <tr><td><code>paratia</code><br>Paratia.app</td><td>Leggere gli eventi del kernel tramite il suo servizio di registro</td><td>Rimuovere la voce, aggiungerla di nuovo; reinstallare il servizio solo quando cambia il suo codice</td></tr>
         <tr><td><code>paranco</code><br>Paranco.app</td><td>Leggere la cartella Memo Vocali</td><td>Rimuovere la voce, poi aggiungere di nuovo Paranco.app</td></tr>
       </tbody>
     </table>
@@ -441,7 +441,7 @@
   <p>Il README (in inglese) contiene i comandi esatti per entrambe.</p>
   <p>La barriera richiede l'hook di sessione, un controllo registrato nelle impostazioni dell'agente. Senza l'hook, una cartella cifrata continua a funzionare. La barriera non copre quella sessione.</p>
   <p>L'app mostra le modifiche previste alle impostazioni degli hook di Claude Code e Codex prima di applicarle. Conserva copie di sicurezza dei file che modifica e mantiene le impostazioni già presenti. Gli hook di Codex vanno approvati a mano nel gestore degli hook dell'app Codex.</p>
-  <p>Gli eventi del kernel arrivano da un servizio di sistema. Lo installi eseguendo tu stesso un comando di preparazione nel Terminale, poi approvando una finestra di amministratore di macOS. L'app richiede anche l'Accesso completo al disco, un permesso di privacy di macOS. Dopo ogni nuova compilazione, rimuovi la voce dell'app, aggiungila di nuovo, poi reinstalla il servizio. I passaggi sono nella <a href="https://github.com/nerln/paratia/blob/master/docs/gui-mac.md">guida alla GUI</a>.</p>
+  <p>Gli eventi del kernel arrivano da un servizio di sistema. Lo installi eseguendo tu stesso un comando di preparazione nel Terminale, poi approvando una finestra di amministratore di macOS. L'app richiede anche l'Accesso completo al disco, un permesso di privacy di macOS. Dopo ogni nuova compilazione, rimuovi la voce dell'app e aggiungila di nuovo. Reinstalla il servizio solo quando cambia il suo codice. I passaggi sono nella <a href="https://github.com/nerln/paratia/blob/master/docs/gui-mac.md">guida alla GUI</a>.</p>
   <p><a class="btn btn-primary" href="https://github.com/nerln/paratia#install">Passaggi di installazione nel README (in inglese)</a></p>
 </section>
 

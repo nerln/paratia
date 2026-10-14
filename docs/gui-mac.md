@@ -14,17 +14,22 @@ Lo stato delle verifiche è in [stato di ottobre 2026](stato-2026-10.md).
 
 ## Cartelle
 
-Premi **Proteggi una cartella**, scegli la fonte e una destinazione sul disco
-esterno fisico, anche una sua sottocartella. Prima di mostrare il campo della
-chiave, Paratia individua il volume effettivo e risale al disco fisico intero.
-Per APFS segue gli store fisici, anche se il contenitore è virtuale; per altri
-filesystem segue il disco padre. SSD APFS ed exFAT esterni sono accettati;
-dischi interni e immagini disco vengono rifiutati. Paratia copia e verifica i
-dati, prova la chiusura e la riapertura, poi rimuove l'originale. Chiudi prima
-i documenti che possono modificare la fonte.
+Premi **Proteggi una cartella** e scegli una sola cartella. Non devi scegliere una
+destinazione: l'immagine cifrata viene salvata in automatico sullo stesso disco della
+cartella, in una posizione nascosta. Per le cartelle sul disco interno del Mac è
+`~/.paratia/compartimenti.noindex/`; per quelle su un altro disco è
+`<disco>/.paratia-compartimenti.noindex/`. Non serve un disco esterno. Se preferisci
+un'altra posizione, puoi scegliere qualunque disco fisico locale, interno o esterno.
+Sono rifiutati immagini disco, cartelle di rete o sincronizzate con il cloud e una
+posizione dentro la cartella stessa. Prima di mostrare il campo della chiave, Paratia
+individua il volume effettivo e risale al disco fisico intero: per APFS segue gli store
+fisici, anche se il contenitore è virtuale; per altri filesystem segue il disco padre.
+Il contenuto della cartella passa nell'immagine cifrata: Paratia lo verifica, prova la
+chiusura e la riapertura, e solo poi rimuove i file in chiaro. Non è una copia: la
+cartella resta dov'è, chiusa è vuota e aperta con la chiave mostra di nuovo i file.
+Chiudi prima i documenti che possono modificare la fonte.
 La scheda mostra stato, percorso, immagine cifrata, numero di file e dimensione.
-Usa **Apri…**, **Mostra nel Finder**, **Chiudi** o **Chiudi tutte**; per una
-migrazione incompleta sono disponibili **Recupera la fonte** e **Annulla migrazione**.
+Usa **Apri…**, **Mostra nel Finder**, **Chiudi** o **Chiudi tutte**. **Togli la protezione** rimette i file nella cartella come file normali, dopo averli verificati, e poi elimina l'immagine cifrata. Per una migrazione incompleta sono disponibili **Recupera la fonte** e **Annulla migrazione**.
 
 **Chiusura dopo N min** imposta da 1 a 1440 minuti. Se il montaggio è occupato,
 chiudi l'app o il terminale aperto dentro e riprova. **Forza chiusura…** apre
@@ -88,10 +93,11 @@ per lettura non prova una lettura dei
 byte e ogni tentativo fallito non produce necessariamente un evento kernel.
 Vedi [Registro degli accessi](registro-accessi.md).
 
-Registro e Impostazioni mostrano i motivi di **registro non sano**, fra cui
-ritardo, eventi persi negli ultimi dieci minuti, cartelle rifiutate e nessuna
-cartella confermata. Dopo dieci minuti senza nuove perdite il motivo sparisce e
-il registro torna sano; il totale delle perdite resta nei dati. **Latenza
+Registro e Impostazioni mostrano i motivi di **registro non sano**, fra cui ritardo,
+cartelle rifiutate e nessuna cartella confermata. Gli eventi persi sotto carico sono un
+avviso, non un blocco: dopo dieci minuti senza nuove perdite l'avviso sparisce, e il
+totale delle perdite resta nei dati. Il registro risulta attivo quando il raccoglitore è
+in esecuzione e ha l'Accesso completo al disco. **Latenza
 degli eventi** confronta il timestamp dell'ultimo evento con la sua ricezione;
 **Flusso ricevuto** mostra tutte le righe eslogger al secondo, incluse quelle
 scartate prima del parser perché estranee alle cartelle. **Ultimo evento ricevuto
@@ -126,9 +132,11 @@ Un'etichetta registra una scelta: la cifratura comincia da **Proteggi una cartel
 
 ## Banco di prova
 
-Premi **Scegli destinazione…**, **Controlla le condizioni** e **Esegui la sequenza…**.
-La prova usa `~/Desktop/folder-test`, crea file sintetici soltanto nella cartella
-vuota e richiede registro sano, sorveglianza confermata e chiave nella GUI.
+Premi **Controlla le condizioni** e **Esegui la sequenza…**. La prova usa
+`~/Desktop/folder-test`, crea file sintetici soltanto nella cartella vuota e richiede
+registro attivo e sorveglianza confermata. Non chiede né destinazione né chiave: usa
+una chiave casuale monouso che resta solo in memoria. Alla fine toglie la protezione,
+così `folder-test` torna una cartella normale, con i file sintetici dentro.
 **Autorizzo le CLI reali, incluse eventuali richieste del portachiavi** è una
 scelta esplicita: Codex e Claude Code avviano figli CLI, senza invocare modelli.
 
@@ -147,9 +155,10 @@ e **Esporta CSV…** mantengono i dati completi. La prova live è ancora
 **Lingua** sceglie fra Sistema, Italiano, English ed Español. La finestra cambia subito;
 la voce del menu cambia al riavvio.
 
-Quando il servizio appartiene a una build diversa da `/Applications/Paratia.app`,
-il Registro mostra **Passi per aggiornare…** e apre le Impostazioni, dove
-**Aggiorna il registro** elenca i passi numerati in ordine. Se la vecchia build
+Quando il servizio appartiene a una build diversa da `/Applications/Paratia.app`, il
+Registro mostra un avviso, non un blocco, con **Passi per aggiornare…**: apre le
+Impostazioni, dove **Aggiorna il registro** elenca i passi numerati in ordine.
+L'aggiornamento è facoltativo e serve solo quando cambia il codice del servizio. Se la vecchia build
 non pubblica la sua identità, il messaggio dice che l'identità è indisponibile
 e chiede di aggiornare per verificarla: non dichiara un confronto riuscito.
 I passi minimi sono riportati anche in
@@ -187,8 +196,9 @@ Unix compatibili:
 `ParatiaBootstrap.noindex` e la copia dell'app. Copiare la stessa build e cambiarne il
 proprietario non cambia il CDHash: il permesso TCC dell'app quotidiana resta valido.
 
-Chiudi tutte le copie di Paratia. Esegui personalmente nel Terminale questo
-unico comando di preparazione; viene riportato qui senza essere eseguito:
+Chiudi tutte le copie di Paratia. Per la prima installazione, e poi solo quando cambia il
+codice del servizio, esegui personalmente nel Terminale questo unico comando di
+preparazione; viene riportato qui senza essere eseguito:
 
 ```sh
 sudo /bin/sh -c 'set -eu
@@ -252,9 +262,8 @@ in `/Applications/Paratia.app`. Qui **Apri Accesso completo al disco** porta
 alle impostazioni privacy:
 aggiungi e abilita **`/Applications/Paratia.app`**. Con firma ad hoc, dopo ogni nuova
 build rimuovi la voce precedente e aggiungi di nuovo l'app installata. Con un'identità
-stabile il permesso resta valido finché l'app viene firmata con lo stesso certificato;
-aggiorna la copia bootstrap e reinstalla il registro per aggiornare la copia
-del servizio. Non abilitare
+stabile il permesso resta valido finché l'app viene firmata con lo stesso certificato. La copia bootstrap e il registro si aggiornano
+solo quando cambia il codice del servizio. Non abilitare
 Python 3.9. Il passaggio del permesso ai figli e la raccolta kernel sono stati
 verificati sulla build del giro 4. Il giro 6 è pubblicato (`91914a0`), ma la sua
 installazione del servizio è fallita e lo ha lasciato scaricato. Per il giro 7, ripeti i passi

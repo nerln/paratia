@@ -5,15 +5,18 @@ Sbloccare il disco che contiene lo sparsebundle non apre il compartimento.
 Da chiuso, il percorso originale è un punto di montaggio vuoto: i file stanno
 solo nell'immagine cifrata. Da aperto, sono leggibili dai processi dell'utente.
 
-La destinazione va scelta su un disco esterno fisico, anche in una sua
-sottocartella. Prima di chiedere la chiave, GUI e CLI risalgono dal volume
-al disco intero: per APFS seguono gli store fisici e il loro disco padre;
-per exFAT e altri filesystem seguono direttamente il disco padre. Un volume
-senza `VirtualOrPhysical` o un contenitore APFS virtuale non causano un rifiuto
-se gli store appartengono a dischi esterni fisici. Dischi interni e immagini disco, incluso un volume
-con protocollo `Disk Image`, vengono rifiutati. Non sono ammessi percorsi
-sincronizzati con il cloud, destinazioni annidate nella fonte, collegamenti
-simbolici, hard link, file speciali o volumi montati dentro la fonte.
+L'immagine cifrata non richiede una scelta: viene salvata in automatico sullo stesso
+disco della cartella, in una posizione nascosta. Per le cartelle sul disco interno del
+Mac è `~/.paratia/compartimenti.noindex/`; per quelle su un altro disco è
+`<disco>/.paratia-compartimenti.noindex/`. Non serve un disco esterno. Se si sceglie
+un'altra posizione, può essere qualunque disco fisico locale, interno o esterno. Prima
+di chiedere la chiave, GUI e CLI risalgono dal volume al disco intero: per APFS seguono
+gli store fisici e il loro disco padre; per exFAT e altri filesystem seguono
+direttamente il disco padre. Un volume senza `VirtualOrPhysical` o un contenitore APFS
+virtuale non causano un rifiuto se gli store appartengono a dischi fisici locali.
+Vengono rifiutati immagini disco, incluso un volume con protocollo `Disk Image`,
+percorsi sincronizzati con il cloud o di rete, destinazioni annidate nella fonte,
+collegamenti simbolici, hard link, file speciali o volumi montati dentro la fonte.
 
 ## Migrazione
 
@@ -43,6 +46,10 @@ e rifiuta un secondo tentativo finché quella copia non è stata sistemata.
 La rimozione dell'originale non elimina eventuali copie già presenti in backup,
 snapshot APFS, sincronizzazioni o altri programmi. Non è una cancellazione
 sicura dei blocchi fisici di un SSD.
+
+**Togli la protezione** fa il percorso inverso, con la chiave: i file tornano nella
+cartella come file normali, vengono verificati, e solo dopo viene eliminata l'immagine
+cifrata.
 
 ## Chiave e chiusura
 
@@ -111,6 +118,5 @@ riapertura. Richiede l'accesso al servizio di immagini disco; i test ordinari
 usano un backend finto e non montano volumi.
 
 `tests/prova_cartelle_macos.py` collauda l'intera migrazione con file sintetici,
-un attributo esteso e un resource fork. Per questa sola prova usa una
-destinazione temporanea interna; il vincolo produttivo del disco esterno è
-verificato separatamente. La prova termina richiusa e rimuove i dati temporanei.
+un attributo esteso e un resource fork. Per questa sola prova usa una destinazione temporanea interna, che è anche il caso
+predefinito: non serve più un disco esterno. La prova termina richiusa e rimuove i dati temporanei.

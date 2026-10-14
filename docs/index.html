@@ -294,7 +294,7 @@
       </article>
       <article class="card">
         <h4>Moving an existing folder</h4>
-        <p>You can protect a folder that already exists. Its encrypted copy goes on an external physical disk, because internal disks and disk images are refused. paratia copies the data and checks it. It then closes and reopens the image to check the copy again, and only after a confirmed second close does it remove the original.</p>
+        <p>You can protect a folder that already exists, and you choose only that folder. Its encrypted image is saved automatically on the same disk, in a hidden place, so no external disk is needed. The content moves into the image, and paratia checks it. It then closes and reopens the image to check the copy again, and only after a confirmed second close does it remove the plaintext files. The folder stays where it is: closed, it is empty, and opened with the passphrase it shows its files again. Removing protection puts the files back into the folder as ordinary files, after checking them, and then deletes the encrypted image.</p>
         <p>The source must stay still during the move, so close the documents and apps that can change it before you start. If the move is interrupted, the app keeps the recovery steps visible.</p>
       </article>
       <article class="card">
@@ -367,7 +367,7 @@
         <tr><th scope="col">Program</th><th scope="col">Full Disk Access is used for</th><th scope="col">After a new build</th></tr>
       </thead>
       <tbody>
-        <tr><td><code>paratia</code><br>Paratia.app</td><td>Reading kernel events through its log service</td><td>Remove the entry, add it again, then reinstall the service</td></tr>
+        <tr><td><code>paratia</code><br>Paratia.app</td><td>Reading kernel events through its log service</td><td>Remove the entry, add it again; reinstall the service only when its code changes</td></tr>
         <tr><td><code>paranco</code><br>Paranco.app</td><td>Reading the Voice Memos folder</td><td>Remove the entry, then add Paranco.app again</td></tr>
       </tbody>
     </table>
@@ -441,7 +441,7 @@
   <p>The README has the exact commands for both.</p>
   <p>The gate needs the session hook, a check registered in the agent's settings. Without the hook, an encrypted folder still works. The gate does not cover that session.</p>
   <p>The app shows the planned changes to the Claude Code and Codex hook settings before it applies them. It keeps backups of the files it changes and keeps the settings already there. Codex hooks must be approved by hand in the Codex app's hook manager.</p>
-  <p>Kernel events come from a system service. You install it by running a preparation command yourself in Terminal, then approving an administrator dialog in macOS. The app also needs Full Disk Access, a macOS privacy permission. After each new build, remove the app's entry and add it again, then reinstall the service. The steps are in the <a href="https://github.com/nerln/paratia/blob/master/docs/gui-mac.md">GUI guide</a>.</p>
+  <p>Kernel events come from a system service. You install it by running a preparation command yourself in Terminal, then approving an administrator dialog in macOS. The app also needs Full Disk Access, a macOS privacy permission. After each new build, remove the app's entry and add it again. Reinstall the service only when its code changes. The steps are in the <a href="https://github.com/nerln/paratia/blob/master/docs/gui-mac.md">GUI guide</a>.</p>
   <p><a class="btn btn-primary" href="https://github.com/nerln/paratia#install">Installation steps in the README</a></p>
 </section>
 

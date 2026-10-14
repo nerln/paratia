@@ -53,8 +53,9 @@ The app checks all ancestors, all bundle files, write ACLs and the signature
 before loading the installation plan or showing an administrator dialog.
 The normal app and a build copy cannot perform this bootstrap.
 Full Disk Access must name /Applications/Paratia.app, never Python 3.9.
-After every new ad hoc build, the human removes/re-adds that app entry and
-refreshes the bootstrap copy, then reinstalls the registry. Ownership changes
+After every new ad hoc build, the human removes/re-adds that app entry in Full Disk
+Access. The bootstrap copy is refreshed and the registry reinstalled only when the
+service code changes. Ownership changes
 preserve CDHash. The supervisor published Giro 4 (f54b403); Eugenio installed the
 app, bootstrap and service and completed Full Disk Access. On 14 October 2026,
 03:40–03:46 Europe/Madrid, the supervisor observed live zsh create/write,
@@ -75,11 +76,15 @@ uses the protected bootstrap copy when verified and replaces old Paratia
 handlers while preserving foreign hooks and backups. An unprotected fallback
 cannot execute close/status exceptions while a folder is open.
 
-Destination checks follow APFSPhysicalStores and ParentWholeDisk to the physical
-whole disk; exFAT follows ParentWholeDisk directly. Missing VirtualOrPhysical on
-the volume and a virtual APFS container are normal. Only external physical disks
-are accepted; disk images and internal disks are refused before key entry.
-An unavailable external disk is reported before asking for a key. Reopening an
+A protected folder's encrypted image is saved automatically on the same disk, in a
+hidden place: ~/.paratia/compartimenti.noindex/ for the internal disk, and
+<disk>/.paratia-compartimenti.noindex/ for another disk. No external disk is needed.
+An optional location may be any local physical disk, internal or external; disk
+images, network and cloud-synced folders, and a location inside the folder itself are
+refused. Location checks follow APFSPhysicalStores and ParentWholeDisk to the physical
+whole disk; exFAT follows ParentWholeDisk directly. Missing VirtualOrPhysical on the
+volume and a virtual APFS container are normal. A disk that is not available is
+reported before asking for a key. Reopening an
 already open folder reports that its timer stays unchanged, even with --minutes.
 Wrong keys are checked without mounting using hdiutil isencrypted/imageinfo and
 reported independently of the diagnostic language. Missing Info.plist/Info.bckup,
@@ -101,7 +106,8 @@ query and CSV metadata expose event_lag_seconds (event timestamp to receipt),
 lines_per_second, last_event_received_at and last_event_age_seconds. Silence
 increases age, not measured latency, and does not prove collector delay.
 health_reasons lists readable reasons for unhealthy state, including delay,
-lost events, refused IDs and no acknowledged folders. The app shows reasons
+refused IDs and no acknowledged folders. Lost events are a notice and do not make the
+state unhealthy. The app shows reasons
 and metrics in Registry and Settings, and per-ID refusals in folder cards.
 
 The default EVENTI subscription is open, write, create, rename, unlink,
@@ -113,7 +119,9 @@ paths and NFC/NFD variants are retained; uncertain forms use the full parser.
 exec/fork/exit stay available for ancestry. Sequence metadata is checked even
 for skipped lines, so filtering cannot hide reported dropped events.
 
-When needs_update is true, Settings shows numbered update_steps: close the
+When needs_update is true, Settings shows it as a notice, not a blocker, with numbered
+update_steps. The service update is optional and needed only when the service code
+changes: close the
 app, refresh the bootstrap with the existing single manual command, install
 from the bootstrap, close it, remove/re-add /Applications/Paratia.app in Full
 Disk Access, then reopen the normal app and verify acknowledged IDs and a new
@@ -127,8 +135,10 @@ retain separate sources. An open event does not prove bytes were read; failed
 syscalls do not always emit kernel events. Agent ancestry can remain unknown.
 Do not convert a missing match or an unknown classification into certainty.
 
-The human bank on ~/Desktop/folder-test is not executed. It requires a healthy
-registry, acknowledged watches, a chosen external destination and a GUI key.
+The human bank on ~/Desktop/folder-test is not executed. It requires an active registry
+and acknowledged watches. It asks for no destination and no key: it uses a one-time
+random key that stays in memory, runs the four phases, then removes the protection so
+folder-test is an ordinary folder again.
 CLI vendor probes require separate explicit consent and invoke no models.
 Temporary automated bank tests simulate registry health, disable vendor CLI
 probes and keep kernel matches empty; never present those results as live data.

@@ -1,19 +1,16 @@
 # Banco di prova di folder-test
 
 **Stato: non eseguito.** La sequenza reale su `~/Desktop/folder-test` attende
-le autorizzazioni amministratore, Accesso completo al disco per il registro,
-l'accesso al Desktop se richiesto da macOS e la chiave inserita nella GUI.
+le autorizzazioni amministratore, Accesso completo al disco per il registro, e
+l'accesso al Desktop se richiesto da macOS.
 Non sono disponibili orari, conteggi misurati, risultati degli agenti o
 riscontri kernel. Il [JSON pubblico](banco-folder-test.json) mantiene `fasi`
 e `prove` vuoti e gli orari a `null`.
 
-La destinazione prevista è una cartella scelta sulla SSD **AppsAndFiles**.
-Il nome del volume descrive la destinazione; il banco verifica il disco scelto
-prima del campo della chiave e di nuovo al momento dell'avvio. Sono ammesse
-le sottocartelle del volume esterno fisico: APFS viene verificato risalendo dagli
-store al disco intero, exFAT dal volume al disco padre. Immagini disco e volumi
-interni vengono rifiutati. La verifica temporanea separata è descritta nello
-[stato di ottobre 2026](stato-2026-10.md).
+Il banco non chiede destinazione né chiave. La prova usa `~/Desktop/folder-test`, e
+l'immagine cifrata viene creata in automatico sullo stesso disco: per una cartella sul
+disco interno è `~/.paratia/compartimenti.noindex/`. Non serve un disco esterno. La
+verifica temporanea separata è descritta nello [stato di ottobre 2026](stato-2026-10.md).
 
 ## Avvio dalla GUI
 
@@ -26,18 +23,15 @@ interni vengono rifiutati. La verifica temporanea separata è descritta nello
    Chiudi il bootstrap e riapri l'app quotidiana in `/Applications/Paratia.app`.
    Da questa app premi **Apri Accesso completo al disco**,
    aggiungi e abilita `/Applications/Paratia.app`. Dopo una nuova build ad hoc,
-   rimuovi e aggiungi di nuovo la voce, aggiorna il bootstrap e reinstalla il
-   registro. La copia del servizio resta in
+   rimuovi e aggiungi di nuovo la voce; aggiorna il bootstrap e reinstalla il registro solo
+   quando cambia il codice del servizio. La copia del servizio resta in
    `/Library/Application Support/Paratia/Paratia.app`. Non abilitare
-   Python 3.9. Il registro deve risultare attivo e
-   sano; anche la catena locale deve essere verificabile. I dettagli sono in
+   Python 3.9. Il registro deve risultare attivo; anche la catena locale deve essere verificabile. I dettagli sono in
    [Registro degli accessi](registro-accessi.md).
-2. In **Banco di prova**, premi **Scegli destinazione…** e seleziona una
-   cartella sulla SSD AppsAndFiles. Premi **Controlla le condizioni**: questa
-   anteprima controlla il disco e lo stato del registro e legge soltanto i
-   metadati di `~/Desktop/folder-test`. Se macOS richiede l'accesso al Desktop,
-   decidi nel suo dialogo. La GUI ricontrolla queste condizioni prima del campo
-   della chiave.
+2. In **Banco di prova**, premi **Controlla le condizioni**: questa anteprima controlla
+   lo stato del registro e legge soltanto i metadati di `~/Desktop/folder-test`. Se macOS
+   richiede l'accesso al Desktop, decidi nel suo dialogo. La GUI ricontrolla queste
+   condizioni prima di avviare la sequenza.
 3. Usa una cartella vuota. Se contiene file personali o non riconosciuti,
    spostali tu prima della prova. Il banco rifiuta la loro migrazione. Crea
    soltanto `LEGGIMI-SINTETICO.txt`, `campione.bin`, `grande.bin` e
@@ -48,12 +42,12 @@ interni vengono rifiutati. La verifica temporanea separata è descritta nello
    portachiavi**. Le CLI usano le proprie configurazioni e autorizzazioni. Le
    richieste di macOS restano una scelta umana; login, hook o un diniego possono
    lasciare la prova incompleta.
-5. Premi **Esegui la sequenza…**, inserisci e ripeti una chiave propria del
-   compartimento, diversa dalla chiave del disco. La GUI la trasmette al worker
-   tramite stdin; non entra negli argomenti dei processi, nell'ambiente, nello
-   storico, nel registro o negli export.
+5. Premi **Esegui la sequenza…**. Non serve nessuna chiave: il banco genera una chiave
+   casuale monouso, che resta solo in memoria e non entra negli argomenti dei processi,
+   nell'ambiente, nello storico, nel registro o negli export. Al termine toglie la
+   protezione, così `folder-test` torna una cartella normale.
 
-Prima di creare i file, il banco controlla la salute del registro e attende
+Prima di creare i file, il banco controlla che il registro sia attivo e attende
 che il demone confermi la sorveglianza della cartella. Se esiste già una
 sorveglianza sullo stesso percorso, ne riutilizza l'identificatore, conserva il
 nome e la mantiene alla fine; altrimenti ne crea una per questa prova e rimuove
@@ -113,7 +107,7 @@ o il contenuto dei file; i metadati possono includere percorsi e processi.
 Il JSON nel repository descrive soltanto lo stato di attesa, senza sostituire
 questo storico.
 
-Il banco tenta sempre la chiusura finale del proprio compartimento, anche
+Il banco tenta sempre la chiusura finale del proprio compartimento e la rimozione della sua protezione, anche
 dopo un errore o un'interruzione. Se la chiusura fallisce o resta una migrazione
 incompleta, lo storico lo segnala: controlla **Cartelle** e usa **Chiudi tutte**,
 **Recupera** o **Annulla migrazione**, secondo lo stato mostrato. Un secondo
@@ -128,7 +122,7 @@ salvate, anche per un montaggio temporaneo. Una migrazione incompleta richiede
 ancora recupero o annullamento dopo aver chiuso il montaggio.
 
 I test automatici attraversano l'IPC del worker e il banco usando una cartella
-temporanea e una chiave di prova ricevuta da stdin. Il test portabile simula il
+temporanea e una chiave casuale monouso generata dal banco. Il test portabile simula il
 disco; `strumenti/prova-banco-temporaneo.py` usa invece hdiutil AES-256/APFS e
 ditto su macOS. Le fixture usano `TMPDIR` (o la directory temporanea di sistema),
 una HOME sintetica e puliscono soltanto la propria area riconosciuta.

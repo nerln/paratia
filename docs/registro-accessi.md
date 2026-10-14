@@ -162,8 +162,10 @@ cifrato, non prova accessi al testo in chiaro.
 
 ## Installazione e aggiornamento
 
-Dopo aver installato l'app normale in `/Applications`, chiudi tutte le copie
-di Paratia e prepara personalmente nel Terminale la copia di bootstrap. Il comando vigente è nella [guida GUI, sezione Impostazioni](gui-mac.md#impostazioni): copialo da lì.
+Per la prima installazione, dopo aver installato l'app normale in `/Applications`,
+chiudi tutte le copie di Paratia e prepara personalmente nel Terminale la copia di
+bootstrap. In seguito questo passo è facoltativo e serve solo quando cambia il codice
+del servizio. Il comando vigente è nella [guida GUI, sezione Impostazioni](gui-mac.md#impostazioni): copialo da lì.
 
 Il comando non modifica `/Applications` o i suoi permessi. Prepara la copia in
 un'area root con modo 0700, rifiuta link e file speciali prima di cambiare
@@ -179,8 +181,9 @@ root e ACL; se il controllo fallisce, il dialogo resta bloccato.
 La copia conserva la firma dell'app normale. Cambiare proprietario e permessi
 non modifica il CDHash; il solo `chown` non cambia l'identità firmata. Il
 riconoscimento TCC e gli eventi kernel sono stati osservati dal supervisore
-il 14 ottobre sul giro 4 installato. Dopo ogni nuova build, aggiorna anche la
-copia di bootstrap prima di reinstallare il servizio e ripeti la verifica.
+il 14 ottobre sul giro 4 installato. Quando cambia il codice del servizio, aggiorna anche la copia di bootstrap prima di
+reinstallare il servizio e ripeti la verifica; una nuova build che non cambia il
+servizio non richiede questo passo.
 
 `registro_installa.piano()` prepara gli argv e la plist senza installare nulla.
 Il pulsante **Installa il registro** consegna quel piano al dialogo amministratore
@@ -210,7 +213,7 @@ disco**, aggiungi e abilita **`/Applications/Paratia.app`** con il pulsante `+`.
 Dopo ogni nuova build ad hoc, rimuovi la voce precedente e aggiungi di nuovo
 l'app installata. Con un'identità stabile la voce resta valida finché la firma
 usa lo stesso certificato, e `fda_regrant_after_build` è `false`. Reinstalla il
-registro per aggiornare anche la copia protetta.
+registro per aggiornare anche la copia protetta solo quando cambia il codice del servizio.
 Non concedere l'Accesso completo al disco a Python 3.9: quel runtime esegue
 anche altri programmi. Il vecchio servizio avviato direttamente da Python deve
 essere reinstallato. `registro stato` indica `launch_mode`, `needs_reinstall`,
@@ -228,7 +231,8 @@ Il daemon pubblica `installed_cdhash`; il worker legge l'identità di
 `/Applications/Paratia.app` tramite `codesign -d`, senza firmare o accedere
 al portachiavi. `build_comparison` distingue `equal`, `different` e
 `unavailable`. Una build diversa o un vecchio servizio senza identità porta
-`needs_update: true`: la GUI mostra `update_message` e sei `update_steps`
+`needs_update: true`, come avviso e non come blocco: la GUI mostra `update_message`
+e sei `update_steps`
 numerati nelle Impostazioni. Un'identità mancante non viene presentata come
 un confronto riuscito. I passi minimi sono nella sezione
 [Aggiornare il registro dopo questo giro](stato-2026-10.md#aggiornare-il-registro-dopo-questo-giro).
@@ -272,7 +276,7 @@ Il banco riusa direttamente quell'ID nelle prove successive.
 richiesta; un ID sconosciuto produce un errore.
 
 `configurata: true` indica una richiesta salvata. `sorvegliata` e
-`raccolta_attiva` diventano vere soltanto con raccoglitore attivo e sano e ID
+`raccolta_attiva` diventano vere soltanto con raccoglitore attivo e ID
 confermato in `stato().watched_ids`. Il demone rilegge i registri ogni cinque
 secondi; il banco attende questa conferma prima degli accessi e conserva una
 richiesta dell'utente eventualmente riutilizzata. La conferma non prova la
@@ -295,9 +299,10 @@ eventi storici anche dopo la rimozione della configurazione.
 
 Le risposte worker di query ed export aggiungono `kernel_active` e
 `kernel_collection`. La vista Registro mostra raccolta attiva, inattiva o da
-verificare accanto al conteggio, anche a **0 eventi**. Attiva richiede processo
-e salute correnti, FDA senza necessità pendenti e schema non dichiarato
-incompatibile; con filtro cartella serve anche l'ID confermato in `watched_ids`.
+verificare accanto al conteggio, anche a **0 eventi**. Attiva richiede che il raccoglitore sia in esecuzione e abbia l'Accesso completo al
+disco, e che lo schema non sia dichiarato incompatibile; con filtro cartella serve anche
+l'ID confermato in `watched_ids`. Le perdite di eventi e un servizio installato da una
+build precedente sono avvisi, non impedimenti.
 I dettagli mantengono la distinzione fra stato del servizio e ACK e dichiarano
 `coverage_guaranteed: false`: non provano la copertura di ogni accesso.
 
@@ -320,9 +325,9 @@ ritardo. Una latenza osservata oltre due secondi, eventi persi, voci rifiutate,
 assenza di cartelle confermate e altri impedimenti sono spiegati in
 `health_reasons`. Stato, metriche e ACK scaduti non dimostrano raccolta corrente.
 Le perdite contate da eslogger restano nel totale `dropped_events` per tutta la
-sessione del raccoglitore. Il motivo `dropped_events` e `healthy: false` valgono
+sessione del raccoglitore. Sono un avviso, non un impedimento: non rendono `healthy: false`. L'avviso vale
 soltanto per i dieci minuti dopo l'ultima perdita osservata (`last_dropped_at`);
-poi lo stato torna sano, salvo altri motivi. Una perdita con timestamp assente,
+poi l'avviso sparisce, salvo altri motivi. Una perdita con timestamp assente,
 non valido o più di un minuto nel futuro non produce un avviso permanente.
 Una sequenza ripartita da capo (`sequenza-riavviata`) non è contata come perdita e
 resta un impedimento per la sessione. Query ed export del worker includono questi
@@ -404,7 +409,7 @@ Ogni destinazione ha uno stato:
 - `conflitto`: la cartella è protetta da paratia, sta dentro una cartella protetta
   o sta dentro un punto di montaggio. Anche una cartella che la configurazione
   rifiuta conta come protetta. Da chiusa una cartella protetta è una directory vuota
-  sul disco interno, e paranco ci scriverebbe in chiaro.
+  su qualunque disco, e paranco ci scriverebbe in chiaro.
 - `rifiutata`: la destinazione non è valida, è fuori dalla tua cartella utente, è
   la cartella utente stessa, contiene un collegamento simbolico, o non esiste
   ancora. Una cartella mancante va creata: paranco la crea al primo sollevamento.
