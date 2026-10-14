@@ -542,3 +542,14 @@ def test_remaining_folder_and_label_routes(W, monkeypatch):
     for action, params, key, name, args, kwargs in examples:
         assert W.dispatch(action, params, key) == {"esito": name}
         assert calls[-1] == (name, args, kwargs)
+
+
+def test_a_refusal_written_for_the_person_reaches_the_gui(W):
+    class Rifiuto(Exception):
+        pass
+    noto = W._failure(Rifiuto("Fonte e destinazione non possono essere annidate."), "cartelle.prepara_protezione")
+    assert noto["code"] == "refused" and noto["message"] == "Fonte e destinazione non possono essere annidate."
+    ignoto = W._failure(Rifiuto("/Users/x/segreto: Traceback interno"), "cartelle.prepara_protezione")
+    assert "segreto" not in ignoto["message"] and "Traceback" not in ignoto["message"]
+    errore = W._failure(ValueError("La cartella non è configurata nel registro. Scegli una cartella dall'elenco o aggiungi una sorveglianza."), "registro.query")
+    assert errore["code"] == "invalid_data" and "non è configurata" in errore["message"]

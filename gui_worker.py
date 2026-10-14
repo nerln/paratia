@@ -23,6 +23,14 @@ def _t(testo, **valori):
         spec.loader.exec_module(modulo)
     return sys.modules[nome].t(testo, **valori)
 
+
+def _messaggio_noto(exc):
+    """A refusal written for the person is shown as is; anything else stays generic."""
+    import sys
+    _t("")  # loads the messages module
+    testo = str(exc)
+    return bool(testo) and sys.modules["paratia_messaggi"].noto(testo)
+
 import contextlib
 import csv
 import datetime
@@ -451,6 +459,8 @@ def _failure(exc, action):
         code, message = "not_found", _t("La cartella, il file o il disco richiesto non è disponibile. Controlla il percorso e collega il disco, poi riprova.")
     elif isinstance(exc, OSError):
         code, message = "io_error", _t("Non è stato possibile completare l'operazione sul disco. Controlla lo spazio libero e i permessi, poi riprova.")
+    elif type(exc).__name__ == "Rifiuto" and _messaggio_noto(exc):
+        code, message = "refused", str(exc)
     elif type(exc).__name__ == "Rifiuto":
         code = "refused"
         if action == "cartelle.prepara_protezione":
@@ -467,6 +477,8 @@ def _failure(exc, action):
             message = _t("Gli hook non possono essere configurati. Verifica il piano, le impostazioni degli agenti e il runtime Apple dei Command Line Tools: Python 3.9 o successivo, protetto da root con la sua libreria standard.")
         else:
             message = _t("L'operazione è stata rifiutata. Controlla il percorso e i dati inseriti, poi riprova.")
+    elif isinstance(exc, ValueError) and _messaggio_noto(exc):
+        code, message = "invalid_data", str(exc)
     elif isinstance(exc, (ValueError, TypeError)):
         code, message = "invalid_data", _t("I dati richiesti o salvati non sono validi. Controlla i campi e verifica il registro prima di riprovare.")
     else:

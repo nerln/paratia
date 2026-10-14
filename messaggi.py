@@ -360,6 +360,11 @@ TRADUZIONI = {
 }
 
 
+def noto(testo: str) -> bool:
+    """True for a message written for the person, in any of the three languages."""
+    return testo in TRADUZIONI or any(testo in coppia for coppia in TRADUZIONI.values())
+
+
 def imposta(lingua: str) -> str:
     global _LINGUA
     _LINGUA = lingua if lingua in LINGUE else "it"
