@@ -154,6 +154,7 @@ struct FolderCard: View {
                     Text("I processi dell'utente possono leggere i file. Chiusura richiesta dopo \(folder.data.number("minutes")) minuti; se occupata, Paratia ritenta senza forzare.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                Text("Registro: " + model.watchStatus(folder.data)).font(.caption).foregroundStyle(.secondary)
                 Text("Immagine: \(folder.data.text("bundle"))").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             }.padding(12)
         }
@@ -249,6 +250,14 @@ struct RegistryView: View {
             if !model.registry.flag("running") || !model.registry.flag("healthy") {
                 Banner(text: model.registry.text("message", fallback: "Il registro kernel non è ancora verificato. Completa le autorizzazioni nelle Impostazioni."), icon: "exclamationmark.circle", color: .orange)
             }
+            if model.registry.flag("needs_update") {
+                HStack {
+                    Label(model.registry.text("update_message", fallback: "Aggiorna il registro e verifica la build installata."), systemImage: "arrow.triangle.2.circlepath").font(.callout)
+                    Spacer()
+                    Button("Passi per aggiornare…") { model.section = .settings }
+                }
+            }
+            RegistryHealthDetails(model: model, record: model.registry)
             Table(model.events, selection: $selection) {
                 TableColumn("Ora", value: \.date).width(min: 145, ideal: 170)
                 TableColumn("Evento", value: \.event).width(min: 100, ideal: 120)
@@ -264,11 +273,48 @@ struct RegistryView: View {
                 Button("Apri dettaglio") { openDetail() }.disabled(selection == nil)
             }
             Text(model.eventsKernelMessage).font(.caption).foregroundStyle(.secondary)
+            if !model.eventsKernelCollection.isEmpty {
+                RegistryHealthDetails(model: model, record: model.eventsKernelCollection)
+            }
             Text("Un'apertura per lettura non prova una lettura dei byte. Gli eventi mancanti e la discendenza sconosciuta vengono indicati, non ricostruiti.")
                 .font(.caption).foregroundStyle(.secondary)
         }.padding(28).onAppear { if model.events.isEmpty { model.loadEvents() } }
     }
     private func openDetail() { model.detail = model.events.first { $0.id == selection } }
+}
+
+struct RegistryHealthDetails: View {
+    @ObservedObject var model: AppModel
+    let record: Record
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(model.collectionMetrics(record)).font(.caption).foregroundStyle(.secondary)
+            Text(model.lastEventAge(record)).font(.caption).foregroundStyle(.secondary)
+            ForEach(Array(model.healthReasons(record).enumerated()), id: \.offset) { _, reason in
+                Label(reason.text("message"), systemImage: "exclamationmark.circle")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct RegistryUpdateSteps: View {
+    @ObservedObject var model: AppModel
+    var body: some View {
+        if model.registry.flag("needs_update") {
+            GroupBox("Aggiorna il registro") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(model.registry.text("update_message", fallback: "Aggiorna il registro e verifica la build installata.")).font(.callout)
+                    Text("Segui questi passi nell'ordine indicato.").font(.callout)
+                    ForEach(Array(model.registryUpdateSteps.enumerated()), id: \.offset) { index, step in
+                        Text("\(index + 1). \(step)").font(.callout).textSelection(.enabled)
+                    }
+                    Text("Il comando per preparare il bootstrap è riportato qui sotto in Prepara la copia per installare il registro.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
+            }
+        }
+    }
 }
 
 struct EventDetail: View {
@@ -506,10 +552,12 @@ struct SettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 PageHeading(title: "Autorizzazioni e controlli", subtitle: "Le password amministratore e le autorizzazioni privacy restano nei dialoghi di macOS.")
+                RegistryUpdateSteps(model: model)
                 GroupBox("Registro kernel") {
                     VStack(alignment: .leading, spacing: 12) {
                         Label(model.registry.flag("running") && model.registry.flag("healthy") ? "Registro attivo" : "Autorizzazione o verifica necessaria", systemImage: model.registry.flag("healthy") ? "checkmark.circle" : "exclamationmark.circle")
                         Text(model.registry.text("message", fallback: "Installa il servizio del registro e autorizza /Applications/Paratia.app."))
+                        RegistryHealthDetails(model: model, record: model.registry)
                         DisclosureGroup("Prepara la copia per installare il registro") {
                             VStack(alignment: .leading, spacing: 10) {
                                 Text("Chiudi Paratia. Esegui tu questo singolo comando nel Terminale; quando termina senza errori, apri la copia indicata sotto dal Finder e premi Installa il registro. L'app quotidiana e la voce Accesso completo al disco restano /Applications/Paratia.app.")
@@ -527,6 +575,9 @@ struct SettingsView: View {
                         Text(model.registry.text("fda_message", fallback: "Aggiungi e abilita /Applications/Paratia.app. Con firma ad hoc, dopo ogni nuova build rimuovi e aggiungi di nuovo l'app. Non autorizzare Python."))
                             .font(.callout).foregroundStyle(.secondary)
                         if model.registry["needs_fda"] is NSNull || model.registry["needs_fda"] == nil { Text("Accesso completo al disco: non ancora verificato.").font(.caption).foregroundStyle(.orange) }
+                        if model.registry["needs_update"] is NSNull || model.registry["needs_update"] == nil {
+                            Text("Versione del servizio: non ancora verificata.").font(.caption).foregroundStyle(.secondary)
+                        }
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
                 }
                 GroupBox("Chiusura all'avvio di una sessione agente") {

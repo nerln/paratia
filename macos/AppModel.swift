@@ -28,6 +28,7 @@ final class AppModel: ObservableObject {
     @Published var eventsTruncated = false
     @Published var eventsKernelActive: Bool?
     @Published var eventsKernelMessage = "La raccolta kernel non è ancora verificata per questa ricerca."
+    @Published var eventsKernelCollection: Record = [:]
     @Published var selectedFolder = ""
     @Published var fileFilter = ""
     @Published var processFilter = ""
@@ -67,13 +68,50 @@ final class AppModel: ObservableObject {
     }
 
     func watchStatus(_ record: Record) -> String {
-        if !record.flag("esiste") { return "Configurata · cartella non presente" }
+        let statuses = registry["watch_status"] as? [Record] ?? []
+        let status = statuses.first { $0.text("id") == record.text("id") }
+        let refused = status.map { $0.text("status") == "rejected" }
+            ?? (record.text("raccolta", fallback: "") == "rifiutata")
+        if refused {
+            let message = status?.text("message", fallback: "La cartella non può essere sorvegliata.")
+                ?? record.text("message", fallback: "La cartella non può essere sorvegliata.")
+            return "Rifiutata dal raccoglitore: " + message
+        }
+        if record["esiste"] as? Bool == false { return "Configurata · cartella non presente" }
         let kernelIDs = registry["watched_ids"] as? [String] ?? []
-        if registry.flag("running"), registry.flag("healthy"), kernelIDs.contains(record.text("id")) {
-            return "Configurata e confermata dal registro kernel"
+        let confirmed = status.map { $0.text("status") == "confirmed" }
+            ?? (record.text("raccolta", fallback: "") == "confermata" || kernelIDs.contains(record.text("id")))
+        if registry.flag("running"), confirmed {
+            return "Confermata dal raccoglitore"
         }
         return "Configurata · raccolta kernel non confermata"
     }
+
+    func healthReasons(_ record: Record) -> [Record] {
+        (record["health_reasons"] as? [Record] ?? []).filter {
+            !($0["message"] as? String ?? "").isEmpty
+        }
+    }
+
+    func collectionMetrics(_ record: Record) -> String {
+        func measurement(_ key: String, unit: String) -> String? {
+            guard let value = record[key] as? Double, value.isFinite, value >= 0 else { return nil }
+            return String(format: "%.1f", locale: Locale.current, value) + unit
+        }
+        let lag = measurement("event_lag_seconds", unit: " s") ?? "non misurato"
+        let rate = measurement("lines_per_second", unit: " righe/s") ?? "non misurato"
+        return "Latenza degli eventi: " + lag + " · Flusso ricevuto: " + rate
+    }
+
+    func lastEventAge(_ record: Record) -> String {
+        guard let seconds = record["last_event_age_seconds"] as? Double, seconds.isFinite, seconds >= 0 else {
+            return "Nessun evento ricevuto misurato."
+        }
+        return "Ultimo evento ricevuto " + String(format: "%.1f", locale: Locale.current, seconds)
+            + " s fa. Il silenzio non prova un ritardo del raccoglitore."
+    }
+
+    var registryUpdateSteps: [String] { registry["update_steps"] as? [String] ?? [] }
 
     func perform(_ title: String, _ operation: @escaping () async throws -> Void) {
         guard !fixtures, busy == nil else { return }
@@ -94,6 +132,9 @@ final class AppModel: ObservableObject {
         folders = f.map { FolderItem(data: $0) }
         watchedFolders = try await worker.request("registro.elenco_sorveglianza") as? [Record] ?? []
         registry = try await worker.request("registro.stato") as? Record ?? [:]
+        eventsKernelActive = nil
+        eventsKernelMessage = "Stato della ricerca precedente da verificare: ripeti la ricerca."
+        eventsKernelCollection = [:]
         hooks = try await optionalStatus("hooks.stato")
         bank = try await optionalStatus("banco.storico")
     }
@@ -221,6 +262,7 @@ final class AppModel: ObservableObject {
         eventTotal = result.number("total"); eventsTruncated = result.flag("truncated")
         eventsKernelActive = result["kernel_active"] as? Bool
         let collection = result["kernel_collection"] as? Record ?? [:]
+        eventsKernelCollection = collection
         eventsKernelMessage = collection.text("message", fallback: "La raccolta kernel non è ancora verificata per questa ricerca.")
     }
 
@@ -262,6 +304,7 @@ final class AppModel: ObservableObject {
             if action == "registro.export_csv" {
                 self.eventsKernelActive = result["kernel_active"] as? Bool
                 let collection = result["kernel_collection"] as? Record ?? [:]
+                self.eventsKernelCollection = collection
                 self.eventsKernelMessage = collection.text("message", fallback: "La raccolta kernel non è ancora verificata per questa esportazione.")
             }
         }
@@ -386,10 +429,21 @@ final class AppModel: ObservableObject {
     }
 
     private func loadFixtures() {
-        watchedFolders = [["id": "synthetic-watch", "nome": "Progetto di esempio", "origine": "/Cartelle sintetiche/Progetto", "tipo": "sorveglianza", "esiste": true]]
+        watchedFolders = [["id": "synthetic-watch", "nome": "Progetto di esempio", "origine": "/Cartelle sintetiche/Progetto", "tipo": "sorveglianza", "esiste": true,
+                           "raccolta": "rifiutata", "reason_code": "folder_unavailable", "message": "Cartella non disponibile. Esito sintetico."]]
         folders = [FolderItem(data: ["id": "synthetic-1", "nome": "Contratti di esempio", "origine": "/Cartelle sintetiche/Contratti", "bundle": "/Disco di esempio/Contratti.sparsebundle", "stato": "chiusa", "file": 24, "byte": 12_582_912, "minutes": 15]),
                    FolderItem(data: ["id": "synthetic-2", "nome": "Documenti di esempio", "origine": "/Cartelle sintetiche/Documenti", "bundle": "/Disco di esempio/Documenti.sparsebundle", "stato": "aperta", "file": 9, "byte": 5_242_880, "minutes": 15])]
-        registry = ["installed": false, "running": false, "healthy": false, "needs_root": true, "message": "Il registro kernel attende le autorizzazioni. Questi dati sono sintetici."]
+        registry = ["installed": true, "running": false, "healthy": false, "needs_root": false,
+                    "needs_update": true, "event_lag_seconds": 3.2, "lines_per_second": 28_400.0, "last_event_age_seconds": 12.0,
+                    "update_message": "Il servizio sintetico usa una build diversa dall'app. Nessuna misura reale.",
+                    "message": "Stato sintetico: servizio da aggiornare e cartella rifiutata. Nessuna misura reale.",
+                    "health_reasons": [["code": "event_lag", "message": "Gli eventi arrivano in ritardo. Esito sintetico."],
+                                       ["code": "rejected_folders", "message": "Una cartella è rifiutata dal raccoglitore. Esito sintetico."]],
+                    "watch_status": [["id": "synthetic-watch", "status": "rejected", "reason_code": "folder_unavailable", "message": "Cartella non disponibile. Esito sintetico."]],
+                    "update_steps": ["Chiudi Paratia.", "Prepara il bootstrap usando il comando riportato sotto.",
+                                     "Apri la copia di bootstrap e premi Installa il registro, autorizzando con macOS.",
+                                     "Chiudi la copia di bootstrap.", "In Accesso completo al disco rimuovi e aggiungi /Applications/Paratia.app. Non autorizzare Python.",
+                                     "Riapri /Applications/Paratia.app e premi Aggiorna; verifica la conferma delle cartelle e un evento kernel."]]
         hooks = ["pending": true, "message": "Collega gli hook e conferma la fiducia nell'harness."]
         events = [EventItem(id: "example", data: ["quando": "08/10/2026 09:41:05", "evento": "cartella-chiusa", "percorso": "/Cartelle sintetiche/Documenti", "processo": "Paratia", "pid": 1234, "utente": "utente di esempio", "source": "paratia", "agente": NSNull(), "esito": "riuscito"])]
         eventTotal = events.count

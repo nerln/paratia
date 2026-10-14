@@ -272,6 +272,58 @@ def test_empty_registry_results_preserve_kernel_state_for_query_and_csv(W, monke
     assert response["result"][count] == 0
 
 
+@pytest.mark.parametrize("lag,rate,age", [(None, None, None), (0.4, 28100.0, 12.0), (189.0, 137.0, 2.0)])
+@pytest.mark.parametrize("action", ["registro.query", "registro.export_csv"])
+def test_registry_collection_metadata_survives_ipc_even_without_rows(W, monkeypatch, tmp_path, lag, rate, age, action):
+    collection = {"kernel_active": False, "kernel_collection": {
+        "event_lag_seconds": lag, "lines_per_second": rate, "last_event_age_seconds": age,
+        "last_event_received_at": "2026-10-14T03:40:00Z" if age is not None else None,
+        "health_reasons": [{"code": "rejected_folders", "message": "Una cartella è rifiutata dal raccoglitore."}],
+        "folder_status": "rejected", "reason_code": "folder_unavailable",
+        "message": "Rifiutata dal raccoglitore: cartella non disponibile.", "coverage_guaranteed": False,
+    }}
+    filters = {"folder": "synthetic-rejected"}
+    monkeypatch.setattr(W, "_load", lambda name: SimpleNamespace(
+        query=lambda f: [], export_csv=lambda f: "evento\n", raccolta_kernel=lambda f: collection))
+    params = {"filters": filters}
+    if action.endswith("export_csv"):
+        params["path"] = str(tmp_path.resolve() / "empty-with-health.csv")
+    response = run_main(W, action, frame(params))
+    assert response["ok"]
+    assert response["result"]["kernel_collection"] == collection["kernel_collection"]
+    assert response["result"]["kernel_active"] is False
+    assert response["result"]["total" if action.endswith("query") else "count"] == 0
+
+
+@pytest.mark.parametrize("needs_update", [True, False, None])
+def test_registry_status_preserves_individual_rejections_and_ordered_update_plan(W, monkeypatch, needs_update):
+    steps = ["Chiudi Paratia.", "Prepara il bootstrap.", "Installa dal bootstrap.",
+             "Chiudi il bootstrap.", "Rimuovi e aggiungi Paratia in Accesso completo al disco.",
+             "Riapri l'app normale e verifica."]
+    state = {"running": True, "healthy": False, "needs_update": needs_update,
+             "event_lag_seconds": 0.2, "lines_per_second": 32000.0,
+             "health_reasons": [{"code": "rejected_folders", "message": "Una cartella è rifiutata dal raccoglitore."}],
+             "watch_status": [{"id": "accepted", "status": "confirmed", "reason_code": None, "message": "Confermata."},
+                              {"id": "rejected", "status": "rejected", "reason_code": "folder_unavailable", "message": "Cartella non disponibile."}],
+             "watched_ids": ["accepted"], "update_steps": steps if needs_update else []}
+    monkeypatch.setattr(W, "_load", lambda name: SimpleNamespace(stato=lambda: state))
+    response = run_main(W, "registro.stato", frame())
+    assert response["ok"] and response["result"] == state
+    assert response["result"]["watch_status"][0]["status"] == "confirmed"
+    assert response["result"]["watch_status"][1]["status"] == "rejected"
+    assert response["result"]["update_steps"] == (steps if needs_update else [])
+
+
+def test_registry_watch_list_preserves_refusal_for_one_id_without_hiding_the_others(W, monkeypatch):
+    rows = [{"id": "accepted", "raccolta": "confermata", "origine": "/fixture/accepted"},
+            {"id": "rejected", "raccolta": "rifiutata", "origine": "/fixture/missing",
+             "reason_code": "folder_unavailable", "message": "Cartella non disponibile."},
+            {"id": "pending", "raccolta": "configurata", "origine": "/fixture/pending"}]
+    monkeypatch.setattr(W, "_load", lambda name: SimpleNamespace(elenco_sorveglianza=lambda: rows))
+    response = run_main(W, "registro.elenco_sorveglianza", frame())
+    assert response["ok"] and response["result"] == rows
+
+
 @pytest.mark.parametrize("action,code,fragment", [
     ("registro.query", "folder_not_configured", "La cartella non è configurata nel registro"),
     ("registro.export_csv", "folder_not_configured", "La cartella non è configurata nel registro"),

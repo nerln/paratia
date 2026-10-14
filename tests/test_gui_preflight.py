@@ -178,3 +178,64 @@ def test_registry_view_distinguishes_zero_events_from_inactive_or_unknown_collec
     assert 'Text(model.eventsKernelMessage)' in view
     watch = swift_method("watchFolder")
     assert 'result.text("messaggio"' in watch and '"nome":' not in watch
+
+
+def test_gui_keeps_refused_folder_reason_visible_before_global_health_and_missing_path():
+    status = swift_method("watchStatus")
+    assert 'registry["watch_status"] as? [Record]' in status
+    refusal = status.index('return "Rifiutata dal raccoglitore: " + message')
+    assert status.index('"rejected"') < refusal < status.index('record["esiste"] as? Bool == false')
+    assert refusal < status.index('registry.flag("running")')
+    # Acceptance of an ID and health of the entire stream are separate states.
+    assert 'registry.flag("healthy")' not in status
+    view = (ROOT / "macos" / "Views.swift").read_text()
+    assert 'Text(model.watchStatus(folder))' in view
+    assert 'Text("Registro: " + model.watchStatus(folder.data))' in view
+
+
+def test_gui_shows_health_reasons_and_separates_event_latency_from_silent_stream_age():
+    app = (ROOT / "macos" / "AppModel.swift").read_text()
+    query = app.split('private func refreshEvents()', 1)[1].split('\n    func ', 1)[0]
+    assert 'eventsKernelCollection = collection' in query
+    assert 'self.eventsKernelCollection = collection' in swift_method("export")
+    metrics = swift_method("collectionMetrics")
+    age = swift_method("lastEventAge")
+    assert '"event_lag_seconds"' in metrics and '"lines_per_second"' in metrics
+    assert '"last_event_age_seconds"' not in metrics
+    assert 'value.isFinite' in metrics and 'value >= 0' in metrics
+    assert '"last_event_age_seconds"' in age and 'silenzio non prova un ritardo' in age
+    view = (ROOT / "macos" / "Views.swift").read_text()
+    assert view.count('RegistryHealthDetails(model: model, record: model.registry)') == 2
+    assert 'RegistryHealthDetails(model: model, record: model.eventsKernelCollection)' in view
+    details = view.split('struct RegistryHealthDetails:', 1)[1].split('struct RegistryUpdateSteps:', 1)[0]
+    assert 'model.healthReasons(record)' in details and 'reason.text("message")' in details
+    assert 'prettyJSON' not in details
+
+
+def test_gui_shows_ordered_update_steps_only_for_a_known_build_mismatch():
+    view = (ROOT / "macos" / "Views.swift").read_text()
+    steps = view.split('struct RegistryUpdateSteps:', 1)[1].split('struct EventDetail:', 1)[0]
+    assert 'if model.registry.flag("needs_update")' in steps
+    assert 'model.registry.text("update_message"' in steps
+    assert 'Aggiorna il registro e verifica la build installata.' in steps
+    assert 'model.registryUpdateSteps.enumerated()' in steps
+    assert 'Text("\\(index + 1). \\(step)")' in steps
+    settings = view.split('struct SettingsView:', 1)[1]
+    assert settings.index('RegistryUpdateSteps(model: model)') < settings.index('GroupBox("Registro kernel")')
+    assert 'Versione del servizio: non ancora verificata.' in settings
+    registry = view.split('struct RegistryView:', 1)[1].split('struct RegistryHealthDetails:', 1)[0]
+    assert 'Label(model.registry.text("update_message"' in registry
+    assert 'Button("Passi per aggiornare…") { model.section = .settings }' in registry
+
+
+def test_gui_refresh_invalidates_old_query_health_without_discarding_history_or_requerying():
+    refresh = swift_method("refresh")
+    state = refresh.index('registry = try await worker.request("registro.stato")')
+    for invalidation in ('eventsKernelActive = nil', 'eventsKernelCollection = [:]',
+                         'eventsKernelMessage = "Stato della ricerca precedente da verificare: ripeti la ricerca."'):
+        assert state < refresh.index(invalidation)
+    # Refresh observes current collection status; displayed history survives
+    # until the user reruns the filters and gets new query-scoped metadata.
+    assert 'events =' not in refresh and 'eventTotal =' not in refresh
+    assert 'eventsTruncated =' not in refresh
+    assert 'worker.request("registro.query"' not in refresh and 'refreshEvents()' not in refresh
