@@ -6,6 +6,31 @@ privilege, changing TCC, or touching any keychain.
 """
 from __future__ import annotations
 
+
+def _t(testo, **valori):
+    """Testo per la lingua della GUI; senza lingua impostata, quello italiano."""
+    import importlib.util
+    import os
+    import sys
+    nome = "paratia_messaggi"
+    if nome not in sys.modules:
+        percorso = os.path.join(os.path.dirname(os.path.abspath(__file__)), "messaggi.py")
+        spec = importlib.util.spec_from_file_location(nome, percorso)
+        modulo = importlib.util.module_from_spec(spec)
+        sys.modules[nome] = modulo
+        spec.loader.exec_module(modulo)
+    return sys.modules[nome].t(testo, **valori)
+
+
+def _lingua_corrente():
+    _t("")
+    return sys.modules["paratia_messaggi"].lingua()
+
+
+def _imposta_lingua(lingua):
+    _t("")
+    sys.modules["paratia_messaggi"].imposta(lingua)
+
 import argparse
 import contextlib
 import fcntl
@@ -26,7 +51,7 @@ from pathlib import Path
 SUPPORT = Path("/Library/Application Support/Paratia")
 LOGS = Path("/Library/Logs/Paratia")
 DAEMONS = Path("/Library/LaunchDaemons")
-CODICE = ("catena.py", "registro.py", "registro_daemon.py")
+CODICE = ("catena.py", "messaggi.py", "registro.py", "registro_daemon.py")
 MAX_CODICE = 1048576
 MAX_BUNDLE = 128 * 1024**2
 MAX_ELEMENTI = 10000
@@ -67,14 +92,14 @@ def _riduci_stderr(value):
         esito = re.fullmatch(r"\s*(Bootstrap failed|Boot-out failed):\s*(\d{1,3})(?::.*)?\s*", riga)
         if esito:
             numero = int(esito.group(2))
-            descrizione = descrizioni.get(numero, "Errore launchctl")
+            descrizione = descrizioni.get(numero, _t("Errore launchctl"))
             messaggi.append("%s: %d: %s" % (esito.group(1), numero, descrizione))
         elif "Could not find service" in riga:
             messaggi.append("Could not find service in domain for system")
         elif riga.strip() == "Try running the command as root for richer errors.":
             messaggi.append(riga.strip())
     if not messaggi and testo.strip():
-        messaggi.append("Diagnostica launchctl non standard omessa.")
+        messaggi.append(_t("Diagnostica launchctl non standard omessa."))
     return "\n".join(messaggi)[:512]
 
 
@@ -90,10 +115,10 @@ def _launchctl(argv, errors, operation):
                               timeout=LAUNCHCTL_TIMEOUT)
     except subprocess.TimeoutExpired as exc:
         _diagnostica(errors, operation, None, exc.stderr)
-        raise ErroreInstallazione("launchctl_timeout", "launchctl non ha risposto entro il limite di tempo.", errors) from exc
+        raise ErroreInstallazione("launchctl_timeout", _t("launchctl non ha risposto entro il limite di tempo."), errors) from exc
     except OSError as exc:
         _diagnostica(errors, operation, None, "")
-        raise ErroreInstallazione("launchctl_unavailable", "Non è stato possibile eseguire launchctl.", errors) from exc
+        raise ErroreInstallazione("launchctl_unavailable", _t("Non è stato possibile eseguire launchctl."), errors) from exc
 
 
 def _servizio_presente(label, errors, operation="print"):
@@ -106,7 +131,7 @@ def _servizio_presente(label, errors, operation="print"):
     if result.returncode in (3, 113) and (not testo.strip() or "Could not find service" in testo):
         return False
     _diagnostica(errors, operation, result.returncode, result.stderr)
-    raise ErroreInstallazione("launchctl_probe_failed", "Non è stato possibile verificare se il servizio è ancora caricato; nessuna sostituzione è autorizzata.", errors)
+    raise ErroreInstallazione("launchctl_probe_failed", _t("Non è stato possibile verificare se il servizio è ancora caricato; nessuna sostituzione è autorizzata."), errors)
 
 
 def _arresta(label, errors, rollback=False):
@@ -123,7 +148,7 @@ def _arresta(label, errors, rollback=False):
             break
         time.sleep(min(0.1 + tentativo * 0.05, 0.4, restante))
     codice = "service_stop_failed" if result.returncode else "service_stop_timeout"
-    raise ErroreInstallazione(codice, "Il servizio precedente è ancora caricato dopo l'arresto: nessun componente è stato sostituito.", errors)
+    raise ErroreInstallazione(codice, _t("Il servizio precedente è ancora caricato dopo l'arresto: nessun componente è stato sostituito."), errors)
 
 
 def _avvia(plist_path, errors, rollback=False):
@@ -138,7 +163,7 @@ def _avvia(plist_path, errors, rollback=False):
         if not corsa or tentativo == len(BOOTSTRAP_DELAYS):
             break
         time.sleep(BOOTSTRAP_DELAYS[tentativo])
-    raise ErroreInstallazione("bootstrap_failed", "launchctl non ha caricato il nuovo servizio dopo i tentativi previsti.", errors)
+    raise ErroreInstallazione("bootstrap_failed", _t("launchctl non ha caricato il nuovo servizio dopo i tentativi previsti."), errors)
 
 
 # Importing the installer must not add unsigned bytecode inside its app bundle.
@@ -156,7 +181,7 @@ def _rootpath(p):
     for q in [p, *p.parents]:
         s = q.lstat()
         if s.st_uid != 0 or s.st_mode & 0o022 or _catena.acl_scrivibile(q):
-            raise ValueError("Il runtime Python è modificabile senza root. Installa i Command Line Tools Apple in /Library/Developer.")
+            raise ValueError(_t("Il runtime Python è modificabile senza root. Installa i Command Line Tools Apple in /Library/Developer."))
     return p
 
 
@@ -194,15 +219,15 @@ def runtime():
             return str(exe)
         except (OSError, ValueError, subprocess.SubprocessError):
             continue
-    raise ValueError("Nessun Python Apple protetto da root: installa i Command Line Tools Apple in /Library/Developer, senza cambiare i permessi di Xcode.")
+    raise ValueError(_t("Nessun Python Apple protetto da root: installa i Command Line Tools Apple in /Library/Developer, senza cambiare i permessi di Xcode."))
 
 
 def _utente(uid):
     if isinstance(uid, bool) or not isinstance(uid, int) or uid <= 0:
-        raise ValueError("Scegli un utente umano distinto da root.")
+        raise ValueError(_t("Scegli un utente umano distinto da root."))
     u = pwd.getpwuid(uid)
     if not Path(u.pw_dir).is_absolute() or any(c in u.pw_name for c in ":\n\r"):
-        raise ValueError("L'account non ha metadati validi.")
+        raise ValueError(_t("L'account non ha metadati validi."))
     return u
 
 
@@ -228,17 +253,24 @@ def piano(resource_root=None, uid=None):
     for nome in (*CODICE, "registro_installa.py"):
         p = fonte / nome
         if not p.is_file() or p.is_symlink():
-            raise ValueError("I componenti del registro non sono disponibili nell'app.")
+            raise ValueError(_t("I componenti del registro non sono disponibili nell'app."))
+    modo = _modo_firma(app)
+    if modo == "adhoc":
+        messaggio = _t("L'autorizzazione amministratore copia il bundle firmato in un percorso protetto e installa il registro. "
+                       "Autorizza /Applications/Paratia.app in Accesso completo al disco; dopo ogni nuova build con firma ad hoc rimuovi e aggiungi di nuovo quella voce. "
+                       "Il servizio precedente deve essere reinstallato per usare il launcher dell'app.")
+    else:
+        messaggio = _t("L'autorizzazione amministratore copia il bundle firmato in un percorso protetto e installa il registro. "
+                       "Autorizza /Applications/Paratia.app in Accesso completo al disco. Con la stessa firma il permesso resta valido; "
+                       "il servizio precedente deve essere reinstallato per usare il launcher dell'app.")
     return {"argv": [executable, "-I", "-S", str(fonte / "registro_installa.py"),
-                     "--install", "--uid", str(uid), "--source", str(fonte)],
+                     "--install", "--uid", str(uid), "--source", str(fonte), "--lingua", _lingua_corrente()],
             "plist": plist(uid, executable), "label": "it.paratia.registro.%d" % uid,
             "needs_root": True, "needs_fda": True,
-            "fda_entry": FDA_APP, "fda_regrant_after_build": True,
+            "fda_entry": FDA_APP, "fda_regrant_after_build": modo == "adhoc", "firma": modo,
             "bundle": str(app), "cdhash": identita,
             "launcher_version": LAUNCHER_VERSION,
-            "message": "L'autorizzazione amministratore copia il bundle firmato in un percorso protetto e installa il registro. "
-                       "Autorizza /Applications/Paratia.app in Accesso completo al disco; dopo ogni nuova build con firma ad hoc rimuovi e aggiungi di nuovo quella voce. "
-                       "Il servizio precedente deve essere reinstallato per usare il launcher dell'app."}
+            "message": messaggio}
 
 
 prepara = piano
@@ -252,7 +284,7 @@ def _directory(p):
             q.mkdir(mode=0o700)
             s = q.lstat()
         if not stat.S_ISDIR(s.st_mode) or s.st_uid != 0 or s.st_mode & 0o022 or _catena.acl_scrivibile(q):
-            raise ValueError("Un percorso di installazione non è protetto da root.")
+            raise ValueError(_t("Un percorso di installazione non è protetto da root."))
 
 
 def _leggi_codice(fonte, nome, uid):
@@ -260,7 +292,7 @@ def _leggi_codice(fonte, nome, uid):
     for q in [*reversed(fonte.parents), fonte]:
         s = q.lstat()
         if not stat.S_ISDIR(s.st_mode) or s.st_uid not in (0, uid) or s.st_mode & 0o002:
-            raise ValueError("La sorgente dell'app non ha autorizzazioni valide.")
+            raise ValueError(_t("La sorgente dell'app non ha autorizzazioni valide."))
     directory = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
     try:
         for parte in fonte.parts[1:]:
@@ -273,10 +305,10 @@ def _leggi_codice(fonte, nome, uid):
     with os.fdopen(fd, "rb") as f:
         s = os.fstat(fd)
         if not stat.S_ISREG(s.st_mode) or s.st_uid not in (0, uid) or s.st_mode & 0o022 or s.st_size > MAX_CODICE:
-            raise ValueError("Un componente del registro non è un file attendibile.")
+            raise ValueError(_t("Un componente del registro non è un file attendibile."))
         b = f.read(MAX_CODICE + 1)
         if len(b) > MAX_CODICE:
-            raise ValueError("Un componente del registro è troppo grande.")
+            raise ValueError(_t("Un componente del registro è troppo grande."))
         compile(b, nome, "exec")
         return b
 
@@ -285,7 +317,7 @@ def _scrivi(p, contenuto, modo):
     if p.exists() or p.is_symlink():
         s = p.lstat()
         if not stat.S_ISREG(s.st_mode) or s.st_uid != 0 or s.st_mode & 0o022:
-            raise ValueError("Un file installato non è protetto da root.")
+            raise ValueError(_t("Un file installato non è protetto da root."))
     fd, nome = tempfile.mkstemp(dir=p.parent, prefix=".paratia-")
     try:
         os.fchmod(fd, modo)
@@ -311,7 +343,7 @@ def _acl(p, account, directory=False):
 def _apri_directory(p):
     p = Path(p)
     if not p.is_absolute() or str(p) != os.path.normpath(str(p)):
-        raise ValueError("Il percorso dell'app deve essere assoluto e senza alias.")
+        raise ValueError(_t("Il percorso dell'app deve essere assoluto e senza alias."))
     fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
     try:
         for parte in p.parts[1:]:
@@ -328,6 +360,15 @@ def _identita_file(s):
     return s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns
 
 
+# Modo della firma letto da _firma nella stessa verifica: nessun secondo codesign.
+_MODI_FIRMA = {}
+
+
+def _modo_firma(app):
+    """'adhoc' o 'stabile', come verificato da _firma. Senza verifica resta 'adhoc': il caso sicuro."""
+    return _MODI_FIRMA.get(str(app), "adhoc")
+
+
 def _firma(app):
     """Verify only; never sign, select an identity, or access a keychain."""
     try:
@@ -340,14 +381,17 @@ def _firma(app):
             raise ValueError()
         if re.findall(r"^Identifier=(.+)$", dettagli, re.MULTILINE) != ["it.paratia.app"]:
             raise ValueError()
-        if re.findall(r"^Signature=(.+)$", dettagli, re.MULTILINE) != ["adhoc"]:
+        firme = re.findall(r"^Signature=(.+)$", dettagli, re.MULTILINE)
+        # Ad hoc: una riga Signature=adhoc. Identità stabile: catena Authority, senza riga adhoc.
+        if firme != ["adhoc"] and (firme or not re.findall(r"^Authority=.+$", dettagli, re.MULTILINE)):
             raise ValueError()
+        _MODI_FIRMA[str(app)] = "adhoc" if firme == ["adhoc"] else "stabile"
         hashes = re.findall(r"^CDHash=([0-9a-fA-F]{40,64})$", dettagli, re.MULTILINE)
         if len(hashes) != 1:
             raise ValueError()
         return hashes[0].lower()
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        raise ValueError("La firma ad hoc del bundle Paratia non è valida: ricostruisci l'app prima di installare.") from exc
+        raise ValueError(_t("La firma del bundle Paratia non è valida: ricostruisci l'app prima di installare.")) from exc
 
 
 def _info_bundle(app):
@@ -359,16 +403,16 @@ def _info_bundle(app):
     with os.fdopen(file, "rb") as source:
         s = os.fstat(file)
         if not stat.S_ISREG(s.st_mode) or s.st_size > MAX_CODICE:
-            raise ValueError("I metadati del bundle non sono validi.")
+            raise ValueError(_t("I metadati del bundle non sono validi."))
         raw = source.read(MAX_CODICE + 1)
         if len(raw) > MAX_CODICE or _identita_file(s) != _identita_file(os.fstat(file)):
-            raise ValueError("I metadati del bundle sono cambiati.")
+            raise ValueError(_t("I metadati del bundle sono cambiati."))
     info = plistlib.loads(raw)
     if (not isinstance(info, dict) or info.get("CFBundleIdentifier") != "it.paratia.app" or
             info.get("CFBundleExecutable") != "Paratia" or
             type(info.get("ParatiaRegistryLauncherVersion")) is not int or
             info["ParatiaRegistryLauncherVersion"] != LAUNCHER_VERSION):
-        raise ValueError("Questo bundle non contiene il launcher del registro supportato. Ricostruisci Paratia.")
+        raise ValueError(_t("Questo bundle non contiene il launcher del registro supportato. Ricostruisci Paratia."))
     return info
 
 
@@ -380,17 +424,17 @@ def _albero(app, owners, copia=None):
         if (s.st_uid not in owners or s.st_mode & 0o022 or s.st_mode & 0o7000 or
                 not (stat.S_ISDIR(s.st_mode) if directory else stat.S_ISREG(s.st_mode)) or
                 (not directory and s.st_nlink != 1)):
-            raise ValueError("Il bundle contiene file, collegamenti o autorizzazioni non attendibili.")
+            raise ValueError(_t("Il bundle contiene file, collegamenti o autorizzazioni non attendibili."))
 
     def visita(fd, destinazione=None, profondita=0):
         if profondita > 64:
-            raise ValueError("Il bundle contiene troppe sottocartelle.")
+            raise ValueError(_t("Il bundle contiene troppe sottocartelle."))
         controlla(os.fstat(fd), True)
         with os.scandir(fd) as entries:
             for entry in entries:
                 elementi[0] += 1
                 if elementi[0] > MAX_ELEMENTI:
-                    raise ValueError("Il bundle contiene troppi elementi.")
+                    raise ValueError(_t("Il bundle contiene troppi elementi."))
                 s = entry.stat(follow_symlinks=False)
                 isdir = stat.S_ISDIR(s.st_mode)
                 controlla(s, isdir)
@@ -418,10 +462,10 @@ def _albero(app, owners, copia=None):
                         before = os.fstat(source)
                         controlla(before, False)
                         if _identita_file(before) != _identita_file(s):
-                            raise ValueError("Il bundle è cambiato durante la copia.")
+                            raise ValueError(_t("Il bundle è cambiato durante la copia."))
                         totale[0] += before.st_size
                         if totale[0] > MAX_BUNDLE:
-                            raise ValueError("Il bundle supera il limite consentito.")
+                            raise ValueError(_t("Il bundle supera il limite consentito."))
                         if destinazione is not None:
                             target = os.open(entry.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                                              0o600, dir_fd=destinazione)
@@ -430,14 +474,14 @@ def _albero(app, owners, copia=None):
                                 while restante:
                                     chunk = reader.read(min(restante, 131072))
                                     if not chunk:
-                                        raise ValueError("Il bundle è cambiato durante la copia.")
+                                        raise ValueError(_t("Il bundle è cambiato durante la copia."))
                                     writer.write(chunk)
                                     restante -= len(chunk)
                                 writer.flush()
                             os.fchmod(target, stat.S_IMODE(before.st_mode))
                             os.fsync(target)
                         if _identita_file(before) != _identita_file(os.fstat(source)):
-                            raise ValueError("Il bundle è cambiato durante la copia.")
+                            raise ValueError(_t("Il bundle è cambiato durante la copia."))
                     finally:
                         os.close(source)
                         if target is not None:
@@ -458,19 +502,19 @@ def _albero(app, owners, copia=None):
 
 def _app_sorgente(fonte, uid):
     if fonte.parts[-3:] != ("Contents", "Resources", "python"):
-        raise ValueError("Il registro deve essere installato dalle risorse del bundle Paratia.")
+        raise ValueError(_t("Il registro deve essere installato dalle risorse del bundle Paratia."))
     app = fonte.parents[2]
     if app.suffix != ".app":
-        raise ValueError("La sorgente non è un bundle app.")
+        raise ValueError(_t("La sorgente non è un bundle app."))
     for p in [*reversed(app.parents), app]:
         s = p.lstat()
         if not stat.S_ISDIR(s.st_mode) or s.st_uid not in (0, uid) or s.st_mode & 0o002:
-            raise ValueError("La sorgente dell'app non ha autorizzazioni valide.")
+            raise ValueError(_t("La sorgente dell'app non ha autorizzazioni valide."))
     _albero(app, (0, uid))
     _info_bundle(app)
     executable = app / "Contents" / "MacOS" / "Paratia"
     if not executable.lstat().st_mode & 0o111:
-        raise ValueError("Il launcher del bundle non è eseguibile.")
+        raise ValueError(_t("Il launcher del bundle non è eseguibile."))
     return app, _firma(app)
 
 
@@ -479,7 +523,7 @@ def _protetto(p, directory=False):
     if (s.st_uid != 0 or s.st_mode & 0o022 or s.st_mode & 0o7000 or
             not (stat.S_ISDIR(s.st_mode) if directory else stat.S_ISREG(s.st_mode)) or
             (not directory and s.st_nlink != 1) or _catena.acl_scrivibile(p)):
-        raise ValueError("Un componente installato non è protetto da root.")
+        raise ValueError(_t("Un componente installato non è protetto da root."))
 
 
 @contextlib.contextmanager
@@ -494,7 +538,7 @@ def _lock_installazione():
         fcntl.flock(fd, fcntl.LOCK_EX)
         # The lock cannot be swapped by ordinary users inside protected Support.
         if _identita_file(os.fstat(fd)) != _identita_file(p.lstat()):
-            raise ValueError("Il lock di installazione è cambiato.")
+            raise ValueError(_t("Il lock di installazione è cambiato."))
         yield
     finally:
         os.close(fd)
@@ -507,7 +551,7 @@ def _verifica_copia(app, identita):
             _protetto(p, directory=p.is_dir())
     _info_bundle(app)
     if _firma(app) != identita:
-        raise ValueError("La copia protetta non ha la stessa identità firmata del bundle corrente.")
+        raise ValueError(_t("La copia protetta non ha la stessa identità firmata del bundle corrente."))
 
 
 def _transazione(stage, replacements, uid, identita, prima_avvio=None):
@@ -546,7 +590,7 @@ def _transazione(stage, replacements, uid, identita, prima_avvio=None):
             # A possibly loaded candidate must keep its executable. Leave both
             # candidate and protected originals untouched for manual recovery.
             raise ErroreInstallazione(
-                "rollback_stop_failed", "Installazione non riuscita. Non è stato possibile confermare l'arresto durante il ripristino: conserva il backup protetto dell'installer; i componenti non sono stati rimossi.",
+                "rollback_stop_failed", _t("Installazione non riuscita. Non è stato possibile confermare l'arresto durante il ripristino: conserva il backup protetto dell'installer; i componenti non sono stati rimossi."),
                 launchctl_errors, conserva_stage=True, backup=str(stage)) from exc
         for target in reversed(installati):
             try:
@@ -564,29 +608,29 @@ def _transazione(stage, replacements, uid, identita, prima_avvio=None):
         old_plist = DAEMONS / (label + ".plist")
         if recupero:
             raise ErroreInstallazione(
-                "rollback_incomplete", "Il ripristino è incompleto: conserva il backup protetto dell'installer.",
+                "rollback_incomplete", _t("Il ripristino è incompleto: conserva il backup protetto dell'installer."),
                 launchctl_errors, conserva_stage=True, backup=str(stage)) from errore
         if presente and not old_plist.exists():
             raise ErroreInstallazione(
-                "rollback_bootstrap_failed", "Installazione non riuscita. I componenti precedenti sono stati ripristinati, ma il plist precedente non è disponibile e il servizio non è stato riavviato. Conserva il backup protetto e riprova l'installazione dall'app.",
+                "rollback_bootstrap_failed", _t("Installazione non riuscita. I componenti precedenti sono stati ripristinati, ma il plist precedente non è disponibile e il servizio non è stato riavviato. Conserva il backup protetto e riprova l'installazione dall'app."),
                 launchctl_errors, conserva_stage=True, backup=str(stage)) from errore
         if presente:
             try:
                 _avvia(old_plist, launchctl_errors, rollback=True)
             except BaseException as exc:
                 raise ErroreInstallazione(
-                    "rollback_bootstrap_failed", "Installazione non riuscita. I componenti precedenti sono stati ripristinati, ma launchctl non ha riavviato il servizio precedente. Conserva il backup protetto e riprova l'installazione dall'app.",
+                    "rollback_bootstrap_failed", _t("Installazione non riuscita. I componenti precedenti sono stati ripristinati, ma launchctl non ha riavviato il servizio precedente. Conserva il backup protetto e riprova l'installazione dall'app."),
                     launchctl_errors, conserva_stage=True, backup=str(stage)) from exc
         codice = getattr(errore, "error_code", "install_failed")
-        dettaglio = str(errore) if isinstance(errore, ErroreInstallazione) else "Non è stato possibile completare la sostituzione dei componenti."
-        ripristino = " Il servizio precedente è stato ripristinato e riavviato." if presente else " I componenti precedenti sono stati ripristinati."
+        dettaglio = str(errore) if isinstance(errore, ErroreInstallazione) else _t("Non è stato possibile completare la sostituzione dei componenti.")
+        ripristino = _t(" Il servizio precedente è stato ripristinato e riavviato.") if presente else _t(" I componenti precedenti sono stati ripristinati.")
         raise ErroreInstallazione(codice, dettaglio + ripristino, launchctl_errors) from errore
     return launchctl_errors
 
 
 def installa(fonte, uid):
     if os.geteuid() != 0:
-        raise PermissionError("L'installazione richiede il dialogo amministratore della GUI.")
+        raise PermissionError(_t("L'installazione richiede il dialogo amministratore della GUI."))
     u = _utente(uid)
     fonte = Path(fonte).absolute()
     executable = runtime()
@@ -606,7 +650,7 @@ def installa(fonte, uid):
             subprocess.run(["/bin/chmod", "-RN", str(staged_app)], check=True, capture_output=True)
             _verifica_copia(staged_app, identita)
             if _firma(app) != identita:
-                raise ValueError("Il bundle corrente è cambiato durante la copia: il servizio precedente è conservato.")
+                raise ValueError(_t("Il bundle corrente è cambiato durante la copia: il servizio precedente è conservato."))
             payload = staged_app / "Contents" / "Resources" / "python"
             contenuti = {nome: _leggi_codice(payload, nome, 0) for nome in CODICE}
             replacements = [(staged_app, SUPPORT / "Paratia.app")]
@@ -625,9 +669,9 @@ def installa(fonte, uid):
                 _scrivi(catena, b"", 0o600)
             candidato_stato = stage / "stato.json"
             _scrivi(candidato_stato, json.dumps({"running": False, "healthy": False, "needs_fda": None,
-                    "launch_mode": "app", "fda_entry": FDA_APP, "fda_regrant_after_build": True,
+                    "launch_mode": "app", "fda_entry": FDA_APP, "fda_regrant_after_build": _modo_firma(app) == "adhoc",
                     "installed_cdhash": identita,
-                    "message": "Registro installato; attendi la verifica delle autorizzazioni di /Applications/Paratia.app."}).encode(), 0o600)
+                    "message": _t("Registro installato; attendi la verifica delle autorizzazioni di /Applications/Paratia.app.")}).encode(), 0o600)
             replacements.append((candidato_stato, stato))
             candidato_plist = stage / "servizio.plist"
             _scrivi(candidato_plist, plistlib.dumps(plist(uid, executable)), 0o644)
@@ -646,8 +690,8 @@ def installa(fonte, uid):
             return {"installed": True, "error_code": None, "launchctl_errors": launchctl_errors,
                     "needs_fda": None, "label": label,
                     "launch_mode": "app", "fda_entry": FDA_APP,
-                    "fda_regrant_after_build": True, "cdhash": identita,
-                    "message": "Registro installato dalla copia protetta del bundle. Verifica lo stato; le autorizzazioni di macOS non sono state modificate."}
+                    "fda_regrant_after_build": _modo_firma(app) == "adhoc", "cdhash": identita,
+                    "message": _t("Registro installato dalla copia protetta del bundle. Verifica lo stato; le autorizzazioni di macOS non sono state modificate.")}
         except BaseException as exc:
             conserva = bool(getattr(exc, "conserva_stage", False))
             raise
@@ -659,18 +703,20 @@ def installa(fonte, uid):
 def main(argv=None):
     class ParserJSON(argparse.ArgumentParser):
         def error(self, message):
-            raise ErroreInstallazione("invalid_arguments", "Gli argomenti dell'installatore non sono validi.")
+            raise ErroreInstallazione("invalid_arguments", _t("Gli argomenti dell'installatore non sono validi."))
 
-    parser = ParserJSON(description="Prepara o installa il registro Paratia.", add_help=False)
+    parser = ParserJSON(description=_t("Prepara o installa il registro Paratia."), add_help=False)
     parser.add_argument("-h", "--help", action="store_true")
     parser.add_argument("--uid", type=int, default=os.getuid())
     parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parent)
     parser.add_argument("--install", action="store_true")
+    parser.add_argument("--lingua", choices=("it", "en", "es"), default="it")
     codice = 0
     try:
         args = parser.parse_args(argv)
+        _imposta_lingua(args.lingua)
         if args.help:
-            result = {"installed": False, "message": "Uso: registro_installa.py [--install] --uid UID --source RISORSE. L'installazione richiede l'autorizzazione amministratore della GUI."}
+            result = {"installed": False, "message": _t("Uso: registro_installa.py [--install] --uid UID --source RISORSE. L'installazione richiede l'autorizzazione amministratore della GUI.")}
         else:
             result = installa(args.source, args.uid) if args.install else piano(args.source, args.uid)
         result.setdefault("installed", False)
@@ -683,15 +729,15 @@ def main(argv=None):
             errors = exc.launchctl_errors
         elif isinstance(exc, PermissionError):
             error_code = "permission_required"
-            message = "L'installazione richiede il dialogo amministratore della GUI."
+            message = _t("L'installazione richiede il dialogo amministratore della GUI.")
             errors = []
         elif isinstance(exc, KeyboardInterrupt):
             error_code = "installation_interrupted"
-            message = "L'installazione è stata interrotta. Verifica lo stato del servizio e riprova dall'app."
+            message = _t("L'installazione è stata interrotta. Verifica lo stato del servizio e riprova dall'app.")
             errors = []
         else:
             error_code = "install_failed"
-            message = "Non è stato possibile preparare o installare il registro. Verifica la copia bootstrap protetta e il bundle firmato, quindi riprova dall'app."
+            message = _t("Non è stato possibile preparare o installare il registro. Verifica la copia bootstrap protetta e il bundle firmato, quindi riprova dall'app.")
             errors = []
         result = {"installed": False, "error_code": error_code, "message": message,
                   "launchctl_errors": errors}

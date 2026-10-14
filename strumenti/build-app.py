@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Build a local ad-hoc signed app; never install it or request authorization."""
+"""Build a local app: ad hoc signed by default, or with a stable identity from --sign-identity.
+
+Never install it, never request authorization, never open a keychain to pick an identity.
+"""
 from __future__ import annotations
 
 import argparse
@@ -13,9 +16,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+LINGUE = ("it", "en", "es")
+TABELLE = ("Localizable.strings", "InfoPlist.strings")
 BOOTSTRAP_ROOT = Path("/Library/Application Support/ParatiaBootstrap.noindex/Paratia.app/Contents/Resources/python")
 MODULES = ("paratia.py", "gui_worker.py", "cartelle.py", "etichette.py", "registro.py", "catena.py",
-           "registro_installa.py", "registro_daemon.py", "banco.py", "hookinstaller.py")
+           "registro_installa.py", "registro_daemon.py", "banco.py", "hookinstaller.py", "messaggi.py")
 
 
 def run(argv):
@@ -25,7 +30,19 @@ def run(argv):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--render-fixtures", action="store_true")
+    parser.add_argument("--lang", choices=LINGUE, default=None, help="lingua delle schermate di prova (default: tutte)")
+    parser.add_argument("--sign-identity", default=None,
+                        help="identita' di firma stabile del portachiavi; senza opzione si usa PARATIA_SIGN_IDENTITY, "
+                             "e se anche quella e' vuota o assente la firma e' ad hoc ('-')")
     args = parser.parse_args()
+    if args.sign_identity is not None:
+        # Un'identita' indicata esplicitamente e' obbligatoria: un valore vuoto e' un errore.
+        identita = args.sign_identity.strip()
+    else:
+        # Una variabile vuota e' come assente: la build resta ad hoc.
+        identita = os.environ.get("PARATIA_SIGN_IDENTITY", "").strip() or "-"
+    if not identita or "\n" in identita or "\0" in identita:
+        raise ValueError("L'identita' di firma non e' valida.")
     build = ROOT / "build.noindex"
     app = build / "Paratia.app"
     contents = app / "Contents"
@@ -59,6 +76,15 @@ def main():
          contents / "Resources" / "Paratia.icns"])
     for name in MODULES:
         shutil.copyfile(ROOT / name, resources / name)
+    for lingua in LINGUE:
+        destinazione = contents / "Resources" / (lingua + ".lproj")
+        destinazione.mkdir(parents=True, exist_ok=True)
+        # Tabella dei testi della GUI e testo del permesso Desktop mostrato da macOS.
+        for nome in TABELLE:
+            origine = ROOT / "macos" / "lingue" / (lingua + ".lproj") / nome
+            if not origine.is_file() or origine.is_symlink():
+                raise ValueError("Manca la tabella " + nome + " per la lingua " + lingua + ".")
+            shutil.copyfile(origine, destinazione / nome)
     for name in ("hooks/paratia-gate.py", "strumenti/banco-probe.py"):
         source = ROOT / name
         (resources / name).parent.mkdir(parents=True, exist_ok=True)
@@ -88,13 +114,17 @@ def main():
             "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "1.0",
             "CFBundleVersion": "1", "LSMinimumSystemVersion": "13.0", "NSHighResolutionCapable": True,
             "ParatiaRegistryLauncherVersion": 1,
-            "NSDesktopFolderUsageDescription": "Il banco di prova esamina i metadati della cartella folder-test sul Desktop, solo quando lo avvii."}
+            # Testo di base in inglese; it e es sono in InfoPlist.strings di ogni lproj.
+            "NSDesktopFolderUsageDescription": "The test bench examines the metadata of the folder-test folder on the Desktop, only when you start it."}
+    info.update({"CFBundleLocalizations": list(LINGUE), "CFBundleDevelopmentRegion": "en",
+                 "ParatiaFirma": "ad-hoc" if identita == "-" else "identita-stabile"})
     with (contents / "Info.plist").open("wb") as stream:
         plistlib.dump(info, stream)
-    run(["/usr/bin/codesign", "--force", "--sign", "-", "--timestamp=none", "--deep", app])
+    run(["/usr/bin/codesign", "--force", "--sign", identita, "--timestamp=none", "--deep", app])
     run(["/usr/bin/codesign", "--verify", "--deep", "--strict", app])
     if args.render_fixtures:
-        run([binary, "--render-fixtures", build / "screenshots"])
+        for lingua in ((args.lang,) if args.lang else LINGUE):
+            run([binary, "--render-fixtures", build / "screenshots" / lingua, "--lang", lingua])
     print("Built " + str(app))
 
 

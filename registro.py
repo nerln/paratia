@@ -5,6 +5,21 @@ contents, command arguments, environment variables, or transcripts are read.
 """
 from __future__ import annotations
 
+
+def _t(testo, **valori):
+    """Testo per la lingua della GUI; senza lingua impostata, quello italiano."""
+    import importlib.util
+    import os
+    import sys
+    nome = "paratia_messaggi"
+    if nome not in sys.modules:
+        percorso = os.path.join(os.path.dirname(os.path.abspath(__file__)), "messaggi.py")
+        spec = importlib.util.spec_from_file_location(nome, percorso)
+        modulo = importlib.util.module_from_spec(spec)
+        sys.modules[nome] = modulo
+        spec.loader.exec_module(modulo)
+    return sys.modules[nome].t(testo, **valori)
+
 import csv
 import datetime
 import fcntl
@@ -49,14 +64,14 @@ NUMERI = {9: "exec", 10: "open", 11: "fork", 12: "close", 13: "create",
           15: "exit", 20: "mmap", 22: "mount", 23: "unmount", 25: "rename",
           32: "unlink", 33: "write", 41: "truncate", 43: "lookup"}
 LIMITI = [
-    "Un'apertura per lettura non prova una lettura dei byte: ES non registra ogni read().",
-    "I tentativi falliti, incluso ENOENT, non sono osservabili tutti; gli esiti ES non sono errno.",
-    "La discendenza può essere sconosciuta, specialmente per processi già avviati.",
-    "eslogger ha uno schema non stabile e può perdere eventi; i buchi vengono segnalati.",
-    "La catena rileva modifiche interne; non prova da sola che la coda non sia stata troncata.",
-    "Il registro locale delle operazioni GUI è modificabile dall'utente; quello kernel è root-owned.",
-    "Le modifiche solo via mmap non hanno più un evento di chiusura: il registro kernel non le riporta.",
-    "Montaggi e smontaggi non sono nel registro kernel; apertura e chiusura di una cartella protetta restano nel registro di Paratia.",
+    _t("Un'apertura per lettura non prova una lettura dei byte: ES non registra ogni read()."),
+    _t("I tentativi falliti, incluso ENOENT, non sono osservabili tutti; gli esiti ES non sono errno."),
+    _t("La discendenza può essere sconosciuta, specialmente per processi già avviati."),
+    _t("eslogger ha uno schema non stabile e può perdere eventi; i buchi vengono segnalati."),
+    _t("La catena rileva modifiche interne; non prova da sola che la coda non sia stata troncata."),
+    _t("Il registro locale delle operazioni GUI è modificabile dall'utente; quello kernel è root-owned."),
+    _t("Le modifiche solo via mmap non hanno più un evento di chiusura: il registro kernel non le riporta."),
+    _t("Montaggi e smontaggi non sono nel registro kernel; apertura e chiusura di una cartella protetta restano nel registro di Paratia."),
 ]
 
 
@@ -64,9 +79,9 @@ class ErroreRegistro(ValueError):
     """User-facing resolver errors with fixed codes and no supplied path/data."""
 
     MESSAGGI = {
-        "folder_not_configured": "La cartella non è configurata nel registro. Scegli una cartella dall'elenco o aggiungi una sorveglianza.",
-        "folder_ambiguous": "Il percorso corrisponde a più ID. Scegli l'ID della cartella dall'elenco del registro.",
-        "protected_folder_watch": "Questo percorso appartiene a una cartella protetta già configurata. Seleziona la cartella nel Registro; non aggiungere una sorveglianza separata.",
+        "folder_not_configured": _t("La cartella non è configurata nel registro. Scegli una cartella dall'elenco o aggiungi una sorveglianza."),
+        "folder_ambiguous": _t("Il percorso corrisponde a più ID. Scegli l'ID della cartella dall'elenco del registro."),
+        "protected_folder_watch": _t("Questo percorso appartiene a una cartella protetta già configurata. Seleziona la cartella nel Registro; non aggiungere una sorveglianza separata."),
     }
 
     def __init__(self, code):
@@ -434,7 +449,7 @@ def _leggi_json_posseduto(percorso, uid):
     """Read only a capped, owned registry through a symlink-free directory walk."""
     p = Path(percorso)
     if not p.is_absolute():
-        raise ValueError("Il registro richiede un percorso assoluto.")
+        raise ValueError(_t("Il registro richiede un percorso assoluto."))
     directory = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
     try:
         for parte in p.parts[1:-1]:
@@ -446,10 +461,10 @@ def _leggi_json_posseduto(percorso, uid):
             s = os.fstat(fd)
             if (not stat.S_ISREG(s.st_mode) or s.st_uid != uid or s.st_size > 4194304
                     or s.st_mode & 0o022 or s.st_nlink != 1 or acl_scrivibile(p)):
-                raise ValueError("Il registro delle cartelle non ha formato o proprietario validi.")
+                raise ValueError(_t("Il registro delle cartelle non ha formato o proprietario validi."))
             dati = f.read(4194305)
             if len(dati) > 4194304:
-                raise ValueError("Il registro delle cartelle è troppo grande.")
+                raise ValueError(_t("Il registro delle cartelle è troppo grande."))
             r = json.loads(dati)
     except FileNotFoundError:
         return None
@@ -460,19 +475,19 @@ def _leggi_json_posseduto(percorso, uid):
 
 MNT_IGNORE_OWNERSHIP = 0x00200000  # Darwin sys/mount.h.
 ESITI_CONFIGURAZIONE = {
-    "invalid_entry": "La voce di configurazione non è valida.",
-    "invalid_path": "Il percorso configurato non è consentito o non è canonico.",
-    "symlink": "Il percorso contiene un collegamento simbolico.",
-    "owner_mismatch": "La cartella non appartiene all'utente della configurazione.",
-    "noowners_volume_unverified": "Il volume con proprietari ignorati non è stato confermato come disco esterno fisico e non di sistema.",
-    "folder_missing": "La cartella configurata non è presente. Scegli una cartella esistente da sorvegliare.",
-    "volume_validation_timeout": "La verifica del volume esterno ha superato il tempo disponibile.",
-    "config_unreadable": "Il file di configurazione non è leggibile o non ha proprietario e autorizzazioni validi.",
-    "duplicate_id": "L'ID è usato da più voci di configurazione. Assegna un ID distinto alla sorveglianza.",
+    "invalid_entry": _t("La voce di configurazione non è valida."),
+    "invalid_path": _t("Il percorso configurato non è consentito o non è canonico."),
+    "symlink": _t("Il percorso contiene un collegamento simbolico."),
+    "owner_mismatch": _t("La cartella non appartiene all'utente della configurazione."),
+    "noowners_volume_unverified": _t("Il volume con proprietari ignorati non è stato confermato come disco esterno fisico e non di sistema."),
+    "folder_missing": _t("La cartella configurata non è presente. Scegli una cartella esistente da sorvegliare."),
+    "volume_validation_timeout": _t("La verifica del volume esterno ha superato il tempo disponibile."),
+    "config_unreadable": _t("Il file di configurazione non è leggibile o non ha proprietario e autorizzazioni validi."),
+    "duplicate_id": _t("L'ID è usato da più voci di configurazione. Assegna un ID distinto alla sorveglianza."),
 }
 AVVISI_CONFIGURAZIONE = {
-    "folder_absent": "Cartella assente: la sorveglianza già confermata resta attiva sul percorso configurato.",
-    "volume_validation_timeout": "Verifica del volume in ritardo: la cartella già confermata resta attiva sullo stesso volume montato.",
+    "folder_absent": _t("Cartella assente: la sorveglianza già confermata resta attiva sul percorso configurato."),
+    "volume_validation_timeout": _t("Verifica del volume in ritardo: la cartella già confermata resta attiva sullo stesso volume montato."),
 }
 
 
@@ -491,7 +506,7 @@ def _id_configurazione(identificatore):
 def _esito_configurazione(identificatore, code=None):
     return {"id": identificatore if _id_configurazione(identificatore) else None,
             "status": "rejected" if code else "confirmed", "reason_code": code,
-            "message": ESITI_CONFIGURAZIONE[code] if code else "Cartella confermata dal raccoglitore."}
+            "message": ESITI_CONFIGURAZIONE[code] if code else _t("Cartella confermata dal raccoglitore.")}
 
 
 def _statfs_configurazione(dove):
@@ -722,7 +737,7 @@ def leggi_cartelle(percorso, uid, esiti=None, volumi=None, precedenti=None,
     if r is None:
         return []
     if not isinstance(r, dict) or r.get("versione") != 1 or not isinstance(r.get("cartelle"), dict):
-        raise ValueError("Il registro delle cartelle non è valido.")
+        raise ValueError(_t("Il registro delle cartelle non è valido."))
     risultato = []
     volumi = volumi if volumi is not None else {}
     for identificatore, voce in r["cartelle"].items():
@@ -752,28 +767,28 @@ def _valida_radici(v, uid, configurazione_validata=False, volumi=None):
     home = Path(pwd.getpwuid(uid).pw_dir)
     identificatore = v["id"]
     if len(identificatore) != 32 or any(c not in "0123456789abcdef" for c in identificatore):
-        raise ValueError("L'identificatore della cartella non è valido.")
+        raise ValueError(_t("L'identificatore della cartella non è valido."))
     fonte = Path(v["origine"])
     if fonte == home or fonte in home.parents or str(fonte) in ("/Users", "/Volumes", "/Library", "/private", "/private/tmp", "/private/var", "/Users/Shared"):
-        raise ValueError("Il registro rifiuta percorsi che includono più utenti o tutto il disco.")
+        raise ValueError(_t("Il registro rifiuta percorsi che includono più utenti o tutto il disco."))
     if v["montaggio"] != v["origine"]:
-        raise ValueError("Il montaggio deve corrispondere alla cartella protetta.")
+        raise ValueError(_t("Il montaggio deve corrispondere alla cartella protetta."))
     bundle = Path(v["bundle"])
     if bundle.name != "%s-%s.sparsebundle" % (fonte.name, identificatore):
-        raise ValueError("Il bundle non corrisponde alla cartella registrata.")
+        raise ValueError(_t("Il bundle non corrisponde alla cartella registrata."))
     backup = fonte.with_name("." + fonte.name + ".paratia-" + identificatore)
     if v.get("backup") is not None and Path(v["backup"]) != backup:
-        raise ValueError("Il backup non corrisponde alla cartella registrata.")
+        raise ValueError(_t("Il backup non corrisponde alla cartella registrata."))
     if v.get("plaintext_residuo") is not None and v["plaintext_residuo"] not in (
             v["origine"], str(backup), v.get("recupero_temporaneo")):
-        raise ValueError("Il residuo plaintext non corrisponde alla cartella registrata.")
+        raise ValueError(_t("Il residuo plaintext non corrisponde alla cartella registrata."))
     for campo in ("origine", "bundle", "montaggio_temporaneo", "recupero_temporaneo", "backup", "plaintext_residuo"):
         testo = v.get(campo)
         if testo is None:
             continue
         p = Path(testo)
         if not p.is_absolute() or str(p) != os.path.normpath(str(p)):
-            raise ValueError("Un percorso protetto non è canonico.")
+            raise ValueError(_t("Un percorso protetto non è canonico."))
         for q in [*reversed(p.parents), p]:
             try:
                 s = q.lstat()
@@ -786,23 +801,23 @@ def _valida_radici(v, uid, configurazione_validata=False, volumi=None):
             _cartella_posseduta_configurazione(esistente, uid, configurazione_validata, volumi)
         if campo == "montaggio_temporaneo":
             if p.parent != home / ".paratia" / "montaggi" or not (p.name.startswith(identificatore + "-") or p.name.startswith("recupero-")):
-                raise ValueError("Il montaggio temporaneo non è nell'area riservata dell'utente.")
+                raise ValueError(_t("Il montaggio temporaneo non è nell'area riservata dell'utente."))
         if campo == "recupero_temporaneo":
             if p.parent != fonte.parent or not p.name.startswith("." + fonte.name + ".recupero-"):
-                raise ValueError("Il recupero temporaneo non corrisponde alla cartella.")
+                raise ValueError(_t("Il recupero temporaneo non corrisponde alla cartella."))
 
 
 def _valida_sorveglianza(p, uid, richiedi_esistente=True, configurazione_validata=False, volumi=None):
     if not isinstance(p, (str, Path)):
-        raise ValueError("Il percorso di sorveglianza non è valido.")
+        raise ValueError(_t("Il percorso di sorveglianza non è valido."))
     p = Path(p)
     home = Path(pwd.getpwuid(uid).pw_dir)
     if not p.is_absolute() or str(p) != os.path.normpath(str(p)) or p == home or p in home.parents:
-        raise ValueError("Scegli una singola cartella dell'utente.")
+        raise ValueError(_t("Scegli una singola cartella dell'utente."))
     if str(p) in ("/Users", "/Volumes", "/Library", "/private", "/private/tmp", "/private/var", "/Users/Shared"):
-        raise ValueError("Non è possibile sorvegliare una radice di sistema.")
+        raise ValueError(_t("Non è possibile sorvegliare una radice di sistema."))
     if any(p == base or base in p.parents or p in base.parents for base in (SYSTEM, SUPPORT)):
-        raise ValueError("Il registro non può sorvegliare i propri percorsi.")
+        raise ValueError(_t("Il registro non può sorvegliare i propri percorsi."))
     for q in [*reversed(p.parents), p]:
         try:
             s = q.lstat()
@@ -823,7 +838,7 @@ def leggi_sorveglianza(percorso, uid, esiti=None, rifiutate=None, volumi=None, p
     if dati is None:
         return []
     if not isinstance(dati, dict) or dati.get("versione") != 1 or not isinstance(dati.get("percorsi"), dict):
-        raise ValueError("La sorveglianza non è valida.")
+        raise ValueError(_t("La sorveglianza non è valida."))
     risultati = []
     volumi = volumi if volumi is not None else {}
     for identificatore, voce in dati["percorsi"].items():
@@ -911,17 +926,17 @@ def _cambia_sorveglianza(identificatore, percorso=None, nome=""):
         fcntl.flock(lock, fcntl.LOCK_EX)
         dati = _leggi_json_posseduto(p, os.getuid()) or {"versione": 1, "percorsi": {}}
         if not isinstance(dati, dict) or dati.get("versione") != 1 or not isinstance(dati.get("percorsi"), dict):
-            raise ValueError("La sorveglianza non è valida.")
+            raise ValueError(_t("La sorveglianza non è valida."))
         # Validate identifiers and paths before the atomic registry replacement.
         if not isinstance(identificatore, str) or not 1 <= len(identificatore) <= 128 or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for c in identificatore):
-            raise ValueError("L'identificatore della sorveglianza non è valido.")
+            raise ValueError(_t("L'identificatore della sorveglianza non è valido."))
         if _testo(nome) is None:
-            raise ValueError("Il nome della sorveglianza non è valido.")
+            raise ValueError(_t("Il nome della sorveglianza non è valido."))
         riutilizzata = False
         rinominata = False
         if percorso is None:
             if identificatore not in dati["percorsi"]:
-                raise ValueError("L'identificatore non è configurato per la sorveglianza.")
+                raise ValueError(_t("L'identificatore non è configurato per la sorveglianza."))
             dati["percorsi"].pop(identificatore)
         else:
             percorso = _valida_sorveglianza(percorso, os.getuid())
@@ -948,7 +963,7 @@ def _cambia_sorveglianza(identificatore, percorso=None, nome=""):
                 for duplicato in uguali[1:]:
                     dati["percorsi"].pop(duplicato)
             elif identificatore in dati["percorsi"]:
-                raise ValueError("L'identificatore appartiene a un'altra cartella. Rimuovilo prima di riutilizzarlo.")
+                raise ValueError(_t("L'identificatore appartiene a un'altra cartella. Rimuovilo prima di riutilizzarlo."))
             if any(v["id"] == identificatore for v in esiti_protette):
                 raise _RifiutoConfigurazione("duplicate_id")
             dati["percorsi"][identificatore] = {"percorso": percorso, "nome": nome}
@@ -969,16 +984,16 @@ def _cambia_sorveglianza(identificatore, percorso=None, nome=""):
     attiva = bool(percorso is not None and _raccolta_pronta(salute)
                   and identificatore in _ids_confermati(salute))
     nome_accettato = (_testo(nome) or Path(percorso).name) if percorso is not None else None
-    messaggio = ("Configurazione rimossa." if percorso is None else
-                 "Cartella configurata; il raccoglitore ha confermato la sorveglianza." if attiva else
-                 "Cartella configurata; raccolta non attiva o conferma del raccoglitore ancora assente.")
+    messaggio = (_t("Configurazione rimossa.") if percorso is None else
+                 _t("Cartella configurata; il raccoglitore ha confermato la sorveglianza.") if attiva else
+                 _t("Cartella configurata; raccolta non attiva o conferma del raccoglitore ancora assente."))
     if riutilizzata:
-        messaggio += (" Sorveglianza rinominata; ID conservato." if rinominata else
-                      " Sorveglianza esistente riutilizzata: ID e nome conservati.")
+        messaggio += " " + (_t("Sorveglianza rinominata; ID conservato.") if rinominata else
+                            _t("Sorveglianza esistente riutilizzata: ID e nome conservati."))
     raccolta = _raccolta_voce(salute, identificatore) if percorso is not None else {}
     if percorso is not None and raccolta["raccolta"] == "rifiutata":
         attiva = False
-        messaggio = "Cartella configurata; " + raccolta["message"]
+        messaggio = _t("Cartella configurata; ") + raccolta["message"]
     return {"id": identificatore, "percorso": percorso, "nome": nome_accettato,
             "configurata": percorso is not None,
             "sorvegliata": attiva, "raccolta_attiva": attiva, "riutilizzata": riutilizzata,
@@ -999,14 +1014,14 @@ def _raccolta_voce(salute, identificatore, esito_locale=None, token_locale=None)
         code = esito.get("reason_code")
         code = code if isinstance(code, str) and code in ESITI_CONFIGURAZIONE else "invalid_entry"
         return {"raccolta": "rifiutata", "reason_code": code,
-                "message": "Rifiutata dal raccoglitore: " + ESITI_CONFIGURAZIONE[code]}
+                "message": _t("Rifiutata dal raccoglitore: ") + ESITI_CONFIGURAZIONE[code]}
     if esito_locale and esito_locale.get("status") == "rejected":
         code = esito_locale["reason_code"]
         return {"raccolta": "rifiutata", "reason_code": code,
-                "message": "Configurazione rifiutata: " + ESITI_CONFIGURAZIONE[code]}
+                "message": _t("Configurazione rifiutata: ") + ESITI_CONFIGURAZIONE[code]}
     if (esito and esito.get("status") == "confirmed") or identificatore in _ids_confermati(salute):
         result = {"raccolta": "confermata", "reason_code": None,
-                  "message": "Cartella confermata dal raccoglitore."}
+                  "message": _t("Cartella confermata dal raccoglitore.")}
         code = esito.get("warning_code") if esito else None
         if (isinstance(code, str) and code in AVVISI_CONFIGURAZIONE and token_locale is not None
                 and esito.get("configuration_token") == token_locale):
@@ -1014,7 +1029,7 @@ def _raccolta_voce(salute, identificatore, esito_locale=None, token_locale=None)
                           message=AVVISI_CONFIGURAZIONE[code])
         return result
     return {"raccolta": "configurata", "reason_code": None,
-            "message": "Cartella configurata; conferma del raccoglitore ancora assente."}
+            "message": _t("Cartella configurata; conferma del raccoglitore ancora assente.")}
 
 
 def elenco_sorveglianza():
@@ -1066,7 +1081,7 @@ def risolvi_cartella(cartella, solo_sorveglianza=False):
     if cartella is None:
         return None
     if not isinstance(cartella, (str, Path)):
-        raise ValueError("Il filtro cartella richiede un ID o un percorso.")
+        raise ValueError(_t("Il filtro cartella richiede un ID o un percorso."))
     cartella = str(cartella)
     if not os.path.isabs(cartella):
         return cartella
@@ -1117,19 +1132,19 @@ def raccolta_kernel(filters=None):
         acknowledged = False
     active = _raccolta_pronta(salute) and acknowledged is not False
     if selected:
-        message = "Cartella rifiutata dal raccoglitore: " + selected["message"]
+        message = _t("Cartella rifiutata dal raccoglitore: ") + selected["message"]
     elif not running:
-        message = "Raccolta kernel non attiva. Un elenco vuoto non prova l'assenza di accessi."
+        message = _t("Raccolta kernel non attiva. Un elenco vuoto non prova l'assenza di accessi.")
     elif not healthy or supported is False:
-        message = "Raccolta kernel non sana. I risultati restano consultabili, ma la copertura non è confermata."
+        message = _t("Raccolta kernel non sana. I risultati restano consultabili, ma la copertura non è confermata.")
     elif needs_fda is not False:
-        message = "Raccolta kernel non confermata: Accesso completo al disco non verificato."
+        message = _t("Raccolta kernel non confermata: Accesso completo al disco non verificato.")
     elif acknowledged is False:
-        message = "Cartella configurata; il raccoglitore non ha ancora confermato questo ID. Un elenco vuoto non prova l'assenza di accessi."
+        message = _t("Cartella configurata; il raccoglitore non ha ancora confermato questo ID. Un elenco vuoto non prova l'assenza di accessi.")
     elif not ids:
-        message = "Raccolta kernel attiva; nessuna cartella confermata. Un elenco vuoto non prova l'assenza di accessi."
+        message = _t("Raccolta kernel attiva; nessuna cartella confermata. Un elenco vuoto non prova l'assenza di accessi.")
     else:
-        message = "Raccolta kernel attiva. Gli eventi mancanti non provano l'assenza di accessi."
+        message = _t("Raccolta kernel attiva. Gli eventi mancanti non provano l'assenza di accessi.")
     return {"kernel_active": bool(active), "kernel_collection": {
         "running": running, "healthy": healthy, "needs_fda": needs_fda,
         "schema_supported": supported, "folder_id": folder or None,
@@ -1207,12 +1222,12 @@ def query(filters=None):
             fcntl.flock(fd, fcntl.LOCK_SH)
             for riga in f:
                 if len(riga) > 1048576:
-                    raise ValueError("Una riga del registro è troppo grande.")
+                    raise ValueError(_t("Una riga del registro è troppo grande."))
                 if not riga.strip():
                     continue
                 r = json.loads(riga)
                 if not isinstance(r, dict):
-                    raise ValueError("Il registro contiene una riga non valida.")
+                    raise ValueError(_t("Il registro contiene una riga non valida."))
                 if folder and folder not in (r.get("id"), r.get("cartella")) and not any(folder in (c.get("id"), c.get("nome")) for c in r.get("cartelle", [])):
                     continue
                 if filters.get("file") and not any(_corrisponde_file(filters["file"], r.get(k)) for k in ("percorso", "destinazione", "origine")):
@@ -1266,7 +1281,7 @@ def _servizio_installato(uid):
             with os.fdopen(fd, "rb") as stream:
                 s = os.fstat(fd)
                 if not stat.S_ISREG(s.st_mode) or s.st_uid != 0 or s.st_mode & 0o022 or s.st_size > 65536:
-                    raise ValueError("Il servizio non ha una configurazione protetta.")
+                    raise ValueError(_t("Il servizio non ha una configurazione protetta."))
                 document = plistlib.loads(stream.read(65537))
                 if isinstance(document, dict):
                     arguments = document.get("ProgramArguments", [])
@@ -1283,12 +1298,12 @@ def _servizio_installato(uid):
 
 
 PASSI_AGGIORNAMENTO = (
-    "Chiudi Paratia e le eventuali copie di bootstrap aperte.",
-    "Prepara di nuovo /Library/Application Support/ParatiaBootstrap.noindex/Paratia.app con l'unico comando sudo mostrato dall'app: dopo la verifica della firma elimina il vecchio bootstrap e le cartelle .prepara. Non cambiare i permessi di /Applications.",
-    "Apri la copia di bootstrap dal Finder e usa Impostazioni → Installa il registro… → Autorizza con macOS.",
-    "Chiudi la copia di bootstrap dopo l'installazione.",
-    "In Privacy e Sicurezza → Accesso completo al disco, rimuovi e aggiungi di nuovo /Applications/Paratia.app e abilitala. Non autorizzare Python.",
-    "Riapri /Applications/Paratia.app e premi Aggiorna: controlla servizio attivo, motivi di salute, conferma degli ID e un nuovo evento eslogger.",
+    _t("Chiudi Paratia e le eventuali copie di bootstrap aperte."),
+    _t("Prepara di nuovo /Library/Application Support/ParatiaBootstrap.noindex/Paratia.app con l'unico comando sudo mostrato dall'app: dopo la verifica della firma elimina il vecchio bootstrap e le cartelle .prepara. Non cambiare i permessi di /Applications."),
+    _t("Apri la copia di bootstrap dal Finder e usa Impostazioni → Installa il registro… → Autorizza con macOS."),
+    _t("Chiudi la copia di bootstrap dopo l'installazione."),
+    _t("In Privacy e Sicurezza → Accesso completo al disco, controlla che /Applications/Paratia.app sia abilitata. Se la firma è cambiata, rimuovi e aggiungi di nuovo la voce. Non autorizzare Python."),
+    _t("Riapri /Applications/Paratia.app e premi Aggiorna: controlla servizio attivo, motivi di salute, conferma degli ID e un nuovo evento eslogger."),
 )
 
 
@@ -1332,12 +1347,12 @@ def _aggiornamento_build(dati, installed):
     # cannot be inspected by this user's GUI: request an update honestly rather
     # than pretending to have compared two hashes.
     required = (comparison == "different" or (installed and previous is None))
-    message = ("Il servizio installato appartiene a una build diversa da /Applications/Paratia.app."
+    message = (_t("Il servizio installato appartiene a una build diversa da /Applications/Paratia.app.")
                if comparison == "different" else
-               "Identità della build installata non disponibile: aggiorna il registro per verificarla."
+               _t("Identità della build installata non disponibile: aggiorna il registro per verificarla.")
                if required else
-               "Il servizio e l'app normale appartengono alla stessa build." if comparison == "equal" else
-               "Non è possibile confrontare le identità delle build. Verifica la nuova app normale prima di aggiornare.")
+               _t("Il servizio e l'app normale appartengono alla stessa build.") if comparison == "equal" else
+               _t("Non è possibile confrontare le identità delle build. Verifica la nuova app normale prima di aggiornare."))
     return {"installed_cdhash": previous, "app_cdhash": current,
             "build_comparison": comparison, "needs_update": required if installed else False,
             "update_message": message, "update_steps": list(PASSI_AGGIORNAMENTO)}
@@ -1362,7 +1377,7 @@ def _stati_sorveglianza(values):
         code = value.get("reason_code") if status == "rejected" else None
         if not isinstance(code, str) or code not in reasons:
             code = "invalid_entry" if status == "rejected" else None
-        message = reasons.get(code, "La cartella non è stata accettata dal raccoglitore.") if status == "rejected" else "Cartella confermata dal raccoglitore."
+        message = reasons.get(code, _t("La cartella non è stata accettata dal raccoglitore.")) if status == "rejected" else _t("Cartella confermata dal raccoglitore.")
         record = {"id": identifier, "status": status, "reason_code": code, "message": message}
         if status == "confirmed":
             warning = value.get("warning_code")
@@ -1397,29 +1412,54 @@ def motivi_salute(dati, ora=None):
     def add(code, message):
         reasons.append({"code": code, "message": message})
     if dati.get("running") is not True:
-        add("not_running", "Il raccoglitore non è attivo o non ha ancora ricevuto eventi.")
+        add("not_running", _t("Il raccoglitore non è attivo o non ha ancora ricevuto eventi."))
     if dati.get("needs_fda") is True:
-        add("needs_fda", "Accesso completo al disco non confermato per /Applications/Paratia.app.")
+        add("needs_fda", _t("Accesso completo al disco non confermato per /Applications/Paratia.app."))
     lag = _numero_finito(dati.get("event_lag_seconds"))
     if lag is not None and lag > 2:
-        add("event_delay", "Gli ultimi eventi ricevuti erano in ritardo di oltre 2 secondi.")
+        add("event_delay", _t("Gli ultimi eventi ricevuti erano in ritardo di oltre 2 secondi."))
     if _perdita_recente(dati, ora):
-        add("dropped_events", "Endpoint Security ha perso eventi negli ultimi %d minuti: la copertura di quel periodo è incompleta." % (PERDITE_RECENTI_SECONDI // 60))
+        add("dropped_events", _t("Endpoint Security ha perso eventi negli ultimi %d minuti: la copertura di quel periodo è incompleta.") % (PERDITE_RECENTI_SECONDI // 60))
     rejected = [value for value in _stati_sorveglianza(dati.get("watch_status")) if value["status"] == "rejected"]
     if rejected:
-        add("rejected_watches", "Il raccoglitore ha rifiutato una o più cartelle: consulta il motivo per ciascun ID.")
+        add("rejected_watches", _t("Il raccoglitore ha rifiutato una o più cartelle: consulta il motivo per ciascun ID."))
         anonymous = set()
         for value in rejected:
             if value["id"] is None and value["reason_code"] not in anonymous:
                 anonymous.add(value["reason_code"])
                 add("watch_" + value["reason_code"], value["message"])
     if not _ids_confermati(dati):
-        add("no_watched_folders", "Nessuna cartella è confermata dal raccoglitore.")
+        add("no_watched_folders", _t("Nessuna cartella è confermata dal raccoglitore."))
     if dati.get("schema_supported") is False:
-        add("schema_unsupported", "Il formato di eslogger non è supportato: aggiorna Paratia.")
+        add("schema_unsupported", _t("Il formato di eslogger non è supportato: aggiorna Paratia."))
     if dati.get("healthy") is not True and not reasons:
-        add("diagnostics", "Il raccoglitore segnala una copertura incompleta: consulta i diagnostici.")
+        add("diagnostics", _t("Il raccoglitore segnala una copertura incompleta: consulta i diagnostici."))
     return reasons
+
+
+def _modo_firma_app():
+    """Solo lettura: 'adhoc' o 'stabile' per /Applications/Paratia.app; None se non verificabile.
+
+    Stessi controlli di _cdhash_app: codice di uscita 0, identificatore it.paratia.app,
+    poi una riga Signature=adhoc oppure una catena Authority senza riga adhoc.
+    Un errore di lettura o di decodifica (ValueError include UnicodeDecodeError) dà None.
+    """
+    try:
+        result = subprocess.run(["/usr/bin/codesign", "-d", "--verbose=4", "/Applications/Paratia.app"],
+                                capture_output=True, text=True, timeout=2)
+        dettagli = result.stdout + result.stderr
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0 or len(dettagli) > 65536:
+        return None
+    if re.findall(r"^Identifier=(.+)$", dettagli, re.MULTILINE) != ["it.paratia.app"]:
+        return None
+    firme = re.findall(r"^Signature=(.+)$", dettagli, re.MULTILINE)
+    if firme == ["adhoc"]:
+        return "adhoc"
+    if not firme and re.findall(r"^Authority=.+$", dettagli, re.MULTILINE):
+        return "stabile"
+    return None
 
 
 def stato():
@@ -1441,14 +1481,19 @@ def stato():
     heartbeat = _numero_finito(dati.get("heartbeat"))
     fresco = heartbeat is not None and 0 <= now - heartbeat < 20
     locale = verifica_catena(CATENA)
-    message = dati.get("message", "Installa il registro e concedi Accesso completo al disco a /Applications/Paratia.app.")
+    messaggio_servizio = dati.get("message")
+    message = _t(messaggio_servizio) if isinstance(messaggio_servizio, str) else _t("Installa il registro e concedi Accesso completo al disco a /Applications/Paratia.app.")
     if installed and mode != "app":
-        message = "Il servizio installato usa un avvio precedente. Premi Installa il registro in Paratia per passare al binario dell'app; non concedere Accesso completo al disco a Python."
+        message = _t("Il servizio installato usa un avvio precedente. Premi Installa il registro in Paratia per passare al binario dell'app; non concedere Accesso completo al disco a Python.")
+    # Con un'identità stabile il permesso resta valido: va rifatto solo con firma ad hoc.
+    firma_app = _modo_firma_app()
+    regrant = firma_app != "stabile"
     result = {"installed": installed, "running": bool(fresco and dati.get("running") is True),
             "healthy": bool(fresco and dati.get("healthy") is True), "needs_root": not installed,
             "launch_mode": mode, "needs_reinstall": installed and mode != "app",
-            "fda_entry": "/Applications/Paratia.app", "fda_regrant_after_build": True,
-            "fda_message": "Dopo l'installazione abilita /Applications/Paratia.app in Accesso completo al disco. Con firma ad hoc, dopo ogni nuova build rimuovi e aggiungi di nuovo l'app. Python non va autorizzato.",
+            "fda_entry": "/Applications/Paratia.app", "fda_regrant_after_build": regrant,
+            "firma": firma_app if firma_app in ("adhoc", "stabile") else "non-verificata",
+            "fda_message": (_t("Dopo l'installazione abilita /Applications/Paratia.app in Accesso completo al disco. Con firma ad hoc, dopo ogni nuova build rimuovi e aggiungi di nuovo l'app. Python non va autorizzato.") if regrant else _t("Dopo l'installazione abilita /Applications/Paratia.app in Accesso completo al disco. Con firma stabile il permesso resta valido finché l'app viene firmata con lo stesso certificato. Python non va autorizzato.")),
             "needs_fda": dati.get("needs_fda") if fresco and isinstance(dati.get("needs_fda"), bool) else None,
             "dropped_events": _intero(dati.get("dropped_events")),
             "last_dropped_at": _numero_finito(dati.get("last_dropped_at")), "limits": list(LIMITI),
@@ -1467,7 +1512,7 @@ def stato():
     result.update(_aggiornamento_build(dati, installed))
     reasons = motivi_salute(result, now)
     if not fresco:
-        reasons.insert(0, {"code": "stale_state", "message": "Lo stato del raccoglitore non è recente o non è leggibile."})
+        reasons.insert(0, {"code": "stale_state", "message": _t("Lo stato del raccoglitore non è recente o non è leggibile.")})
     if result["needs_update"]:
         reasons.append({"code": "build_outdated", "message": result["update_message"]})
         result["needs_reinstall"] = True

@@ -6,6 +6,21 @@ this helper neither writes trust state nor changes feature/bypass settings.
 """
 from __future__ import annotations
 
+
+def _t(testo, **valori):
+    """Testo per la lingua della GUI; senza lingua impostata, quello italiano."""
+    import importlib.util
+    import os
+    import sys
+    nome = "paratia_messaggi"
+    if nome not in sys.modules:
+        percorso = os.path.join(os.path.dirname(os.path.abspath(__file__)), "messaggi.py")
+        spec = importlib.util.spec_from_file_location(nome, percorso)
+        modulo = importlib.util.module_from_spec(spec)
+        sys.modules[nome] = modulo
+        spec.loader.exec_module(modulo)
+    return sys.modules[nome].t(testo, **valori)
+
 import base64
 import contextlib
 import copy
@@ -36,9 +51,9 @@ PYTHON_VERSIONS = Path("/Library/Developer/CommandLineTools/Library/Frameworks/P
 BOOTSTRAP_ASSETS = ("paratia.py", "cartelle.py", "registro.py", "catena.py", "hookinstaller.py",
                     "hooks/paratia-gate.py", "hooks/paratia-cli.json")
 EVENTS = {"SessionStart": 120, "PreToolUse": 5}
-MESSAGE = ("Hook configurati. Riavvia le sessioni. In Codex apri /hooks "
+MESSAGE = (_t("Hook configurati. Riavvia le sessioni. In Codex apri /hooks "
            "(o la gestione hook dell'app) e verifica/approva la definizione: "
-           "la fiducia non viene impostata da Paratia.")
+           "la fiducia non viene impostata da Paratia."))
 
 
 class Rifiuto(Exception):
@@ -197,7 +212,7 @@ def _object(pairs):
     result = {}
     for key, value in pairs:
         if key in result:
-            raise Rifiuto("Il JSON contiene campi duplicati: correggilo prima di installare gli hook.")
+            raise Rifiuto(_t("Il JSON contiene campi duplicati: correggilo prima di installare gli hook."))
         result[key] = value
     return result
 
@@ -208,17 +223,17 @@ def _json(data):
             raise ValueError()
         value = json.loads(data, object_pairs_hook=_object, parse_constant=invalid)
     except (ValueError, UnicodeError, RecursionError) as exc:
-        raise Rifiuto("Una configurazione hook non contiene JSON valido.") from exc
+        raise Rifiuto(_t("Una configurazione hook non contiene JSON valido.")) from exc
     if not isinstance(value, dict):
-        raise Rifiuto("La configurazione hook deve essere un oggetto JSON.")
+        raise Rifiuto(_t("La configurazione hook deve essere un oggetto JSON."))
     return value
 
 
 def _owned(s):
     if not stat.S_ISREG(s.st_mode) or s.st_uid != os.getuid() or s.st_nlink != 1:
-        raise Rifiuto("Configurazioni, backup e lock devono essere file ordinari dell'utente, senza collegamenti.")
+        raise Rifiuto(_t("Configurazioni, backup e lock devono essere file ordinari dell'utente, senza collegamenti."))
     if stat.S_IMODE(s.st_mode) & ~0o777:
-        raise Rifiuto("I file di configurazione non possono avere bit di autorizzazione speciali.")
+        raise Rifiuto(_t("I file di configurazione non possono avere bit di autorizzazione speciali."))
 
 
 def _signature(s):
@@ -233,15 +248,15 @@ def _read(directory, name, limit=MAX_JSON):
     except FileNotFoundError:
         return None, None
     except OSError as exc:
-        raise Rifiuto("Impossibile leggere una configurazione senza seguire collegamenti.") from exc
+        raise Rifiuto(_t("Impossibile leggere una configurazione senza seguire collegamenti.")) from exc
     with os.fdopen(fd, "rb") as source:
         before = os.fstat(fd)
         _owned(before)
         if before.st_size > limit:
-            raise Rifiuto("La configurazione o il backup supera il limite consentito.")
+            raise Rifiuto(_t("La configurazione o il backup supera il limite consentito."))
         data = source.read(limit + 1)
         if len(data) > limit or _signature(before) != _signature(os.fstat(fd)):
-            raise Rifiuto("La configurazione è cambiata durante la lettura.")
+            raise Rifiuto(_t("La configurazione è cambiata durante la lettura."))
         return data, stat.S_IMODE(before.st_mode)
 
 
@@ -249,7 +264,7 @@ def _read(directory, name, limit=MAX_JSON):
 def _home_directory(home):
     p = Path(home if home is not None else Path.home()).expanduser()
     if not p.is_absolute() or str(p) != os.path.normpath(str(p)):
-        raise Rifiuto("La home richiede un percorso assoluto senza alias.")
+        raise Rifiuto(_t("La home richiede un percorso assoluto senza alias."))
     fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
     try:
         for part in p.parts[1:]:
@@ -257,10 +272,10 @@ def _home_directory(home):
             os.close(fd)
             fd = child
         if os.fstat(fd).st_uid != os.getuid():
-            raise Rifiuto("La directory di configurazione deve appartenere all'utente corrente.")
+            raise Rifiuto(_t("La directory di configurazione deve appartenere all'utente corrente."))
         yield p, fd
     except OSError as exc:
-        raise Rifiuto("La home non è una directory accessibile senza collegamenti.") from exc
+        raise Rifiuto(_t("La home non è una directory accessibile senza collegamenti.")) from exc
     finally:
         os.close(fd)
 
@@ -293,10 +308,10 @@ def _directories(home, create=False):
                     fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=homefd)
                 handles[harness] = fd
                 if os.fstat(fd).st_uid != os.getuid():
-                    raise Rifiuto("Le directory dei due harness devono appartenere all'utente corrente.")
+                    raise Rifiuto(_t("Le directory dei due harness devono appartenere all'utente corrente."))
             yield path, handles
         except OSError as exc:
-            raise Rifiuto("Una directory hook o il lock non è accessibile senza collegamenti.") from exc
+            raise Rifiuto(_t("Una directory hook o il lock non è accessibile senza collegamenti.")) from exc
         finally:
             for fd in handles.values():
                 if fd is not None:
@@ -321,25 +336,25 @@ def _runtime(executable=None):
                 return p
         except (OSError, ValueError, RuntimeError):
             continue
-    raise Rifiuto("Gli hook richiedono il Python Apple 3.9 o successivo dei Command Line Tools, con runtime e libreria standard protetti da root. Ripristina i Command Line Tools prima di configurarli.")
+    raise Rifiuto(_t("Gli hook richiedono il Python Apple 3.9 o successivo dei Command Line Tools, con runtime e libreria standard protetti da root. Ripristina i Command Line Tools prima di configurarli."))
 
 
 def _parameters(resource_root=None, python_executable=None):
     root = BOOTSTRAP_ROOT if _protected_bootstrap() else Path(
         resource_root if resource_root is not None else Path(__file__).resolve().parent)
     if not root.is_absolute() or str(root) != os.path.normpath(str(root)):
-        raise Rifiuto("Le risorse dell'app richiedono un percorso assoluto.")
+        raise Rifiuto(_t("Le risorse dell'app richiedono un percorso assoluto."))
     script = root / "hooks" / "paratia-gate.py"
     for p in [*reversed(script.parents), script]:
         if p.is_symlink():
-            raise Rifiuto("Le risorse hook non possono usare collegamenti simbolici.")
+            raise Rifiuto(_t("Le risorse hook non possono usare collegamenti simbolici."))
     for asset in (script, root / "cartelle.py"):
         try:
             s = asset.lstat()
         except OSError as exc:
-            raise Rifiuto("Le risorse della chiusura dei compartimenti non sono disponibili nell'app.") from exc
+            raise Rifiuto(_t("Le risorse della chiusura dei compartimenti non sono disponibili nell'app.")) from exc
         if not stat.S_ISREG(s.st_mode) or s.st_uid not in (0, os.getuid()) or s.st_size > MAX_JSON:
-            raise Rifiuto("Una risorsa hook non è un file ordinario attendibile.")
+            raise Rifiuto(_t("Una risorsa hook non è un file ordinario attendibile."))
     python = _runtime(python_executable)
     command = " ".join(shlex.quote(str(p)) for p in (python, "-I", "-S", "-B", script))
     wanted = {}
@@ -395,7 +410,7 @@ def _build(handles, wanted, resource_root=None):
         document = _json(before) if before is not None else {}
         hooks = document.get("hooks", {})
         if not isinstance(hooks, dict):
-            raise Rifiuto("Il campo hooks esistente non è un oggetto: correggilo prima dell'installazione.")
+            raise Rifiuto(_t("Il campo hooks esistente non è un oggetto: correggilo prima dell'installazione."))
         merged = copy.deepcopy(document)
         merged.setdefault("hooks", {})
         events = {}
@@ -403,7 +418,7 @@ def _build(handles, wanted, resource_root=None):
         for event, group in wanted[harness].items():
             groups = hooks.get(event, [])
             if not isinstance(groups, list) or any(not isinstance(g, dict) for g in groups):
-                raise Rifiuto("Un evento hook esistente non contiene gruppi validi.")
+                raise Rifiuto(_t("Un evento hook esistente non contiene gruppi validi."))
             if migrate:
                 kept = []
                 for existing in groups:
@@ -428,9 +443,9 @@ def _build(handles, wanted, resource_root=None):
         try:
             after = (json.dumps(merged, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode()
         except (TypeError, ValueError, RecursionError) as exc:
-            raise Rifiuto("La configurazione unita non può essere salvata come JSON.") from exc
+            raise Rifiuto(_t("La configurazione unita non può essere salvata come JSON.")) from exc
         if len(after) > MAX_JSON:
-            raise Rifiuto("La configurazione unita supera il limite consentito.")
+            raise Rifiuto(_t("La configurazione unita supera il limite consentito."))
         # A configured document is left byte-for-byte unchanged, including whitespace.
         changed = migrated or not all(events.values())
         plans.append({"harness": harness, "directory": directory, "name": name,
@@ -448,13 +463,13 @@ def _summary(path, plans):
                                "activation_verified": False} for p in plans}
     configured = all(h["configured"] for h in harnesses.values())
     message = MESSAGE if configured else (
-        "Hook da configurare. Dopo l'installazione riavvia le sessioni e approva "
-        "la definizione in /hooks o nella gestione hook dell'app Codex.")
+        _t("Hook da configurare. Dopo l'installazione riavvia le sessioni e approva "
+        "la definizione in /hooks o nella gestione hook dell'app Codex."))
     if any(h["disabled_in_settings"] for h in harnesses.values()):
-        message += " Le impostazioni esistenti disattivano gli hook: riabilitali nell'harness."
+        message += _t(" Le impostazioni esistenti disattivano gli hook: riabilitali nell'harness.")
     protected = _protected_bootstrap()
     if not protected:
-        message += " Copia bootstrap protetta non disponibile: a cartella aperta non è consentita alcuna esenzione CLI. Chiudi le cartelle dall'app Paratia aperta dal Finder."
+        message += _t(" Copia bootstrap protetta non disponibile: a cartella aperta non è consentita alcuna esenzione CLI. Chiudi le cartelle dall'app Paratia aperta dal Finder.")
     return {"configured": configured,
             "harnesses": harnesses, "needs_human_trust": True,
             "codex_trust": "unknown", "delegation_provider": "claude-transcript",
@@ -511,7 +526,7 @@ def _write(directory, name, before, after, mode):
             _new_file(directory, temporary, after, mode if mode is not None else 0o600)
         current, _ = _read(directory, name)
         if current != before:
-            raise Rifiuto("La configurazione è stata modificata da un altro programma: non sarà sovrascritta.")
+            raise Rifiuto(_t("La configurazione è stata modificata da un altro programma: non sarà sovrascritta."))
         if after is None:
             os.unlink(name, dir_fd=directory)
         else:
@@ -547,13 +562,13 @@ def installa(resource_root=None, python_executable=None, *, home=None):
                     if current == plan["before"]:
                         continue
                     if current != plan["after"]:
-                        raise Rifiuto("La configurazione è stata modificata da un altro programma.")
+                        raise Rifiuto(_t("La configurazione è stata modificata da un altro programma."))
                     _write(handles[plan["harness"]], plan["name"], current, plan["before"], plan["mode"])
                 except Exception:
                     recovered = False
-            refusal = Rifiuto("Installazione non completata. " + (
-                "Le configurazioni già modificate sono state ripristinate." if recovered else
-                "Il ripristino è incompleto: conserva i backup e riapri le impostazioni degli hook."))
+            refusal = Rifiuto(_t("Installazione non completata. ") + (
+                _t("Le configurazioni già modificate sono state ripristinate.") if recovered else
+                _t("Il ripristino è incompleto: conserva i backup e riapri le impostazioni degli hook.")))
             refusal.backups = backups
             raise refusal from exc
         result = _summary(path, _build(handles, wanted, resource_root))
@@ -567,10 +582,10 @@ def ripristina(backup, *, home=None):
     with _directories(home, create=True) as (path, handles):
         harness = next((h for h, (d, _) in TARGETS.items() if p.parent == path / d), None)
         if harness is None or not p.name.startswith("." + TARGETS[harness][1] + ".paratia-backup-"):
-            raise Rifiuto("Il backup non appartiene alle configurazioni hook di questo utente.")
+            raise Rifiuto(_t("Il backup non appartiene alle configurazioni hook di questo utente."))
         raw, _ = _read(handles[harness], p.name, MAX_BACKUP)
         if raw is None:
-            raise Rifiuto("Il backup richiesto non è disponibile.")
+            raise Rifiuto(_t("Il backup richiesto non è disponibile."))
         record = _json(raw)
         name = TARGETS[harness][1]
         try:
@@ -581,10 +596,10 @@ def ripristina(backup, *, home=None):
             if _digest(before) != record["before_digest"] or (before is not None and (len(before) > MAX_JSON or isinstance(mode, bool) or not isinstance(mode, int) or not 0 <= mode <= 0o777)):
                 raise ValueError()
         except (KeyError, TypeError, ValueError) as exc:
-            raise Rifiuto("Il backup non contiene un riferimento valido.") from exc
+            raise Rifiuto(_t("Il backup non contiene un riferimento valido.")) from exc
         current, current_mode = _read(handles[harness], name)
         if _digest(current) != record.get("after_digest"):
-            raise Rifiuto("La configurazione è cambiata dopo l'installazione: il backup non sovrascriverà le nuove impostazioni.")
+            raise Rifiuto(_t("La configurazione è cambiata dopo l'installazione: il backup non sovrascriverà le nuove impostazioni."))
         reverse = {"harness": harness, "name": name, "before": current, "after": before, "mode": current_mode}
         checkpoint, _ = _backup(handles[harness], reverse)
         _write(handles[harness], name, current, before, mode)

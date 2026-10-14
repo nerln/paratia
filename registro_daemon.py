@@ -256,9 +256,11 @@ class CaricatoreConfigurazione:
         self._executor.shutdown(wait=False, cancel_futures=True)
 
 
-def contesto_launcher():
+def contesto_launcher(registro):
+    # Stessa regola di registro.stato(): con un'identità stabile il permesso resta valido.
+    firma = registro._modo_firma_app()
     return {"launch_mode": "app" if os.environ.get("PARATIA_REGISTRY_LAUNCHER") == "app" else "legacy-python",
-            "fda_entry": FDA_APP, "fda_regrant_after_build": True}
+            "fda_entry": FDA_APP, "fda_regrant_after_build": firma != "stabile", "firma": firma or "non-verificata"}
 
 
 def messaggio_fda(contesto):
@@ -266,7 +268,11 @@ def messaggio_fda(contesto):
         return ("Il servizio usa il launcher Python precedente. Reinstalla il registro da Paratia; "
                 "la voce Accesso completo al disco da verificare è /Applications/Paratia.app.")
     return ("Verifica /Applications/Paratia.app in Accesso completo al disco. "
-            "Dopo ogni nuova build con firma ad hoc, rimuovi e aggiungi di nuovo quella voce.")
+            "Se la firma è cambiata dopo una nuova build, rimuovi e aggiungi di nuovo quella voce.")
+
+
+# Stessi file di CODICE in registro_installa.py: il demone carica anche messaggi.py per i testi.
+CODICE_DEMONE = ("registro_daemon.py", "registro.py", "catena.py", "messaggi.py")
 
 
 def codice_affidabile(directory):
@@ -274,7 +280,7 @@ def codice_affidabile(directory):
         s = p.lstat()
         if not stat.S_ISDIR(s.st_mode) or s.st_uid != 0 or s.st_mode & 0o022:
             raise ValueError("Il percorso del demone deve appartenere a root e non essere scrivibile da altri.")
-    for nome in ("registro_daemon.py", "registro.py", "catena.py"):
+    for nome in CODICE_DEMONE:
         s = (directory / nome).lstat()
         if not stat.S_ISREG(s.st_mode) or s.st_uid != 0 or s.st_mode & 0o022:
             raise ValueError("Il codice del demone non è protetto da root.")
@@ -342,7 +348,7 @@ def main(argv=None):
     spec.loader.exec_module(R)
     # Code directories are installer-owned; POSIX mode alone does not exclude
     # an inherited ACL permitting someone else to alter a sibling module.
-    for p in [SUPPORT, *SUPPORT.parents, *(SUPPORT / n for n in ("registro_daemon.py", "registro.py", "catena.py"))]:
+    for p in [SUPPORT, *SUPPORT.parents, *(SUPPORT / n for n in CODICE_DEMONE)]:
         if R.acl_scrivibile(p):
             raise ValueError("Le ACL del codice del demone consentono modifiche.")
     directory = LOGS / str(args.uid)
@@ -372,7 +378,7 @@ def main(argv=None):
     flusso = FlussoEslogger(osservatore)
     caricatore = CaricatoreConfigurazione(protetti, configurazione, cache_volumi)
     sink(R._diagnostico("osservatore-avviato", uid=args.uid))
-    contesto = contesto_launcher()
+    contesto = contesto_launcher(R)
     informazioni = {**contesto, "running": False, "healthy": False, "needs_fda": None,
                     "message": "Avvio del registro kernel in corso.", "dropped_events": 0,
                     "last_dropped_at": None,
