@@ -7,6 +7,7 @@ lingua al worker nella variabile PARATIA_LANG. I codici di errore non cambiano.
 from __future__ import annotations
 
 import os
+import re
 
 LINGUE = ("it", "en", "es")
 # Il worker nasce in un processo nuovo per ogni richiesta: la lingua scelta nella
@@ -15,6 +16,17 @@ _LINGUA = os.environ.get("PARATIA_LANG", "it") if os.environ.get("PARATIA_LANG")
 
 # testo italiano -> (inglese, spagnolo)
 TRADUZIONI = {
+    "Nella cartella chiusa c'è qualcosa aggiunto dopo la protezione, e non è cifrato: {elenco}. Spostalo fuori dalla cartella, poi riprova.": ('Something was added to the closed folder after it was protected, and it is not encrypted: {elenco}. Move it out of the folder, then try again.', 'En la carpeta cerrada hay algo añadido después de protegerla, y no está cifrado: {elenco}. Sácalo de la carpeta y vuelve a intentarlo.'),
+    'La verifica non è riuscita su «{nome}»: {motivo}. Nessun file è stato cancellato.': ('The check failed on “{nome}”: {motivo}. No file was deleted.', 'La verificación ha fallado en «{nome}»: {motivo}. No se ha borrado ningún archivo.'),
+    'manca nella copia': ('it is missing from the copy', 'falta en la copia'),
+    'è in più nella copia': ('it is extra in the copy', 'sobra en la copia'),
+    "l'attributo esteso {attributo} è diverso": ('the extended attribute {attributo} differs', 'el atributo extendido {attributo} es distinto'),
+    'il tipo è diverso': ('its type differs', 'el tipo es distinto'),
+    'la dimensione è diversa': ('its size differs', 'el tamaño es distinto'),
+    'il contenuto è diverso': ('its content differs', 'el contenido es distinto'),
+    'i permessi sono diversi': ('its permissions differ', 'los permisos son distintos'),
+    'le autorizzazioni (ACL) sono diverse': ('its access control list differs', 'las autorizaciones (ACL) son distintas'),
+    'Errore imprevisto durante la migrazione.': ('Unexpected error during the migration.', 'Error inesperado durante la migración.'),
     'Contiene i file sintetici di una prova precedente: la prova li riusa.': ('It holds the synthetic files of an earlier test: the test reuses them.', 'Contiene los archivos sintéticos de una prueba anterior: la prueba los reutiliza.'),
     'Chiudi la cartella prima di togliere la protezione.': ('Close the folder before removing its protection.', 'Cierra la carpeta antes de quitar la protección.'),
     "I file sono tornati nella cartella, ma l'immagine cifrata non è stata eliminata: {bundle}": ('The files are back in the folder, but the encrypted image was not deleted: {bundle}', 'Los archivos han vuelto a la carpeta, pero la imagen cifrada no se ha eliminado: {bundle}'),
@@ -371,9 +383,27 @@ TRADUZIONI = {
 }
 
 
+_MODELLI = None
+
+
 def noto(testo: str) -> bool:
-    """True for a message written for the person, in any of the three languages."""
-    return testo in TRADUZIONI or any(testo in coppia for coppia in TRADUZIONI.values())
+    """True for a message written for the person, in any of the three languages.
+
+    A message with placeholders matches once filled in: a placeholder only
+    ever holds a name or a path that Paratia itself wrote there.
+    """
+    global _MODELLI
+    if testo in TRADUZIONI or any(testo in coppia for coppia in TRADUZIONI.values()):
+        return True
+    if _MODELLI is None:
+        _MODELLI = []
+        for chiave, coppia in TRADUZIONI.items():
+            for modello in (chiave, *coppia):
+                parti = re.split(r"\{[a-z_]+\}", modello)
+                if len(parti) > 1:
+                    corpo = r"(?:.|\n)+".join(re.escape(parte) for parte in parti)
+                    _MODELLI.append(re.compile(corpo + r"\Z"))
+    return any(m.match(testo) for m in _MODELLI)
 
 
 def imposta(lingua: str) -> str:

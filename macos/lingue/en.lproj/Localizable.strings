@@ -168,7 +168,7 @@
 "Ho capito" = "Got it";
 "Hook configurati. Riavvia le sessioni e verifica la fiducia in Codex." = "Hooks set up. Restart the sessions and check the trust in Codex.";
 "I componenti dell'app non sono disponibili. Ricostruisci o reinstalla Paratia." = "The app components are not available. Rebuild or reinstall Paratia.";
-"I processi dell'utente possono leggere i file. Chiusura richiesta dopo %@ minuti; se occupata, Paratia ritenta senza forzare." = "The user's processes can read the files. Closing is requested after %@ minutes; if it is busy, Paratia retries without forcing.";
+"Aperta: tu e qualsiasi programma, agenti compresi, potete leggere i file. Si chiude dopo %@ minuti; se un'app la sta usando, Paratia riprova senza forzare." = "Open: you and any program, agents included, can read the files. It closes after %@ minutes; if an app is using it, Paratia tries again without forcing.";
 "I tentativi falliti non sono tutti osservabili dal kernel." = "Not all failed attempts can be observed by the kernel.";
 "I tuoi file vengono esaminati solo attraverso metadati. I file sintetici vengono creati soltanto se la cartella di prova è vuota." = "Your files are examined through metadata only. Synthetic files are created only if the test folder is empty.";
 "Il banco usa la cartella di prova sul Desktop e conserva gli esiti reali di ogni fase." = "The test bench uses the test folder on the Desktop and keeps the real results of each phase.";
@@ -394,3 +394,5 @@
 "Togli la protezione…" = "Remove protection…";
 "Togliere la protezione da «%@»?" = "Remove protection from “%@”?";
 "File sintetici della prova" = "Synthetic test files";
+"Cosa è andato storto: %@" = "What went wrong: %@";
+"Chiusa: nel Finder la vedi vuota e in sola lettura, e nessun programma legge i file. Per lavorarci aprila con la chiave; quello che aggiungi da aperta viene cifrato alla chiusura." = "Closed: in Finder it looks empty and read-only, and no program can read the files. To work in it, open it with the key; what you add while it is open is encrypted when it closes.";

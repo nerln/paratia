@@ -57,6 +57,12 @@ def prova() -> dict:
         assert entry["stato"] == "chiusa"
         assert Path(entry["bundle"]).parent == C.CASA / "compartimenti.noindex"
         assert not (source / "synthetic.txt").exists()
+        assert (source.stat().st_mode & 0o777) == C.MODO_CHIUSA
+        try:
+            (source / "dropped.txt").write_text("x")
+            raise AssertionError("A closed folder accepted a new file")
+        except PermissionError:
+            pass
         assert C.elenco()[0]["file"] == 3
         assert C.elenco()[0]["byte"] == C._totali(expected)[1]
         entry = C.apri(entry["id"], key, 1)

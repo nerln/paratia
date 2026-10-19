@@ -122,3 +122,10 @@ def test_daemon_state_messages_are_catalogue_keys_for_the_gui_to_translate():
                   "Il registro kernel è fermo.",
                   "Il formato di eslogger non è compatibile: aggiorna Paratia."):
         assert testo in catalogo, testo
+
+
+def test_a_filled_in_message_is_still_known_but_invented_text_is_not():
+    import messaggi as m
+    assert m.noto("La verifica non è riuscita su «foto.png»: il contenuto è diverso. Nessun file è stato cancellato.")
+    assert m.noto("The check failed on “foto.png”: its content differs. No file was deleted.")
+    assert not m.noto("Traceback: something private")

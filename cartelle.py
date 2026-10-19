@@ -546,7 +546,28 @@ def _verifica(radice: Path, atteso: dict, metadir: str | None = None) -> None:
         ignorati.add(metadir)
     trovato = _scansiona(radice, ignorati)
     if _totali(trovato) != _totali(atteso) or _contenuto(trovato) != _contenuto(atteso):
-        raise Rifiuto(_t("La verifica di numero, dimensioni e hash dei file non è riuscita."))
+        raise Rifiuto(_differenza(_contenuto(trovato), _contenuto(atteso), radice))
+
+
+def _differenza(trovato: dict, atteso: dict, radice: Path) -> str:
+    """Name the first item that differs and how, so the person knows what failed."""
+    nome = next(k for k in sorted(trovato.keys() | atteso.keys()) if trovato.get(k) != atteso.get(k))
+    mostrato = radice.name if nome == "." else nome
+    if nome not in trovato:
+        motivo = _t("manca nella copia")
+    elif nome not in atteso:
+        motivo = _t("è in più nella copia")
+    else:
+        a, b = trovato[nome], atteso[nome]
+        campo = next(c for c in ("tipo", "byte", "hash", "modo", "xattr", "acl") if a.get(c) != b.get(c))
+        if campo == "xattr":
+            diversi = sorted(k for k in a["xattr"].keys() | b["xattr"].keys() if a["xattr"].get(k) != b["xattr"].get(k))
+            motivo = _t("l'attributo esteso {attributo} è diverso", attributo=diversi[0])
+        else:
+            motivo = {"tipo": _t("il tipo è diverso"), "byte": _t("la dimensione è diversa"),
+                      "hash": _t("il contenuto è diverso"), "modo": _t("i permessi sono diversi"),
+                      "acl": _t("le autorizzazioni (ACL) sono diverse")}[campo]
+    return _t("La verifica non è riuscita su «{nome}»: {motivo}. Nessun file è stato cancellato.", nome=mostrato, motivo=motivo)
 
 
 def _impronta(manifest: dict) -> str:
@@ -730,12 +751,59 @@ def _verifica_chiave(bundle: Path, passphrase: bytes) -> None:
         _risultato_comando(argv, risultato, passphrase)
 
 
+# A closed folder is read-only: whatever were dropped into it would sit there
+# in clear text, outside the image, while the folder looks protected.
+MODO_CHIUSA = 0o500
+
+
+def _blocca(cartella: Path) -> None:
+    try:
+        if cartella.is_dir() and not cartella.is_symlink() and not _montato(cartella):
+            os.chmod(cartella, MODO_CHIUSA)
+    except OSError:
+        pass  # A lock that cannot be set leaves the folder as it was, still empty.
+
+
+def _sblocca(cartella: Path) -> None:
+    if cartella.is_dir() and not cartella.is_symlink() and not _montato(cartella):
+        modo = stat.S_IMODE(cartella.stat().st_mode)
+        if not modo & 0o200:
+            os.chmod(cartella, modo | 0o700)
+
+
+def _estranei(cartella: Path) -> list[str]:
+    """What sits in a closed folder; a lone Finder .DS_Store is removed, not counted."""
+    nomi = sorted(p.name for p in cartella.iterdir())
+    if nomi == [".DS_Store"] and not _montato(cartella):
+        try:
+            _sblocca(cartella)
+            (cartella / ".DS_Store").unlink()
+            nomi = []
+        except OSError:
+            pass
+        finally:
+            _blocca(cartella)
+    return nomi
+
+
+def _rifiuta_estranei(cartella: Path) -> None:
+    nomi = _estranei(cartella)
+    if nomi:
+        elenco = ", ".join(nomi[:3]) + (" (+%d)" % (len(nomi) - 3) if len(nomi) > 3 else "")
+        raise Rifiuto(_t("Nella cartella chiusa c'è qualcosa aggiunto dopo la protezione, e non è cifrato: {elenco}. Spostalo fuori dalla cartella, poi riprova.", elenco=elenco))
+
+
 def _attacca(bundle: Path, monte: Path, passphrase: bytes) -> None:
     if _montato(monte) or any(monte.iterdir()):
         raise Rifiuto(_t("Il punto di montaggio deve essere vuoto e non montato."))
+    _sblocca(monte)
     _verifica_chiave(bundle, passphrase)
-    _comando([HDIUTIL, "attach", str(bundle), "-stdinpass", "-nobrowse", "-noautoopen",
-              "-owners", "on", "-mountpoint", str(monte)], passphrase)
+    try:
+        _comando([HDIUTIL, "attach", str(bundle), "-stdinpass", "-nobrowse", "-noautoopen",
+                  "-owners", "on", "-mountpoint", str(monte)], passphrase)
+    except Rifiuto:
+        _blocca(monte)
+        raise
     if not _montato(monte):
         raise Rifiuto(_t("Il montaggio del volume non è stato confermato."))
 
@@ -938,6 +1006,7 @@ def proteggi(origine: str | Path, dove: str | Path | None, passphrase: bytes, mi
             _verifica(backup, manifest)
             # No encrypted success is reported while a plaintext tree remains.
             shutil.rmtree(backup)
+            _blocca(fonte)
             voce.update(stato="chiusa", plaintext_residuo=None)
             voce.pop("montaggio_temporaneo", None)
             _salva(r)
@@ -949,6 +1018,7 @@ def proteggi(origine: str | Path, dove: str | Path | None, passphrase: bytes, mi
             except Rifiuto:
                 pass
             voce["stato"] = "migrazione-incompleta"
+            voce["errore"] = str(e) if isinstance(e, Rifiuto) else _t("Errore imprevisto durante la migrazione.")
             # Keep the original/backup and the encrypted copy for recovery.
             _salva(r)
             _audit("cartella-migrazione-incompleta", id=identificatore)
@@ -997,8 +1067,7 @@ def _prepara_apertura(v: dict, minutes: int) -> dict:
         _verifica_struttura_bundle(bundle, v["id"])
         if not monte.is_dir():
             raise Rifiuto(_t("Il punto di montaggio non è disponibile. Ripristina il percorso originale e riprova."))
-        if any(monte.iterdir()):
-            raise Rifiuto(_t("Il punto di montaggio deve essere vuoto e non montato."))
+        _rifiuta_estranei(monte)
     risultato = {"pronto": not aperta, "gia_aperta": aperta,
                  "cartella": _pubblica(v), "minutes": minutes}
     if aperta:
@@ -1071,6 +1140,7 @@ def _chiudi(r: dict, v: dict, force: bool = False) -> dict:
         raise
     if v["stato"] not in ("migrazione", "migrazione-incompleta"):
         v["stato"] = "chiusa"
+        _blocca(Path(v["montaggio"]))
     # A successful detach invalidates the sleeping child without signals or
     # PIDs. A busy detach returns earlier and retains its retrying timer.
     if (era_aperta or v.get("timer") or v.get("scadenza") is not None
@@ -1227,8 +1297,10 @@ def togli_protezione(identificatore: str, passphrase: bytes) -> dict:
             residuo = _percorso(v["recupero_temporaneo"])
             if residuo.exists() and (not residuo.is_dir() or any(residuo.iterdir())):
                 raise Rifiuto(_t("Il recupero precedente conserva una copia plaintext: {residuo}", residuo=residuo))
-        if fonte.exists() and (not fonte.is_dir() or any(fonte.iterdir())):
+        if fonte.exists() and not fonte.is_dir():
             raise Rifiuto(_t("L'origine contiene dati: il recupero non li sovrascriverà."))
+        if fonte.exists():
+            _rifiuta_estranei(fonte)
         if not bundle.is_dir() or bundle.suffix != ".sparsebundle":
             raise DiscoNonDisponibile(_t("Il disco con l'immagine cifrata non è disponibile. Collegalo e riprova ad aprire la cartella."))
         _verifica_struttura_bundle(bundle, v["id"])

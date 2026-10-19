@@ -484,6 +484,7 @@ def _scarta_banco(identificatore, fonte):
         bundle = C._percorso(v["bundle"])
         del r["cartelle"][identificatore]
         C._salva(r)
+    C._sblocca(fonte)  # The closed mount point was read-only; the bench writes into it again.
     if bundle.suffix == ".sparsebundle" and bundle.is_dir():
         shutil.rmtree(bundle)
 

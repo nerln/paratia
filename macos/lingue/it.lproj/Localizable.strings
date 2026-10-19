@@ -168,7 +168,7 @@
 "Ho capito" = "Ho capito";
 "Hook configurati. Riavvia le sessioni e verifica la fiducia in Codex." = "Hook configurati. Riavvia le sessioni e verifica la fiducia in Codex.";
 "I componenti dell'app non sono disponibili. Ricostruisci o reinstalla Paratia." = "I componenti dell'app non sono disponibili. Ricostruisci o reinstalla Paratia.";
-"I processi dell'utente possono leggere i file. Chiusura richiesta dopo %@ minuti; se occupata, Paratia ritenta senza forzare." = "I processi dell'utente possono leggere i file. Chiusura richiesta dopo %@ minuti; se occupata, Paratia ritenta senza forzare.";
+"Aperta: tu e qualsiasi programma, agenti compresi, potete leggere i file. Si chiude dopo %@ minuti; se un'app la sta usando, Paratia riprova senza forzare." = "Aperta: tu e qualsiasi programma, agenti compresi, potete leggere i file. Si chiude dopo %@ minuti; se un'app la sta usando, Paratia riprova senza forzare.";
 "I tentativi falliti non sono tutti osservabili dal kernel." = "I tentativi falliti non sono tutti osservabili dal kernel.";
 "I tuoi file vengono esaminati solo attraverso metadati. I file sintetici vengono creati soltanto se la cartella di prova è vuota." = "I tuoi file vengono esaminati solo attraverso metadati. I file sintetici vengono creati soltanto se la cartella di prova è vuota.";
 "Il banco usa la cartella di prova sul Desktop e conserva gli esiti reali di ogni fase." = "Il banco usa la cartella di prova sul Desktop e conserva gli esiti reali di ogni fase.";
@@ -394,3 +394,5 @@
 "Togli la protezione…" = "Togli la protezione…";
 "Togliere la protezione da «%@»?" = "Togliere la protezione da «%@»?";
 "File sintetici della prova" = "File sintetici della prova";
+"Cosa è andato storto: %@" = "Cosa è andato storto: %@";
+"Chiusa: nel Finder la vedi vuota e in sola lettura, e nessun programma legge i file. Per lavorarci aprila con la chiave; quello che aggiungi da aperta viene cifrato alla chiusura." = "Chiusa: nel Finder la vedi vuota e in sola lettura, e nessun programma legge i file. Per lavorarci aprila con la chiave; quello che aggiungi da aperta viene cifrato alla chiusura.";

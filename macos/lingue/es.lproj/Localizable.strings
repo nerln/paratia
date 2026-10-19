@@ -168,7 +168,7 @@
 "Ho capito" = "Entendido";
 "Hook configurati. Riavvia le sessioni e verifica la fiducia in Codex." = "Hooks configurados. Reinicia las sesiones y verifica la confianza en Codex.";
 "I componenti dell'app non sono disponibili. Ricostruisci o reinstalla Paratia." = "Los componentes de la app no están disponibles. Vuelve a compilar o reinstala Paratia.";
-"I processi dell'utente possono leggere i file. Chiusura richiesta dopo %@ minuti; se occupata, Paratia ritenta senza forzare." = "Los procesos del usuario pueden leer los archivos. Se pide el cierre tras %@ minutos; si está ocupada, Paratia reintenta sin forzar.";
+"Aperta: tu e qualsiasi programma, agenti compresi, potete leggere i file. Si chiude dopo %@ minuti; se un'app la sta usando, Paratia riprova senza forzare." = "Abierta: tú y cualquier programa, agentes incluidos, podéis leer los archivos. Se cierra después de %@ minutos; si una app la está usando, Paratia lo reintenta sin forzar.";
 "I tentativi falliti non sono tutti osservabili dal kernel." = "No todos los intentos fallidos los puede observar el kernel.";
 "I tuoi file vengono esaminati solo attraverso metadati. I file sintetici vengono creati soltanto se la cartella di prova è vuota." = "Tus archivos se revisan solo a través de metadatos. Los archivos sintéticos se crean solo si la carpeta de prueba está vacía.";
 "Il banco usa la cartella di prova sul Desktop e conserva gli esiti reali di ogni fase." = "El banco de pruebas usa la carpeta de prueba del Escritorio y guarda los resultados reales de cada fase.";
@@ -394,3 +394,5 @@
 "Togli la protezione…" = "Quitar la protección…";
 "Togliere la protezione da «%@»?" = "¿Quitar la protección de «%@»?";
 "File sintetici della prova" = "Archivos sintéticos de la prueba";
+"Cosa è andato storto: %@" = "Qué ha fallado: %@";
+"Chiusa: nel Finder la vedi vuota e in sola lettura, e nessun programma legge i file. Per lavorarci aprila con la chiave; quello che aggiungi da aperta viene cifrato alla chiusura." = "Cerrada: en el Finder la ves vacía y de solo lectura, y ningún programa lee los archivos. Para trabajar en ella, ábrela con la clave; lo que añadas mientras está abierta se cifra al cerrarla.";

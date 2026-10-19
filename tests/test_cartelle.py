@@ -6,6 +6,7 @@ import importlib.util
 import errno
 import json
 import os
+import stat
 import plistlib
 import shutil
 import struct
@@ -1245,3 +1246,40 @@ def test_togli_protezione_decide_dal_montaggio_non_dallo_stato_salvato(C, D, alb
         C._salva(r)
     assert C.togli_protezione(v["id"], KEY)["stato"] == "non-protetta"
     assert (fonte / "segreto.txt").read_text() == "fixture-private-marker"
+
+
+def test_una_cartella_chiusa_non_accetta_file_e_si_riapre(C, D, albero):
+    fonte, _ = albero
+    v = C.proteggi(fonte, None, KEY)
+    assert stat.S_IMODE(fonte.stat().st_mode) == C.MODO_CHIUSA
+    with pytest.raises(PermissionError):
+        (fonte / "lasciato-qui.txt").write_text("non cifrato")
+    C.apri(v["id"], KEY)
+    assert (fonte / "segreto.txt").read_text() == "fixture-private-marker"
+    C.chiudi(v["id"])
+    assert stat.S_IMODE(fonte.stat().st_mode) == C.MODO_CHIUSA and list(fonte.iterdir()) == []
+
+
+def test_un_file_messo_nella_cartella_chiusa_viene_nominato(C, D, albero):
+    fonte, _ = albero
+    v = C.proteggi(fonte, None, KEY)
+    os.chmod(fonte, 0o700)  # As if the lock had been removed in Finder.
+    (fonte / "foto.png").write_bytes(b"x")
+    for operazione in (lambda: C.apri(v["id"], KEY), lambda: C.togli_protezione(v["id"], KEY)):
+        with pytest.raises(C.Rifiuto, match="foto.png"):
+            operazione()
+    (fonte / "foto.png").unlink()
+    (fonte / ".DS_Store").write_bytes(b"finder")
+    assert C.togli_protezione(v["id"], KEY)["stato"] == "non-protetta"
+
+
+def test_la_verifica_dice_quale_file_e_perche(C, tmp_path):
+    a = {".": {"tipo": "cartella"}, "uno.txt": {"tipo": "file", "byte": 1, "hash": "a", "xattr": {}}}
+    b = {".": {"tipo": "cartella"}, "uno.txt": {"tipo": "file", "byte": 1, "hash": "b", "xattr": {}}}
+    assert "«uno.txt»: il contenuto è diverso" in C._differenza(a, b, tmp_path)
+    b["due.txt"] = {"tipo": "file"}
+    assert "«due.txt»: manca nella copia" in C._differenza(a, b, tmp_path)
+    a["uno.txt"]["hash"] = "b"
+    a["due.txt"] = {"tipo": "file", "xattr": {"com.apple.quarantine": "1"}}
+    b["due.txt"] = {"tipo": "file", "xattr": {}}
+    assert "com.apple.quarantine" in C._differenza(a, b, tmp_path)

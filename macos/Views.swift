@@ -146,13 +146,18 @@ struct FolderCard: View {
                 }.font(.callout).disabled(model.busy != nil || model.fixtures)
                 if folder.isIncomplete {
                     Text(tr("La protezione non è completa. Le copie residue vengono conservate per il recupero.")).font(.callout).foregroundStyle(.red)
+                    if let reason = folder.data["errore"] as? String, !reason.isEmpty {
+                        Text(tr("Cosa è andato storto: %@", reason)).font(.callout).textSelection(.enabled)
+                    }
                     ForEach(["plaintext_residuo", "recupero_temporaneo"], id: \.self) { field in
                         if let path = folder.data[field] as? String {
                             Text(path).font(.caption).textSelection(.enabled)
                         }
                     }
+                } else if folder.state != "aperta" {
+                    Text(tr("Chiusa: nel Finder la vedi vuota e in sola lettura, e nessun programma legge i file. Per lavorarci aprila con la chiave; quello che aggiungi da aperta viene cifrato alla chiusura.")).font(.caption).foregroundStyle(.secondary)
                 } else if folder.state == "aperta" {
-                    Text(tr("I processi dell'utente possono leggere i file. Chiusura richiesta dopo %@ minuti; se occupata, Paratia ritenta senza forzare.", "\(folder.data.number("minutes"))"))
+                    Text(tr("Aperta: tu e qualsiasi programma, agenti compresi, potete leggere i file. Si chiude dopo %@ minuti; se un'app la sta usando, Paratia riprova senza forzare.", "\(folder.data.number("minutes"))"))
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Text(tr("Registro: ") + model.watchStatus(folder.data)).font(.caption).foregroundStyle(.secondary)
