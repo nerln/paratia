@@ -396,3 +396,5 @@
 "File sintetici della prova" = "Synthetic test files";
 "Cosa è andato storto: %@" = "What went wrong: %@";
 "Chiusa: nel Finder la vedi vuota e in sola lettura, e nessun programma legge i file. Per lavorarci aprila con la chiave; quello che aggiungi da aperta viene cifrato alla chiusura." = "Closed: in Finder it looks empty and read-only, and no program can read the files. To work in it, open it with the key; what you add while it is open is encrypted when it closes.";
+"Questo disco non permette di aprirla al suo posto: i file sono in %@ (Mostra nel Finder). La cartella sul disco resta vuota e in sola lettura." = "This disk does not allow opening it in place: the files are in %@ (Show in Finder). The folder on the disk stays empty and read-only.";
+"Se perdi la chiave, nessuno può riaprirla, nemmeno Paratia: salvala in un gestore di password." = "If you lose the key, nobody can open it again, not even Paratia: keep it in a password manager.";

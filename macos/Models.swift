@@ -17,6 +17,8 @@ struct FolderItem: Identifiable {
     var name: String { data.text("nome") }
     var state: String { data.text("stato") }
     var source: String { data.text("origine") }
+    /// Where the files are while open: in place, or in Paratia's area for disks without owners.
+    var openPath: String { state == "aperta" ? data.text("montaggio_temporaneo", fallback: source) : source }
     var isIncomplete: Bool { state == "migrazione-incompleta" || state == "migrazione" }
 }
 

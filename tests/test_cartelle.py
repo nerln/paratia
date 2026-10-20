@@ -1174,7 +1174,7 @@ def test_togli_protezione_rimette_i_file_e_elimina_l_immagine(C, D, albero):
     assert (fonte / "segreto.txt").read_text() == "fixture-private-marker"
     assert (fonte / ".invisibile" / "a.txt").read_text() == "anche questo"
     assert not bundle.exists() and C.elenco() == [] and not D.montati
-    assert not [p for p in fonte.parent.iterdir() if ".ripristino-" in p.name]
+    assert not [p for p in fonte.parent.iterdir() if ".recupero-" in p.name]
 
 
 def test_togli_protezione_rifiuta_una_cartella_aperta(C, D, albero):
@@ -1193,7 +1193,7 @@ def test_togli_protezione_fallita_lascia_l_immagine_e_nessuna_copia_in_chiaro(C,
         C.togli_protezione(v["id"], KEY)
     assert Path(v["bundle"]).is_dir() and C.elenco()[0]["stato"] == "chiusa"
     assert list(fonte.iterdir()) == [] and not D.montati
-    assert not [p for p in fonte.parent.iterdir() if ".ripristino-" in p.name]
+    assert not [p for p in fonte.parent.iterdir() if ".recupero-" in p.name]
     D.fallisce = None
     assert C.togli_protezione(v["id"], KEY)["stato"] == "non-protetta"
 
@@ -1283,3 +1283,83 @@ def test_la_verifica_dice_quale_file_e_perche(C, tmp_path):
     a["due.txt"] = {"tipo": "file", "xattr": {"com.apple.quarantine": "1"}}
     b["due.txt"] = {"tipo": "file", "xattr": {}}
     assert "com.apple.quarantine" in C._differenza(a, b, tmp_path)
+
+
+def test_la_quarantena_conta_se_c_e_non_byte_per_byte(C, tmp_path):
+    a = {"x": {"tipo": "file", "xattr": {"com.apple.quarantine": "presente"}}}
+    assert C._differenza(a, {"x": {"tipo": "file", "xattr": {}}}, tmp_path).count("com.apple.quarantine") == 1
+    f = tmp_path / "f"
+    f.write_text("x")
+    if sys.platform == "darwin":
+        subprocess.run(["/usr/bin/xattr", "-w", "com.apple.quarantine", "0381;00000000;Safari;", str(f)], check=True)
+        uno = C._metadati(f)["xattr"]
+        subprocess.run(["/usr/bin/xattr", "-w", "com.apple.quarantine", "0181;00000000;;", str(f)], check=True)
+        assert C._metadati(f)["xattr"] == uno == {"com.apple.quarantine": "presente"}
+
+
+def test_ds_store_riscritto_dal_finder_non_fa_fallire_la_protezione(C, D, albero):
+    fonte, _ = albero
+    (fonte / ".DS_Store").write_bytes(b"prima")
+    D.after_copy = lambda: (fonte / ".DS_Store").write_bytes(b"il Finder l'ha riscritto")
+    assert C.proteggi(fonte, None, KEY)["stato"] == "chiusa"
+
+
+def test_dopo_uno_spegnimento_la_cartella_chiusa_torna_in_sola_lettura(C, D, albero):
+    fonte, _ = albero
+    v = C.proteggi(fonte, None, KEY)
+    C.apri(v["id"], KEY)
+    C._stacca(fonte)  # The volume goes away without a close.
+    os.chmod(fonte, 0o700)
+    assert [x["stato"] for x in C.elenco()] == ["chiusa"]
+    assert stat.S_IMODE(fonte.stat().st_mode) == C.MODO_CHIUSA
+
+
+def test_su_un_disco_senza_proprietari_si_apre_nell_area_di_paratia(C, D, albero, monkeypatch):
+    fonte, _ = albero
+    monkeypatch.setattr(C, "_senza_proprietari", lambda p: True)
+    v = C.proteggi(fonte, None, KEY)
+    aperta = C.apri(v["id"], KEY)
+    punto = C.CASA / "montaggi" / (v["id"] + "-" + v["nome"])
+    assert aperta["stato"] == "aperta" and aperta["montaggio_temporaneo"] == str(punto)
+    assert (punto / "segreto.txt").read_text() == "fixture-private-marker"
+    assert list(fonte.iterdir()) == [] and stat.S_IMODE(fonte.stat().st_mode) == C.MODO_CHIUSA
+    assert C.elenco()[0]["stato"] == "aperta"
+    with pytest.raises(C.Rifiuto, match="Chiudi la cartella"):
+        C.togli_protezione(v["id"], KEY)
+    (punto / "nuovo.txt").write_text("scritto da aperta")
+    C.chiudi(v["id"])
+    assert not punto.exists() and "montaggio_temporaneo" not in C._carica()["cartelle"][v["id"]]
+    C.apri(v["id"], KEY)
+    C._stacca(punto)  # Unplugged while open.
+    assert C.elenco()[0]["stato"] == "chiusa" and not punto.exists()
+    esito = C.togli_protezione(v["id"], KEY)
+    assert esito["stato"] == "non-protetta" and (fonte / "nuovo.txt").read_text() == "scritto da aperta"
+
+
+def test_i_nomi_temporanei_di_togli_sono_quelli_che_il_registro_accetta(C, D, albero, monkeypatch):
+    fonte, _ = albero
+    v = C.proteggi(fonte, None, KEY)
+    visti = []
+    vero = C._salva
+
+    def salva(r):
+        voce = r["cartelle"].get(v["id"], {})
+        if voce.get("montaggio_temporaneo"):
+            visti.append((Path(voce["montaggio_temporaneo"]).name, Path(voce["recupero_temporaneo"]).name))
+        vero(r)
+    monkeypatch.setattr(C, "_salva", salva)
+    C.togli_protezione(v["id"], KEY)
+    assert visti and all(m.startswith(v["id"] + "-") and r.startswith("." + fonte.name + ".recupero-") for m, r in visti)
+
+
+def test_annullare_una_migrazione_cancella_l_immagine_doppia(C, D, albero):
+    fonte, _ = albero
+    D.fallisce = ("detach", 1)
+    with pytest.raises(C.Rifiuto) as errore:
+        C.proteggi(fonte, None, KEY)
+    v = C._carica()["cartelle"][errore.value.cartella_id]
+    D.fallisce = None
+    C._stacca(Path(v["montaggio_temporaneo"]))
+    esito = C.annulla_migrazione(v["id"])
+    assert esito["bundle_eliminato"] is True and not Path(v["bundle"]).exists()
+    assert (fonte / "segreto.txt").read_text() == "fixture-private-marker"

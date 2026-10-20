@@ -196,7 +196,7 @@ final class AppModel: ObservableObject {
             let name = URL(fileURLWithPath: source).lastPathComponent
             let alert = NSAlert()
             alert.messageText = tr("Proteggere «%@»?", name)
-            alert.informativeText = tr("Il contenuto passa in un'immagine cifrata e la copia in chiaro viene eliminata solo dopo la verifica: non resta nessuna copia doppia. La cartella resta dov'è: chiusa è vuota, aperta con la chiave mostra di nuovo i file.") + "\n\n" + tr("Immagine cifrata: %@", ready.text("dove", fallback: ""))
+            alert.informativeText = tr("Il contenuto passa in un'immagine cifrata e la copia in chiaro viene eliminata solo dopo la verifica: non resta nessuna copia doppia. La cartella resta dov'è: chiusa è vuota, aperta con la chiave mostra di nuovo i file.") + "\n\n" + tr("Immagine cifrata: %@", ready.text("dove", fallback: "")) + "\n\n" + tr("Se perdi la chiave, nessuno può riaprirla, nemmeno Paratia: salvala in un gestore di password.")
             alert.addButton(withTitle: tr("Continua"))
             alert.addButton(withTitle: tr("Annulla"))
             alert.addButton(withTitle: tr("Altra posizione…"))

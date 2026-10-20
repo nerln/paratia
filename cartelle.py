@@ -187,8 +187,8 @@ def _cloud(p: Path) -> bool:
     ))
 
 
-def _monte_statfs(dove: Path) -> Path:
-    """Get the kernel's mount name, including APFS Data-volume firmlinks."""
+def _statfs(dove: Path):
+    """struct statfs of the volume holding ``dove``."""
     class Statfs(ctypes.Structure):
         # struct statfs from the macOS SDK's 64-bit sys/mount.h.
         _fields_ = [("f_bsize", ctypes.c_uint32), ("f_iosize", ctypes.c_int32),
@@ -210,9 +210,34 @@ def _monte_statfs(dove: Path) -> Path:
         dati = Statfs()
         if funzione(os.fsencode(dove), ctypes.byref(dati)):
             raise OSError(ctypes.get_errno(), "statfs")
-        return _percorso(os.fsdecode(dati.f_mntonname))
+        return dati
     except (AttributeError, OSError, ValueError) as e:
         raise Rifiuto(_t("Impossibile individuare il volume della destinazione.")) from e
+
+
+def _monte_statfs(dove: Path) -> Path:
+    """Get the kernel's mount name, including APFS Data-volume firmlinks."""
+    try:
+        return _percorso(os.fsdecode(_statfs(dove).f_mntonname))
+    except ValueError as e:
+        raise Rifiuto(_t("Impossibile individuare il volume della destinazione.")) from e
+
+
+MNT_IGNORE_OWNERSHIP = 0x00200000
+
+
+def _senza_proprietari(p: Path) -> bool:
+    """A disk mounted with "Ignore ownership", like an external SSD.
+
+    macOS refuses to mount an image over a folder on such a disk (measured:
+    "Permission denied" even at 0700), so its folders open in Paratia's area.
+    """
+    if sys.platform != "darwin":
+        return False
+    try:
+        return bool(_statfs(p).f_flags & MNT_IGNORE_OWNERSHIP)
+    except Rifiuto:
+        return False
 
 
 def _punto_montaggio(dove: Path) -> Path:
@@ -344,17 +369,40 @@ def _montato(p: Path) -> bool:
     return p.is_mount()
 
 
+def _aperta(v: dict) -> bool:
+    """Mounted in place, or (disks without owners) in Paratia's own area."""
+    if _montato(Path(v["montaggio"])):
+        return True
+    altrove = v.get("montaggio_temporaneo")
+    return bool(altrove) and v["stato"] not in ("migrazione", "migrazione-incompleta") and _montato(Path(altrove))
+
+
 def _pubblica(voce: dict) -> dict:
     v = dict(voce)
     v.pop("timer", None)
     if v["stato"] not in ("migrazione", "migrazione-incompleta", "annullata", "recuperata", "non-protetta"):
-        v["stato"] = "aperta" if _montato(Path(v["montaggio"])) else "chiusa"
+        v["stato"] = "aperta" if _aperta(voce) else "chiusa"
     return v
 
 
 def elenco() -> list[dict]:
     with _registro() as r:
-        return sorted((_pubblica(v) for v in r["cartelle"].values()), key=lambda v: v["nome"])
+        cambiato = False
+        for v in r["cartelle"].values():
+            # An opening elsewhere that ended without a close (shutdown, unplugged disk).
+            if (v["stato"] not in ("migrazione", "migrazione-incompleta") and v.get("montaggio_temporaneo")
+                    and not _montato(Path(v["montaggio_temporaneo"]))):
+                _rimuovi_punto_altrove(Path(v.pop("montaggio_temporaneo")))
+                cambiato = True
+        if cambiato:
+            _salva(r)
+        cartelle = sorted((_pubblica(v) for v in r["cartelle"].values()), key=lambda v: v["nome"])
+    for v in cartelle:
+        # After a shutdown or an unplugged disk the volume is gone without a
+        # close: lock the empty folder again so nothing lands there in clear.
+        if v["stato"] == "chiusa" and not v.get("plaintext_residuo"):
+            _blocca(Path(v["montaggio"]))
+    return cartelle
 
 
 def _firma(s) -> tuple:
@@ -386,7 +434,11 @@ def _libc():
 # macOS writes these itself: provenance on whatever an app creates or changes,
 # macl on folders a person picked in a dialog. They are not the person's data,
 # they cannot be copied faithfully, and they differ on the encrypted volume.
-XATTR_DI_SISTEMA = {"com.apple.provenance", "com.apple.macl"}
+XATTR_DI_SISTEMA = {"com.apple.provenance", "com.apple.macl", "com.apple.lastuseddate#PS"}
+# Copied, but checked only for presence: copying from a volume mounted without
+# owners rewrites it (agent name dropped, a flag cleared) while the file stays
+# quarantined. Byte equality would refuse every downloaded file on such a disk.
+XATTR_SOLO_PRESENZA = {"com.apple.quarantine"}
 
 
 def _nomi_xattr(p: Path) -> list[str]:
@@ -451,7 +503,8 @@ def _metadati(p: Path) -> dict:
                     h.update(b)
             attributi[nome] = h.hexdigest()
         else:
-            attributi[nome] = hashlib.sha256(_xattr(p, nome)).hexdigest()
+            attributi[nome] = ("presente" if nome in XATTR_SOLO_PRESENZA
+                               else hashlib.sha256(_xattr(p, nome)).hexdigest())
     return {"xattr": attributi, "acl": _acl(p)}
 
 
@@ -510,6 +563,8 @@ def _scansiona(radice: Path, esclusi_root=()) -> dict:
                 if (p == radice and figlio.name in esclusi_root and figlio.is_dir()
                         and not figlio.is_symlink()):
                     continue
+                if figlio.name == ".DS_Store" and figlio.is_file() and not figlio.is_symlink():
+                    continue  # Finder rewrites it at will; ditto still copies it.
                 visita(figlio)
         elif stat.S_ISREG(s.st_mode) and s.st_nlink == 1:
             n, h = _leggi(p, _firma(s))
@@ -796,8 +851,11 @@ def _rifiuta_estranei(cartella: Path) -> None:
 def _attacca(bundle: Path, monte: Path, passphrase: bytes) -> None:
     if _montato(monte) or any(monte.iterdir()):
         raise Rifiuto(_t("Il punto di montaggio deve essere vuoto e non montato."))
-    _sblocca(monte)
     _verifica_chiave(bundle, passphrase)
+    # On a disk mounted without owners (an external SSD) macOS refuses to mount
+    # over a read-only folder: unlock just for the attach. A close locks it
+    # again, and elenco() does after a shutdown or an unplugged disk.
+    _sblocca(monte)
     try:
         _comando([HDIUTIL, "attach", str(bundle), "-stdinpass", "-nobrowse", "-noautoopen",
                   "-owners", "on", "-mountpoint", str(monte)], passphrase)
@@ -1055,11 +1113,19 @@ def _avvia_timer(identificatore: str, generation: str, secondi: int) -> None:
         processo.stdout.close()
 
 
+def _rimuovi_punto_altrove(punto: Path) -> None:
+    try:
+        if punto.parent == CASA / "montaggi" and punto.is_dir() and not punto.is_symlink() and not _montato(punto):
+            punto.rmdir()
+    except OSError:
+        pass  # Not empty: leave it to be seen, never delete content.
+
+
 def _prepara_apertura(v: dict, minutes: int) -> dict:
     if v["stato"] in ("migrazione", "migrazione-incompleta") or v.get("plaintext_residuo"):
         raise Rifiuto(_t("La migrazione richiede recupero prima dell'apertura."))
     monte = _percorso(v["montaggio"])
-    aperta = _montato(monte)
+    aperta = _aperta(v)
     if not aperta:
         bundle = Path(v["bundle"])
         if not bundle.is_dir():
@@ -1095,9 +1161,24 @@ def apri(identificatore: str, passphrase: bytes, minutes: int = 15) -> dict:
                     "minutes_richiesti": minutes, "minutes_effettivi": v.get("minutes")}
         _chiave(passphrase)
         monte, bundle = _percorso(v["montaggio"]), _percorso(v["bundle"])
+        if _senza_proprietari(monte):
+            # The folder on that disk stays empty and read-only; the files
+            # appear here, where the registry and the agent gate look too.
+            area = CASA / "montaggi"
+            area.mkdir(mode=0o700, parents=True, exist_ok=True)
+            punto = area / (identificatore + "-" + v["nome"])
+            punto.mkdir(mode=0o700, exist_ok=True)
+            v["montaggio_temporaneo"] = str(punto)
+            _salva(r)
+        else:
+            punto = monte
         try:
-            _attacca(bundle, monte, passphrase)
+            _attacca(bundle, punto, passphrase)
         except Rifiuto:
+            if punto != monte:
+                v.pop("montaggio_temporaneo", None)
+                _salva(r)
+                _rimuovi_punto_altrove(punto)
             _audit("tentativo-fallito", azione="apertura", cartella=identificatore,
                    percorso=str(monte))
             raise
@@ -1109,9 +1190,12 @@ def apri(identificatore: str, passphrase: bytes, minutes: int = 15) -> dict:
             _avvia_timer(identificatore, v["generation"], minutes * 60)
         except Exception as e:
             try:
-                _stacca(monte)
+                _stacca(punto)
                 v.update(stato="chiusa", generation=uuid.uuid4().hex, scadenza=None)
                 v.pop("timer", None)
+                if punto != monte:
+                    v.pop("montaggio_temporaneo", None)
+                    _rimuovi_punto_altrove(punto)
                 _salva(r)
             except Rifiuto:
                 pass
@@ -1140,6 +1224,9 @@ def _chiudi(r: dict, v: dict, force: bool = False) -> dict:
         raise
     if v["stato"] not in ("migrazione", "migrazione-incompleta"):
         v["stato"] = "chiusa"
+        if v.get("montaggio_temporaneo"):
+            _rimuovi_punto_altrove(Path(v.pop("montaggio_temporaneo")))
+            stato_precedente = None  # Forces the save below.
         _blocca(Path(v["montaggio"]))
     # A successful detach invalidates the sleeping child without signals or
     # PIDs. A busy detach returns earlier and retains its retrying timer.
@@ -1192,7 +1279,16 @@ def annulla_migrazione(identificatore: str) -> dict:
             _stacca(Path(v["montaggio_temporaneo"]))
         del r["cartelle"][identificatore]
         _salva(r)
-        return _esito_registrato({**v, "stato": "annullata", "bundle_conservato": True},
+        # The source was just found complete and unchanged: the image is only a duplicate.
+        bundle = _percorso(v["bundle"])
+        eliminato = False
+        if bundle.suffix == ".sparsebundle" and bundle.is_dir() and not bundle.is_symlink():
+            try:
+                shutil.rmtree(bundle)
+                eliminato = True
+            except OSError:
+                pass
+        return _esito_registrato({**v, "stato": "annullata", "bundle_eliminato": eliminato},
                                 "cartella-migrazione-annullata", id=identificatore, origine=str(fonte))
 
 
@@ -1287,12 +1383,8 @@ def togli_protezione(identificatore: str, passphrase: bytes) -> dict:
             raise Rifiuto(_t("La migrazione richiede recupero prima dell'apertura."))
         fonte, bundle = _percorso(v["origine"]), _percorso(v["bundle"])
         # The stored state can say "aperta" after a restart or an eject: the mount decides.
-        if _montato(fonte):
+        if _aperta(v):
             raise Rifiuto(_t("Chiudi la cartella prima di togliere la protezione."))
-        if v.get("montaggio_temporaneo"):
-            precedente = _percorso(v["montaggio_temporaneo"])
-            if _montato(precedente):
-                _stacca(precedente)
         if v.get("recupero_temporaneo"):
             residuo = _percorso(v["recupero_temporaneo"])
             if residuo.exists() and (not residuo.is_dir() or any(residuo.iterdir())):
@@ -1306,8 +1398,9 @@ def togli_protezione(identificatore: str, passphrase: bytes) -> dict:
         _verifica_struttura_bundle(bundle, v["id"])
         area = CASA / "montaggi"
         area.mkdir(mode=0o700, parents=True, exist_ok=True)
-        monte = Path(tempfile.mkdtemp(prefix="togli-", dir=area))
-        staging = Path(tempfile.mkdtemp(prefix="." + fonte.name + ".ripristino-", dir=fonte.parent))
+        # Names the kernel registry accepts, so the folder stays watched meanwhile.
+        monte = Path(tempfile.mkdtemp(prefix=identificatore + "-togli-", dir=area))
+        staging = Path(tempfile.mkdtemp(prefix="." + fonte.name + ".recupero-", dir=fonte.parent))
         v["montaggio_temporaneo"], v["recupero_temporaneo"] = str(monte), str(staging)
         _salva(r)
         sostituita = False
@@ -1391,7 +1484,7 @@ def _identita_timer(v: dict) -> tuple[int, str] | None:
 
 def _timer_corrente(v: dict | None, generation: str, identita: tuple[int, str]) -> bool:
     return bool(v and v["generation"] == generation and _identita_timer(v) == identita
-                and _montato(Path(v["montaggio"])))
+                and _aperta(v))
 
 
 def _attendi_timer(identificatore: str, generation: str, identita: tuple[int, str], secondi: int) -> bool:

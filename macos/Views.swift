@@ -136,7 +136,7 @@ struct FolderCard: View {
                             Button(tr("Forza chiusura…"), role: .destructive) { model.forceClose(folder) }
                         }
                     } else if folder.state == "aperta" {
-                        Button(tr("Mostra nel Finder")) { NSWorkspace.shared.open(URL(fileURLWithPath: folder.source)) }
+                        Button(tr("Mostra nel Finder")) { NSWorkspace.shared.open(URL(fileURLWithPath: folder.openPath)) }
                         Button(tr("Chiudi")) { model.close(folder) }.buttonStyle(.borderedProminent)
                         Button(tr("Forza chiusura…"), role: .destructive) { model.forceClose(folder) }
                     } else {
@@ -157,6 +157,10 @@ struct FolderCard: View {
                 } else if folder.state != "aperta" {
                     Text(tr("Chiusa: nel Finder la vedi vuota e in sola lettura, e nessun programma legge i file. Per lavorarci aprila con la chiave; quello che aggiungi da aperta viene cifrato alla chiusura.")).font(.caption).foregroundStyle(.secondary)
                 } else if folder.state == "aperta" {
+                    if folder.openPath != folder.source {
+                        Text(tr("Questo disco non permette di aprirla al suo posto: i file sono in %@ (Mostra nel Finder). La cartella sul disco resta vuota e in sola lettura.", folder.openPath))
+                            .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                    }
                     Text(tr("Aperta: tu e qualsiasi programma, agenti compresi, potete leggere i file. Si chiude dopo %@ minuti; se un'app la sta usando, Paratia riprova senza forzare.", "\(folder.data.number("minutes"))"))
                         .font(.caption).foregroundStyle(.secondary)
                 }

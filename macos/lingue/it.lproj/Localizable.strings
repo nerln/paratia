@@ -396,3 +396,5 @@
 "File sintetici della prova" = "File sintetici della prova";
 "Cosa è andato storto: %@" = "Cosa è andato storto: %@";
 "Chiusa: nel Finder la vedi vuota e in sola lettura, e nessun programma legge i file. Per lavorarci aprila con la chiave; quello che aggiungi da aperta viene cifrato alla chiusura." = "Chiusa: nel Finder la vedi vuota e in sola lettura, e nessun programma legge i file. Per lavorarci aprila con la chiave; quello che aggiungi da aperta viene cifrato alla chiusura.";
+"Questo disco non permette di aprirla al suo posto: i file sono in %@ (Mostra nel Finder). La cartella sul disco resta vuota e in sola lettura." = "Questo disco non permette di aprirla al suo posto: i file sono in %@ (Mostra nel Finder). La cartella sul disco resta vuota e in sola lettura.";
+"Se perdi la chiave, nessuno può riaprirla, nemmeno Paratia: salvala in un gestore di password." = "Se perdi la chiave, nessuno può riaprirla, nemmeno Paratia: salvala in un gestore di password.";
