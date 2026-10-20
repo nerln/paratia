@@ -130,6 +130,10 @@ def C(tmp_path, monkeypatch):
     spec = importlib.util.spec_from_file_location("cartelle_test", ROOT / "cartelle.py")
     C = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(C)
+    # Never the person's real Trash: a test image would end up there.
+    cestino = tmp_path / "cestino-del-test"
+    cestino.mkdir()
+    C._cestino_di = lambda p: cestino
     return C
 
 
@@ -219,14 +223,21 @@ def test_verifica_rimontaggio_rileva_corruzione(C, D, albero):
     assert C.elenco()[0]["verificato"] is False
 
 
-def test_modifica_fonte_durante_copia_blocca_cancellazione(C, D, albero):
+def test_modifica_fonte_durante_copia_blocca_cancellazione(C, D, albero, tmp_path, monkeypatch):
     fonte, disco = albero
+    cestino = tmp_path / "cestino"
+    cestino.mkdir()
+    monkeypatch.setattr(C, "_cestino_di", lambda p: cestino)
     D.after_copy = lambda: (fonte / "segreto.txt").write_text("cambiato dall'utente")
     with pytest.raises(C.Rifiuto):
         C.proteggi(fonte, disco, KEY)
     assert (fonte / "segreto.txt").read_text() == "cambiato dall'utente"
-    with pytest.raises(C.Rifiuto, match="cambiata"):
-        C.annulla_migrazione(C.elenco()[0]["id"])
+    v = C.elenco()[0]
+    esito = C.annulla_migrazione(v["id"])
+    # The folder keeps the person's edit; the older image is recoverable, not deleted.
+    assert (fonte / "segreto.txt").read_text() == "cambiato dall'utente"
+    assert esito["bundle_eliminato"] is False and esito["bundle_nel_cestino"] == str(cestino / Path(v["bundle"]).name)
+    assert (cestino / Path(v["bundle"]).name).is_dir() and not Path(v["bundle"]).exists()
 
 
 @pytest.mark.parametrize("tipo", ["symlink", "hardlink", "fifo"])
@@ -1352,7 +1363,7 @@ def test_i_nomi_temporanei_di_togli_sono_quelli_che_il_registro_accetta(C, D, al
     assert visti and all(m.startswith(v["id"] + "-") and r.startswith("." + fonte.name + ".recupero-") for m, r in visti)
 
 
-def test_annullare_una_migrazione_cancella_l_immagine_doppia(C, D, albero):
+def test_annullare_manda_l_immagine_nel_cestino_e_lascia_la_cartella(C, D, albero, tmp_path):
     fonte, _ = albero
     D.fallisce = ("detach", 1)
     with pytest.raises(C.Rifiuto) as errore:
@@ -1361,5 +1372,37 @@ def test_annullare_una_migrazione_cancella_l_immagine_doppia(C, D, albero):
     D.fallisce = None
     C._stacca(Path(v["montaggio_temporaneo"]))
     esito = C.annulla_migrazione(v["id"])
-    assert esito["bundle_eliminato"] is True and not Path(v["bundle"]).exists()
+    nel_cestino = tmp_path / "cestino-del-test" / Path(v["bundle"]).name
+    assert esito["bundle_nel_cestino"] == str(nel_cestino) and nel_cestino.is_dir()
+    assert not Path(v["bundle"]).exists() and esito["bundle_eliminato"] is False
     assert (fonte / "segreto.txt").read_text() == "fixture-private-marker"
+
+
+def test_annullare_dopo_un_confronto_riuscito_cancella_solo_il_doppione(C, D, albero, tmp_path):
+    fonte, _ = albero
+    D.fallisce = ("detach", 2)
+    with pytest.raises(C.Rifiuto) as errore:
+        C.proteggi(fonte, None, KEY)
+    D.fallisce = None
+    with C._registro() as r:
+        v = r["cartelle"][errore.value.cartella_id]
+        v["verificato"] = True  # Compared, so the image may be deleted only if the folder matches.
+        C._salva(r)
+    C._stacca(Path(v["montaggio_temporaneo"]))
+    esito = C.annulla_migrazione(v["id"])
+    assert esito["bundle_eliminato"] is True and not Path(v["bundle"]).exists()
+    assert not any((tmp_path / "cestino-del-test").iterdir())
+    assert (fonte / "segreto.txt").read_text() == "fixture-private-marker"
+
+
+def test_annullare_un_tentativo_non_verificato_non_rilegge_la_cartella(C, D, albero, monkeypatch):
+    fonte, _ = albero
+    D.fallisce = ("ditto", 1)
+    with pytest.raises(C.Rifiuto) as errore:
+        C.proteggi(fonte, None, KEY)
+    v = C._carica()["cartelle"][errore.value.cartella_id]
+    assert v["verificato"] is False
+    (fonte / "segreto.txt").write_text("cambiato dopo il tentativo")  # The person's folder, in use.
+    monkeypatch.setattr(C, "_scansiona", lambda *a, **k: pytest.fail("the folder was read"))
+    assert C.annulla_migrazione(v["id"])["stato"] == "annullata" and C.elenco() == []
+    assert (fonte / "segreto.txt").read_text() == "cambiato dopo il tentativo"

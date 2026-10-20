@@ -129,7 +129,8 @@ struct FolderCard: View {
                     Label(conteggioFile(folder.data.number("file"), byteCount(folder.data.number("byte"))), systemImage: "doc.on.doc")
                     Spacer()
                     if folder.isIncomplete {
-                        Button(tr("Recupera la fonte")) { model.askKey(folder, recovery: true) }
+                        // Recovery reads a verified image; an unverified attempt is simply cancelled.
+                        if folder.data.flag("verificato") { Button(tr("Recupera la fonte")) { model.askKey(folder, recovery: true) } }
                         Button(tr("Annulla migrazione")) { model.cancelMigration(folder) }
                         if !folder.data.text("montaggio_temporaneo", fallback: "").isEmpty {
                             Button(tr("Chiudi montaggi")) { model.close(folder) }
@@ -145,7 +146,7 @@ struct FolderCard: View {
                     }
                 }.font(.callout).disabled(model.busy != nil || model.fixtures)
                 if folder.isIncomplete {
-                    Text(tr("La protezione non è completa. Le copie residue vengono conservate per il recupero.")).font(.callout).foregroundStyle(.red)
+                    Text(folder.data.flag("verificato") ? tr("La protezione non è completa. Le copie residue vengono conservate per il recupero.") : tr("La protezione non è riuscita e la tua cartella non è stata toccata: premi Annulla migrazione e potrai usarla come prima.")).font(.callout).foregroundStyle(.red)
                     if let reason = folder.data["errore"] as? String, !reason.isEmpty {
                         Text(tr("Cosa è andato storto: %@", reason)).font(.callout).textSelection(.enabled)
                     }

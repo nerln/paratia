@@ -1262,6 +1262,25 @@ def chiudi_tutte() -> list[dict]:
     return fuori
 
 
+def _cestino_di(p: Path) -> Path:
+    """The Trash the Finder uses for an item on that disk."""
+    if p.stat().st_dev == Path.home().stat().st_dev:
+        return Path.home() / ".Trash"
+    return _punto_montaggio(p) / ".Trashes" / str(os.getuid())
+
+
+def _al_cestino(p: Path) -> Path | None:
+    """Move to the disk's existing Trash without copying; None leaves it where it is."""
+    cestino = _cestino_di(p)
+    if not cestino.is_dir() or cestino.is_symlink():
+        return None
+    destinazione = cestino / p.name
+    if destinazione.exists():
+        destinazione = cestino / (p.stem + " " + time.strftime("%Y%m%d-%H%M%S") + p.suffix)
+    os.rename(p, destinazione)
+    return destinazione
+
+
 def annulla_migrazione(identificatore: str) -> dict:
     """Forget an incomplete attempt only if the complete source still exists."""
     with _registro() as r:
@@ -1273,22 +1292,36 @@ def annulla_migrazione(identificatore: str) -> dict:
             if residuo.exists() and (not residuo.is_dir() or any(residuo.iterdir())):
                 raise Rifiuto(_t("Una copia plaintext di recupero è ancora presente: {residuo}", residuo=residuo))
         fonte = _percorso(v["origine"])
-        if _montato(fonte) or not fonte.is_dir() or _impronta(_scansiona(fonte)) != v["impronta"]:
+        # Before the copy was verified Paratia never moves or deletes the source
+        # (the rename to the backup comes only after "verificato"): the folder is
+        # the person's own, as they left it, and there is nothing to compare.
+        intatta = (not v.get("verificato") and v.get("plaintext_residuo") == v["origine"]
+                   and not Path(v["backup"]).exists())
+        if _montato(fonte) or not fonte.is_dir() or (
+                not intatta and _impronta(_scansiona(fonte)) != v["impronta"]):
             raise Rifiuto(_t("La fonte è cambiata o incompleta: non è sicuro annullare la migrazione."))
         if v.get("montaggio_temporaneo"):
             _stacca(Path(v["montaggio_temporaneo"]))
         del r["cartelle"][identificatore]
         _salva(r)
-        # The source was just found complete and unchanged: the image is only a duplicate.
         bundle = _percorso(v["bundle"])
-        eliminato = False
+        eliminato, cestino = False, None
         if bundle.suffix == ".sparsebundle" and bundle.is_dir() and not bundle.is_symlink():
             try:
-                shutil.rmtree(bundle)
-                eliminato = True
+                if intatta:
+                    # Not compared with the folder: it may hold an older version, so
+                    # it goes to that disk's Trash, where the person can still find it.
+                    spostato = _al_cestino(bundle)
+                    cestino = str(spostato) if spostato else None
+                else:
+                    # Compared just now: the folder is complete and identical, so
+                    # the image is only a duplicate.
+                    shutil.rmtree(bundle)
+                    eliminato = True
             except OSError:
                 pass
-        return _esito_registrato({**v, "stato": "annullata", "bundle_eliminato": eliminato},
+        return _esito_registrato({**v, "stato": "annullata", "bundle_eliminato": eliminato,
+                                  "bundle_nel_cestino": cestino},
                                 "cartella-migrazione-annullata", id=identificatore, origine=str(fonte))
 
 
