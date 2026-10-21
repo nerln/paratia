@@ -508,13 +508,15 @@ final class AppModel: ObservableObject {
         watchedFolders = [["id": "synthetic-watch", "nome": tr("Progetto di esempio"), "origine": tr("/Esempio/3"), "tipo": "sorveglianza", "esiste": true,
                            "raccolta": "rifiutata", "reason_code": "folder_unavailable", "message": tr("Cartella non disponibile. Esito sintetico.")]]
         folders = [FolderItem(data: ["id": "synthetic-1", "nome": tr("Contratti di esempio"), "origine": tr("/Esempio/1"), "bundle": tr("/Esempio/disco/1.sparsebundle"), "stato": "chiusa", "file": 24, "byte": 12_582_912, "minutes": 15]),
-                   FolderItem(data: ["id": "synthetic-2", "nome": tr("Documenti di esempio"), "origine": tr("/Esempio/2"), "bundle": tr("/Esempio/disco/2.sparsebundle"), "stato": "aperta", "file": 9, "byte": 5_242_880, "minutes": 15])]
-        registry = ["installed": true, "running": false, "healthy": false, "needs_root": false,
-                    "needs_update": true, "event_lag_seconds": 3.2, "lines_per_second": 28_400.0, "last_event_age_seconds": 12.0,
+                   FolderItem(data: ["id": "synthetic-2", "nome": tr("Documenti di esempio"), "origine": tr("/Esempio/2"), "bundle": tr("/Esempio/disco/2.sparsebundle"), "stato": "aperta", "file": 9, "byte": 5_242_880, "minutes": 15, "capacita": 48_318_382_080])]
+        // The preview shows the normal state: an active log with notices, not a broken one.
+        registry = ["installed": true, "running": true, "healthy": true, "needs_root": false, "needs_fda": false,
+                    "needs_update": true, "event_lag_seconds": 0.3, "lines_per_second": 28_400.0, "last_event_age_seconds": 1.0,
                     "update_message": tr("Il servizio sintetico usa una build diversa dall'app. Nessuna misura reale."),
-                    "message": tr("Stato sintetico: servizio da aggiornare e cartella rifiutata. Nessuna misura reale."),
-                    "health_reasons": [["code": "event_lag", "message": tr("Gli eventi arrivano in ritardo. Esito sintetico.")],
-                                       ["code": "rejected_folders", "message": tr("Una cartella è rifiutata dal raccoglitore. Esito sintetico.")]],
+                    "message": tr("Registro attivo, con avvisi: leggili sotto."),
+                    "health_reasons": [],
+                    "notices": [["code": "event_lag", "message": tr("Gli eventi arrivano in ritardo. Esito sintetico.")],
+                                ["code": "rejected_folders", "message": tr("Una cartella è rifiutata dal raccoglitore. Esito sintetico.")]],
                     "watch_status": [["id": "synthetic-watch", "status": "rejected", "reason_code": "folder_unavailable", "message": tr("Cartella non disponibile. Esito sintetico.")]],
                     "update_steps": [tr("Chiudi Paratia."), tr("Prepara il bootstrap usando il comando riportato sotto."),
                                      tr("Apri la copia di bootstrap e premi Installa il registro, autorizzando con macOS."),

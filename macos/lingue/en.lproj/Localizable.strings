@@ -318,7 +318,7 @@
 "Sorveglia una cartella…" = "Watch a folder…";
 "Sorveglianza rimossa dalla configurazione. Gli eventi già raccolti restano nel registro." = "Watch removed from the configuration. Events already collected stay in the log.";
 "Stato della ricerca precedente da verificare: ripeti la ricerca." = "Status of the previous search to check: repeat the search.";
-"Stato sintetico: servizio da aggiornare e cartella rifiutata. Nessuna misura reale." = "Synthetic status: service to update and folder refused. No real measurement.";
+"Registro attivo, con avvisi: leggili sotto." = "Registry active, with notices: read them below.";
 "Storico sintetico. Le prove reali attendono le autorizzazioni." = "Synthetic history. The real tests wait for the authorizations.";
 "Tentativo fallito" = "Failed attempt";
 "Togli etichetta" = "Remove label";
