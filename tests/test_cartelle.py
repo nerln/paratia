@@ -108,6 +108,8 @@ class Dischi:
             self.montati[str(monte)] = bundle
             if self.corrompi_al_mount == self.conta[verbo]:
                 (monte / "segreto.txt").write_text("corrotto")
+        elif verbo == "resize" and "-limits" in argv:
+            return subprocess.CompletedProcess(argv, 0, b"20480\t614320\t99999999\n", b"")
         elif verbo == "isencrypted":
             return subprocess.CompletedProcess(argv, 0, plistlib.dumps({"encrypted": True}), b"")
         elif verbo == "imageinfo":
@@ -1406,3 +1408,60 @@ def test_annullare_un_tentativo_non_verificato_non_rilegge_la_cartella(C, D, alb
     monkeypatch.setattr(C, "_scansiona", lambda *a, **k: pytest.fail("the folder was read"))
     assert C.annulla_migrazione(v["id"])["stato"] == "annullata" and C.elenco() == []
     assert (fonte / "segreto.txt").read_text() == "cambiato dopo il tentativo"
+
+
+def test_due_cartelle_con_lo_stesso_nome_si_proteggono_e_si_aprono(C, D, tmp_path, monkeypatch):
+    prima, seconda = tmp_path / "uno" / "documenti", tmp_path / "due" / "documenti"
+    for cartella, testo in ((prima, "primo"), (seconda, "secondo")):
+        cartella.mkdir(parents=True)
+        (cartella / "nota.txt").write_text(testo)
+    a, b = C.proteggi(prima, None, KEY), C.proteggi(seconda, None, KEY)
+    assert a["id"] != b["id"] and a["bundle"] != b["bundle"]
+    C.apri(a["id"], KEY)
+    C.apri(b["id"], KEY)
+    assert (prima / "nota.txt").read_text() == "primo" and (seconda / "nota.txt").read_text() == "secondo"
+    C.chiudi_tutte()
+    monkeypatch.setattr(C, "_senza_proprietari", lambda p: True)  # Same names on an external SSD.
+    pa, pb = C.apri(a["id"], KEY)["montaggio_temporaneo"], C.apri(b["id"], KEY)["montaggio_temporaneo"]
+    assert pa != pb and (Path(pa) / "nota.txt").read_text() == "primo" and (Path(pb) / "nota.txt").read_text() == "secondo"
+    C.chiudi_tutte()
+    for v in (a, b):
+        assert C.togli_protezione(v["id"], KEY)["stato"] == "non-protetta"
+    assert (prima / "nota.txt").read_text() == "primo" and (seconda / "nota.txt").read_text() == "secondo"
+
+
+def test_all_apertura_l_immagine_si_compatta_e_cresce_fino_a_lasciare_un_giga(C, D, albero, monkeypatch):
+    fonte, _ = albero
+    v = C.proteggi(fonte, None, KEY)
+    vero = C.shutil.disk_usage
+    monkeypatch.setattr(C.shutil, "disk_usage", lambda p: vero(p)._replace(free=5 * 1024**3))
+    aperta = C.apri(v["id"], KEY)
+    comandi = [argv for argv, _ in D.chiamate]
+    assert any(a[:2] == [C.HDIUTIL, "compact"] and "-batteryallowed" in a for a in comandi)
+    ridimensiona = [a for a in comandi if a[:2] == [C.HDIUTIL, "resize"] and "-size" in a]
+    attesa = 20480 * 512 + 4 * 1024**3
+    attesa -= attesa % 1024**2
+    assert ridimensiona[-1][ridimensiona[-1].index("-size") + 1] == "%dm" % (attesa // 1024**2)
+    assert aperta["capacita"] == attesa
+    assert all(key == KEY for argv, key in D.chiamate if argv[:2] == [C.HDIUTIL, "resize"])
+
+
+def test_capacita_che_non_si_adatta_non_impedisce_di_aprire(C, D, albero):
+    fonte, _ = albero
+    v = C.proteggi(fonte, None, KEY)
+    D.fallisce = ("compact", D.conta["compact"] + 1)
+    assert C.apri(v["id"], KEY)["stato"] == "aperta"
+
+
+def test_messaggi_precisi_se_un_file_sparisce_o_non_si_puo_leggere(C, tmp_path):
+    radice = tmp_path / "r"
+    (radice / "chiusa").mkdir(parents=True)
+    (radice / "chiusa" / "x.txt").write_text("x")
+    os.chmod(radice / "chiusa", 0)
+    try:
+        with pytest.raises(C.Rifiuto, match="permesso di leggere «chiusa"):
+            C._scansiona(radice)
+    finally:
+        os.chmod(radice / "chiusa", 0o700)
+    with pytest.raises(C.Rifiuto, match="«fantasma.txt» è sparito"):
+        C._tutti_xattr(radice / "fantasma.txt")

@@ -258,6 +258,11 @@ final class AppModel: ObservableObject {
             defer { sensitive.resetBytes(in: 0..<sensitive.count) }
             let result = try await self.worker.request(request.action, parameters: request.parameters, key: sensitive)
             self.captureWarnings(result)
+            if request.action == "cartelle.apri", let opened = result as? Record {
+                // An opened folder is shown right away; on a disk without owners it lives in Paratia's area.
+                let path = opened.text("montaggio_temporaneo", fallback: opened.text("origine", fallback: ""))
+                if !path.isEmpty { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
+            }
             if self.warning == nil { self.notice = request.action == "banco.run" ? tr("Prova terminata. Consulta gli esiti e le eventuali fasi in attesa.") : tr("Operazione completata.") }
             try await self.refresh()
         }

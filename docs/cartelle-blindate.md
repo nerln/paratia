@@ -120,3 +120,9 @@ usano un backend finto e non montano volumi.
 `tests/prova_cartelle_macos.py` collauda l'intera migrazione con file sintetici,
 un attributo esteso e un resource fork. Per questa sola prova usa una destinazione temporanea interna, che è anche il caso
 predefinito: non serve più un disco esterno. La prova termina richiusa e rimuove i dati temporanei.
+
+## Spazio dentro una cartella aperta
+
+L'immagine cifrata è un *sparsebundle*: sul disco occupa solo quello che contiene. A ogni apertura Paratia la compatta, così lo spazio dei file cancellati torna al disco, e la ridimensiona a «dati + spazio libero del disco − 1 GB». Dentro la cartella aperta vedi quindi quasi tutto lo spazio libero, e una copia troppo grande viene rifiutata dal Finder prima di iniziare: sul disco resta sempre almeno 1 GB. Se mentre è aperta altre app riempiono il disco fin sotto 512 MB, Paratia la chiude come alla scadenza, senza forzare.
+
+Misurato su immagini APFS cifrate: un'immagine montata non si ridimensiona; smontata cresce e si riduce con il volume dentro, e rifiuta di scendere sotto i dati. Un volume pieno ferma le scritture con «disco pieno» senza danni, e il file cifrato non supera mai la capacità.

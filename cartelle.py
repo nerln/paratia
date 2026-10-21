@@ -451,7 +451,14 @@ def _tutti_xattr(p: Path) -> list[str]:
     lib = _libc()
     n = lib.listxattr(os.fsencode(p), None, 0, 1)
     if n < 0:
-        raise Rifiuto(_t("Impossibile leggere gli attributi estesi di un elemento."))
+        codice = ctypes.get_errno()
+        if codice in (errno.ENOTSUP, errno.EOPNOTSUPP):
+            return []  # A file system without extended attributes.
+        if codice == errno.ENOENT:
+            raise Rifiuto(_t("«{nome}» è sparito mentre Paratia leggeva la cartella: un'app la sta modificando. Chiudila e riprova.", nome=p.name))
+        if codice in (errno.EACCES, errno.EPERM):
+            raise Rifiuto(_t("Paratia non ha il permesso di leggere «{nome}». Nel Finder, con Informazioni, dai a te lettura e scrittura, poi riprova.", nome=p.name))
+        raise Rifiuto(_t("Impossibile leggere gli attributi estesi di «{nome}» (errore {codice}).", nome=p.name, codice=errno.errorcode.get(codice, codice)))
     b = ctypes.create_string_buffer(n)
     if lib.listxattr(os.fsencode(p), b, n, 1) != n:
         raise Rifiuto(_t("Gli attributi estesi sono cambiati durante la verifica."))
@@ -552,6 +559,14 @@ def _scansiona(radice: Path, esclusi_root=()) -> dict:
     manifest = {}
 
     def visita(p: Path):
+        try:
+            leggi(p)
+        except FileNotFoundError as e:
+            raise Rifiuto(_t("«{nome}» è sparito mentre Paratia leggeva la cartella: un'app la sta modificando. Chiudila e riprova.", nome=str(p.relative_to(radice)))) from e
+        except PermissionError as e:
+            raise Rifiuto(_t("Paratia non ha il permesso di leggere «{nome}». Nel Finder, con Informazioni, dai a te lettura e scrittura, poi riprova.", nome=str(p.relative_to(radice)))) from e
+
+    def leggi(p: Path):
         s = p.lstat()
         relativo = str(p.relative_to(radice))
         if stat.S_ISDIR(s.st_mode):
@@ -572,7 +587,7 @@ def _scansiona(radice: Path, esclusi_root=()) -> dict:
                                   "firma": _firma(s), "modo": stat.S_IMODE(s.st_mode),
                                   "mtime": s.st_mtime_ns, **_metadati(p)}
         else:
-            raise Rifiuto(_t("La fonte contiene collegamenti, hard link o file speciali."))
+            raise Rifiuto(_t("La cartella contiene un collegamento, un hard link o un file speciale, che Paratia non cifra: «{nome}». Spostalo fuori, poi riprova.", nome=relativo))
 
     visita(radice)
     return manifest
@@ -1150,6 +1165,40 @@ def prepara_apertura(identificatore: str, minutes: int = 15) -> dict:
     return _prepara_apertura(_voce(_carica(), identificatore), _minuti(minutes))
 
 
+# What always stays free on the disk that holds an image while it is open.
+RISERVA_DISCO = 1024**3
+SETTORE = 512
+
+
+def _adatta_capacita(bundle: Path, passphrase: bytes) -> int | None:
+    """Before opening: give back the space of deleted files, then size the volume
+    so it can grow into its disk's free space minus RISERVA_DISCO.
+
+    Measured on encrypted APFS sparsebundles: the image cannot be resized while
+    attached; detached, `resize` grows or shrinks the volume inside with it and
+    refuses (EINVAL) to go below the data; the bundle never takes more disk than
+    its capacity, and a full volume stops writes with "disk full" inside. Space
+    freed inside returns to the disk only with `compact`. Neither step is needed
+    to open: on any failure the folder opens with the capacity it had.
+    """
+    try:
+        _comando([HDIUTIL, "compact", str(bundle), "-stdinpass", "-batteryallowed", "-quiet"], passphrase)
+    except Rifiuto:
+        pass
+    try:
+        limiti = _comando([HDIUTIL, "resize", "-limits", "-stdinpass", str(bundle)], passphrase)
+        minimo, attuale = (int(x) * SETTORE for x in limiti.stdout.split()[:2])
+        libero = shutil.disk_usage(bundle.parent).free
+        voluta = minimo + max(0, libero - RISERVA_DISCO)
+        voluta -= voluta % (1024**2)
+        if abs(voluta - attuale) >= 64 * 1024**2:
+            _comando([HDIUTIL, "resize", "-size", "%dm" % (voluta // 1024**2), "-stdinpass", str(bundle)], passphrase)
+            attuale = voluta
+        return attuale
+    except (Rifiuto, ValueError, OSError):
+        return None
+
+
 def apri(identificatore: str, passphrase: bytes, minutes: int = 15) -> dict:
     minutes = _minuti(minutes)
     with _registro() as r:
@@ -1173,6 +1222,8 @@ def apri(identificatore: str, passphrase: bytes, minutes: int = 15) -> dict:
         else:
             punto = monte
         try:
+            _verifica_chiave(bundle, passphrase)
+            capacita = _adatta_capacita(bundle, passphrase)
             _attacca(bundle, punto, passphrase)
         except Rifiuto:
             if punto != monte:
@@ -1182,6 +1233,8 @@ def apri(identificatore: str, passphrase: bytes, minutes: int = 15) -> dict:
             _audit("tentativo-fallito", azione="apertura", cartella=identificatore,
                    percorso=str(monte))
             raise
+        if capacita is not None:
+            v["capacita"] = capacita
         v.update(stato="aperta", minutes=minutes, generation=uuid.uuid4().hex,
                  scadenza=time.time() + minutes * 60,
                  timer={"owner": os.getuid(), "id": uuid.uuid4().hex})
@@ -1523,12 +1576,23 @@ def _timer_corrente(v: dict | None, generation: str, identita: tuple[int, str]) 
 def _attendi_timer(identificatore: str, generation: str, identita: tuple[int, str], secondi: int) -> bool:
     """Return false as soon as a manual close invalidates this timer's token."""
     scadenza = time.monotonic() + secondi
+    controllo_disco = 0.0
     while True:
-        if not _timer_corrente(_carica()["cartelle"].get(identificatore), generation, identita):
+        v = _carica()["cartelle"].get(identificatore)
+        if not _timer_corrente(v, generation, identita):
             return False
         residuo = scadenza - time.monotonic()
         if residuo <= 0:
             return True
+        if time.monotonic() >= controllo_disco:
+            # The capacity left RISERVA_DISCO free at opening; if other apps eat
+            # the disk meanwhile, close (without forcing) before it fills up.
+            controllo_disco = time.monotonic() + 5
+            try:
+                if shutil.disk_usage(Path(v["bundle"]).parent).free < RISERVA_DISCO // 2:
+                    return True
+            except OSError:
+                pass
         time.sleep(min(0.25, residuo))
 
 

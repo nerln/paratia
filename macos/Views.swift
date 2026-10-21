@@ -158,6 +158,10 @@ struct FolderCard: View {
                 } else if folder.state != "aperta" {
                     Text(tr("Chiusa: nel Finder la vedi vuota e in sola lettura, e nessun programma legge i file. Per lavorarci aprila con la chiave; quello che aggiungi da aperta viene cifrato alla chiusura.")).font(.caption).foregroundStyle(.secondary)
                 } else if folder.state == "aperta" {
+                    if let capacity = folder.data["capacita"] as? NSNumber, capacity.int64Value > 0 {
+                        Text(tr("Spazio dentro: fino a %@, lasciando sempre 1 GB libero sul disco. Si adatta da solo a ogni apertura.", ByteCountFormatter.string(fromByteCount: capacity.int64Value, countStyle: .file)))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     if folder.openPath != folder.source {
                         Text(tr("Questo disco non permette di aprirla al suo posto: i file sono in %@ (Mostra nel Finder). La cartella sul disco resta vuota e in sola lettura.", folder.openPath))
                             .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)

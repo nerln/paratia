@@ -399,3 +399,4 @@
 "Questo disco non permette di aprirla al suo posto: i file sono in %@ (Mostra nel Finder). La cartella sul disco resta vuota e in sola lettura." = "Este disco no permite abrirla en su sitio: los archivos están en %@ (Mostrar en el Finder). La carpeta del disco sigue vacía y de solo lectura.";
 "Se perdi la chiave, nessuno può riaprirla, nemmeno Paratia: salvala in un gestore di password." = "Si pierdes la clave, nadie podrá volver a abrirla, ni siquiera Paratia: guárdala en un gestor de contraseñas.";
 "La protezione non è riuscita e la tua cartella non è stata toccata: premi Annulla migrazione e potrai usarla come prima." = "La protección no ha salido bien y tu carpeta no se ha tocado: pulsa Cancelar migración y podrás usarla como antes.";
+"Spazio dentro: fino a %@, lasciando sempre 1 GB libero sul disco. Si adatta da solo a ogni apertura." = "Espacio dentro: hasta %@, dejando siempre 1 GB libre en el disco. Se ajusta solo en cada apertura.";
