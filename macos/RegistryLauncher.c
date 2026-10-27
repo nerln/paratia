@@ -18,9 +18,17 @@ extern void ParatiaRunGUI(void);
 static volatile sig_atomic_t child_pid = 0;
 static volatile sig_atomic_t pending_signal = 0;
 
+static void kill_child(int number) {
+    (void)number;
+    if (child_pid > 0) kill((pid_t)child_pid, SIGKILL);
+}
+
 static void forward_signal(int number) {
     pending_signal = number;
     if (child_pid > 0) kill((pid_t)child_pid, number);
+    /* launchd kills this launcher after its 20 s exit timeout, and a child
+     * still running would be orphaned with all its memory: 10 s, then kill. */
+    alarm(10);
 }
 
 static int protected_path(const char *path) {
@@ -67,6 +75,8 @@ static int run_registry(int argc, char **argv) {
     sigemptyset(&action.sa_mask);
     sigaction(SIGTERM, &action, NULL);
     sigaction(SIGINT, &action, NULL);
+    action.sa_handler = kill_child;
+    sigaction(SIGALRM, &action, NULL);
     char *arguments[] = {python, "-I", "-S", (char *)script, "--uid", argv[3], NULL};
     char *environment[] = {"PATH=/usr/bin:/bin:/usr/sbin:/sbin",
                           "PARATIA_REGISTRY_LAUNCHER=app", NULL};
