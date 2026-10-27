@@ -165,6 +165,8 @@ class BundleInstallerTests(unittest.TestCase):
         self.assertEqual(plan["argv"][:3], ["/protected/ApplePython", "-I", "-S"])
         self.assertEqual(plan["plist"]["ProgramArguments"], [
             str(self.support / "Paratia.app" / "Contents" / "MacOS" / "Paratia"), "--registro", "--uid", str(self.uid)])
+        # A background job runs at priority 4 and falls behind eslogger on a busy Mac.
+        self.assertEqual(plan["plist"]["ProcessType"], "Standard")
         self.assertEqual(plan["fda_entry"], "/Applications/Paratia.app")
         self.assertTrue(plan["fda_regrant_after_build"])
         self.assertFalse(self.commands)

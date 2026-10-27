@@ -239,7 +239,10 @@ def plist(uid, executable=None):
                                  "--registro", "--uid", str(uid)],
             "UserName": "root", "RunAtLoad": True,
             "KeepAlive": {"SuccessfulExit": False}, "ThrottleInterval": 30,
-            "ProcessType": "Background", "Umask": 0o077,
+            # Not "Background": on 27/10/2026 that ran the collector and its
+            # eslogger at priority 4, starved whenever the Mac was busy, and
+            # eslogger piled up unread events to the memory cap every 7 minutes.
+            "ProcessType": "Standard", "Umask": 0o077,
             "WorkingDirectory": str(SUPPORT),
             "StandardOutPath": "/dev/null", "StandardErrorPath": "/dev/null"}
 
