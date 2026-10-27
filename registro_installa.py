@@ -239,10 +239,11 @@ def plist(uid, executable=None):
                                  "--registro", "--uid", str(uid)],
             "UserName": "root", "RunAtLoad": True,
             "KeepAlive": {"SuccessfulExit": False}, "ThrottleInterval": 30,
-            # Not "Background": on 27/10/2026 that ran the collector and its
-            # eslogger at priority 4, starved whenever the Mac was busy, and
-            # eslogger piled up unread events to the memory cap every 7 minutes.
-            "ProcessType": "Standard", "Umask": 0o077,
+            # Measured on 27/10/2026 on a Mac at load 194: as "Background" the
+            # collector and its eslogger ran at priority 4, as "Standard" at 20,
+            # and both got 6-12% of a core while eslogger piled up unread events
+            # to the memory cap every 7 minutes. Apps run at 31 and above.
+            "ProcessType": "Interactive", "Umask": 0o077,
             "WorkingDirectory": str(SUPPORT),
             "StandardOutPath": "/dev/null", "StandardErrorPath": "/dev/null"}
 

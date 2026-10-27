@@ -332,8 +332,12 @@ def impronta_memoria(pid):
 
 
 # Above these the collector writes why, and exits so that launchd restarts it clean.
+# eslogger keeps every event it has not yet written: on 27/10/2026, under a
+# simulator boot, it grew by 20 MB a second. Checked every 2 s, so it stays
+# near 512 MB; a lagging eslogger slows down further once its backlog compresses.
 TETTO_MEMORIA_RACCOGLITORE = 512 * 1024 * 1024
-TETTO_MEMORIA_ESLOGGER = 1024 * 1024 * 1024
+TETTO_MEMORIA_ESLOGGER = 512 * 1024 * 1024
+CONTROLLO_MEMORIA = 2.0
 
 
 def oltre_il_tetto(proprio, eslogger):
@@ -589,7 +593,7 @@ def main(argv=None):
             if osservatore.schema_fatale:
                 break
             ora = time.monotonic()
-            if ora - ultimo_controllo_memoria >= 10:
+            if ora - ultimo_controllo_memoria >= CONTROLLO_MEMORIA:
                 ultimo_controllo_memoria = ora
                 proprio, di_eslogger = impronta_memoria(os.getpid()), impronta_memoria(processo.pid)
                 informazioni.update(memory_mb=round(proprio / 1048576) if proprio else None,
