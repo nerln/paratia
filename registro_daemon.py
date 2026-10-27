@@ -32,6 +32,8 @@ CAMPI_RADICI = ("origine", "bundle", "montaggio", "recupero_temporaneo",
 # Metadata extraction is conservative: unfamiliar/duplicate/escaped headers go
 # through the full parser, rather than introducing gaps in loss detection.
 _HEADER = re.compile(br'"(schema_version|event_type|global_seq_num|seq_num|time)"\s*:\s*("(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?|true|false|null)')
+# A real top-level key: inside a JSON string its quotes would be escaped.
+_TIPO = re.compile(br'"event_type"\s*:\s*(\d{1,20}|"ES_EVENT_TYPE_NOTIFY_[A-Z_]+")')
 _UNICODE = re.compile(br'\\u[dD][89aAbB][0-9a-fA-F]{2}\\u[dD][c-fC-F][0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}')
 _ORA_EVENTO = re.compile(r"([0-9]{4}-[0-9]{2}-[0-9]{2}[Tt ][0-9]{2}:[0-9]{2}:[0-9]{2})(?:[.,]([0-9]{1,9}))?(Z|z|[+-][0-9]{2}(?::?[0-9]{2})?)")
 # File types whose unrelated lines are discarded after reading only the header.
@@ -53,6 +55,19 @@ def _varianti_radice(radice):
     if normale.startswith(("/private/tmp/", "/private/var/", "/private/etc/")) or normale in ("/private/tmp", "/private/var", "/private/etc"):
         varianti.add(normale[len("/private"):])
     return varianti
+
+
+def _aghi_minimi(aghi):
+    """The needles to search in a block: as written and with JSON's escaped slash.
+
+    A needle that contains another one is dropped: /System/Volumes/Data/X is
+    found by looking for /X. Fewer passes over each block, the same matches.
+    """
+    tenuti = []
+    for ago in sorted({a for p in aghi for a in (p, p.replace(b"/", b"\\/"))}, key=len):
+        if not any(t in ago for t in tenuti):
+            tenuti.append(ago)
+    return tuple(tenuti)
 
 
 def _metadati_grezzi(riga):
@@ -131,6 +146,7 @@ class FlussoEslogger:
         self.inizio = self.ultimo_campione = monotonic()
         self.contatore_campione = 0
         self.raw_lines = self.filtered_lines = self.parsed_lines = 0
+        self.accettate = 0
         self.lines_per_second = 0.0
         self.last_event_received_at = None
         self.last_event_time = None
@@ -166,6 +182,22 @@ class FlussoEslogger:
                                     self.codifica_incerta = True
         self.radici = tuple(sorted(radici, key=len, reverse=True))
         self.madri = tuple(sorted(madri - radici, key=len, reverse=True))
+        self.aghi_blocco = _aghi_minimi(self.radici)
+        self.aghi_madri_blocco = _aghi_minimi(self.radici + self.madri)
+
+    def _blocco_pertinente(self, blocco, aghi):
+        """``_pertinente`` over a whole block, without copying it for the common spellings."""
+        if any(p in blocco for p in aghi):
+            return True
+        if b"\\u" in blocco:
+            return self._pertinente(blocco, con_madri=aghi is self.aghi_madri_blocco)
+        if not blocco.isascii():
+            try:
+                canonico = unicodedata.normalize("NFC", blocco.decode("utf8")).encode("utf8")
+            except UnicodeError:
+                return True
+            return any(p in canonico for p in aghi)
+        return False
 
     def _pertinente(self, riga, con_madri=True):
         aghi = self.radici + self.madri if con_madri else self.radici
@@ -204,7 +236,71 @@ class FlussoEslogger:
             self.osservatore.ricevi(msg)
         self.last_event_received_at = self.wall_time()
         self.last_event_time = msg.get("time") if isinstance(msg, dict) and isinstance(msg.get("time"), str) else None
+        self.accettate += 1
         return msg
+
+    def smista(self, blocco):
+        """The lines of ``blocco`` to decode one by one, through ``ricevi``.
+
+        The others are accounted here in bulk: a run of file events that names
+        no watched path, whose global sequence numbers follow on without a gap.
+        Measured on 27/10/2026: one line at a time the collector kept up with
+        16,000 lines a second at a full core, while a busy Mac sent 72,000.
+        Anything uncertain falls back to the line-by-line path.
+        """
+        righe = blocco.count(b"\n")
+        if righe < 8 or self.codifica_incerta or self._blocco_pertinente(blocco, self.aghi_blocco):
+            yield from blocco.splitlines(keepends=True)
+            return
+        tipi = list(_TIPO.finditer(blocco))
+        if len(tipi) != righe:
+            yield from blocco.splitlines(keepends=True)
+            return
+        madri, inizio = None, 0
+        for m in tipi:
+            tipo = int(m[1]) if m[1].isdigit() else m[1][1:-1].decode("ascii")
+            if tipo in _FILE_TYPES:
+                if tipo not in _TIPI_CON_MADRE:
+                    continue
+                # A parent needle only matters to create and rename (see _pertinente).
+                if madri is None:
+                    madri = bool(self.madri) and self._blocco_pertinente(blocco, self.aghi_madri_blocco)
+                if not madri:
+                    continue
+            # Exec, fork and exit feed the process lineage: always decoded.
+            a = blocco.rfind(b"\n", 0, m.start()) + 1
+            b = blocco.find(b"\n", m.end()) + 1
+            if a < inizio:
+                yield from blocco[inizio:].splitlines(keepends=True)
+                return
+            yield from self._in_blocco(blocco[inizio:a])
+            yield blocco[a:b]
+            inizio = b
+        yield from self._in_blocco(blocco[inizio:])
+
+    def _in_blocco(self, tratto):
+        righe = tratto.count(b"\n")
+        if righe < 2:
+            yield from tratto.splitlines(keepends=True)
+            return
+        primo = _metadati_grezzi(tratto[:tratto.find(b"\n") + 1])
+        ultimo = _metadati_grezzi(tratto[tratto.rfind(b"\n", 0, len(tratto) - 1) + 1:])
+        g0 = primo.get("global_seq_num") if primo else None
+        g1 = ultimo.get("global_seq_num") if ultimo else None
+        prima = self.osservatore.globale
+        if g0 is None or g1 is None or g1 - g0 + 1 != righe or (prima is not None and g0 != prima + 1):
+            # A gap, a restart or an unfamiliar header: located line by line.
+            yield from tratto.splitlines(keepends=True)
+            return
+        self.osservatore.globale = g1
+        self.osservatore.rileva_perdite = True
+        # Per-type numbers are only a fallback for messages without a global one.
+        self.osservatore.sequenze.clear()
+        self.raw_lines += righe
+        self.filtered_lines += righe
+        self.accettate += righe
+        self.last_event_received_at = self.wall_time()
+        self.last_event_time = ultimo.get("time") if isinstance(ultimo.get("time"), str) else None
 
     def metriche(self):
         ora, mono = self.wall_time(), self.monotonic()
@@ -229,19 +325,24 @@ class LettoreTubo:
 
     Measured on 27/10/2026: with the decoder half an hour behind, eslogger held
     32 GB of events it could not hand over. A thread now reads the pipe as soon
-    as it has data, and keeps whole lines for the decoder up to ``limite``
-    bytes. Beyond that a line is dropped and counted: its gap in eslogger's
-    sequence numbers then shows as lost events, which is declared, instead of
-    memory growing without bound on either side.
+    as it has data, and keeps blocks of whole lines for the decoder up to
+    ``limite`` bytes. Beyond that a line is dropped and counted: its gap in
+    eslogger's sequence numbers then shows as lost events, which is declared,
+    instead of memory growing without bound on either side. Blocks, not lines:
+    splitting every line in Python cost the reader as much as the decoder.
     """
     def __init__(self, fd, limite=64 * 1024 * 1024, massimo_riga=MAX_RIGA):
         self.fd, self.limite, self.massimo_riga = fd, limite, massimo_riga
-        self.righe, self.byte = collections.deque(), 0
+        self.blocchi, self.byte = collections.deque(), 0
         self.scartate = self.troppo_grandi = 0
         self.finito = False
         self._condizione = threading.Condition()
         self._thread = threading.Thread(target=self._leggi, name="paratia-eslogger", daemon=True)
         self._thread.start()
+
+    def _troppo_grande(self):
+        with self._condizione:
+            self.troppo_grandi += 1
 
     def _leggi(self):
         parziale, scarta = b"", False
@@ -250,27 +351,28 @@ class LettoreTubo:
                 pezzo = os.read(self.fd, 262144)
                 if not pezzo:
                     break
-                complete = []
-                for parte in pezzo.splitlines(keepends=True):
+                fine = pezzo.rfind(b"\n")
+                if fine < 0:
                     if not scarta:
-                        parziale += parte
+                        parziale += pezzo
                         if len(parziale) > self.massimo_riga:
                             parziale, scarta = b"", True
-                            with self._condizione:
-                                self.troppo_grandi += 1
-                    if parte.endswith(b"\n"):
-                        if not scarta:
-                            complete.append(parziale)
-                        parziale, scarta = b"", False
-                if complete:
-                    with self._condizione:
-                        for riga in complete:
-                            if self.byte + len(riga) > self.limite:
-                                self.scartate += 1
-                            else:
-                                self.righe.append(riga)
-                                self.byte += len(riga)
-                        self._condizione.notify()
+                            self._troppo_grande()
+                    continue
+                primo = pezzo.find(b"\n") + 1
+                if scarta or len(parziale) + primo > self.massimo_riga:
+                    # The end of a line over the limit: drop it, keep the lines after it.
+                    if not scarta:
+                        self._troppo_grande()
+                    blocco = pezzo[primo:fine + 1]
+                else:
+                    blocco = parziale + pezzo[:fine + 1]
+                parziale, scarta = pezzo[fine + 1:], False
+                if len(parziale) > self.massimo_riga:
+                    parziale, scarta = b"", True
+                    self._troppo_grande()
+                if blocco:
+                    self._accoda(blocco)
         except OSError:
             pass
         finally:
@@ -279,22 +381,37 @@ class LettoreTubo:
                 self.resto = bool(parziale)
                 self._condizione.notify()
 
-    def prendi(self, attesa=1.0, quante=20000):
-        """Up to ``quante`` lines, waiting at most ``attesa`` seconds for the first."""
+    def _accoda(self, blocco):
         with self._condizione:
-            if not self.righe and not self.finito:
+            if self.byte + len(blocco) <= self.limite:
+                self.blocchi.append(blocco)
+                self.byte += len(blocco)
+            else:
+                # Full: keep the whole lines that still fit, count the others.
+                for riga in blocco.splitlines(keepends=True):
+                    if self.byte + len(riga) > self.limite:
+                        self.scartate += 1
+                    else:
+                        self.blocchi.append(riga)
+                        self.byte += len(riga)
+            self._condizione.notify()
+
+    def prendi(self, attesa=1.0, quanti=64):
+        """Up to ``quanti`` blocks of whole lines, waiting at most ``attesa`` seconds for the first."""
+        with self._condizione:
+            if not self.blocchi and not self.finito:
                 self._condizione.wait(attesa)
             presi = []
-            while self.righe and len(presi) < quante:
-                riga = self.righe.popleft()
-                self.byte -= len(riga)
-                presi.append(riga)
+            while self.blocchi and len(presi) < quanti:
+                blocco = self.blocchi.popleft()
+                self.byte -= len(blocco)
+                presi.append(blocco)
             return presi
 
     @property
     def esaurito(self):
         with self._condizione:
-            return self.finito and not self.righe
+            return self.finito and not self.blocchi
 
 
 class _RusageInfoV2(ctypes.Structure):
@@ -572,14 +689,18 @@ def main(argv=None):
                 sink(R._diagnostico("registro-cartelle-illeggibile"))
                 # Explicitly unhealthy on an unexpected loader failure; owned
                 # file/entry refusals are handled independently by the loader.
-            for riga in lettore.prendi(attesa=1.0):
-                try:
-                    flusso.ricevi(riga)
+            for blocco in lettore.prendi(attesa=1.0):
+                for riga in flusso.smista(blocco):
+                    try:
+                        flusso.ricevi(riga)
+                    except (ValueError, TypeError):
+                        osservatore.sano = False
+                        sink(R._diagnostico("json-eslogger-non-valido"))
+                    if osservatore.schema_fatale:
+                        break
+                if flusso.accettate:
                     visto = True
                     informazioni["needs_fda"] = False
-                except (ValueError, TypeError):
-                    osservatore.sano = False
-                    sink(R._diagnostico("json-eslogger-non-valido"))
                 if osservatore.schema_fatale:
                     break
             if lettore.troppo_grandi > troppo_grandi_viste:

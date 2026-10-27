@@ -550,8 +550,8 @@ def test_reader_drains_the_pipe_and_declares_what_it_cannot_keep():
     os.close(scrittura)
     while not lettore.finito:
         time.sleep(0.01)
-    assert lettore.byte <= 2000 and len(lettore.righe) == 20 and lettore.scartate == 480
-    assert lettore.prendi(attesa=0) == [riga] * 20 and lettore.esaurito
+    assert lettore.byte <= 2000 and sum(b.count(b"\n") for b in lettore.blocchi) == 20 and lettore.scartate == 480
+    assert b"".join(lettore.prendi(attesa=0)) == riga * 20 and lettore.esaurito
     os.close(lettura)
 
 
@@ -595,3 +595,63 @@ def test_configuration_reloads_keep_no_memory(tmp_path, monkeypatch):
     tracemalloc.stop()
     # Before the fix each reload kept a ctypes class: about 49 KB, 14 MB here.
     assert cresciuta < 1024 * 1024, cresciuta
+
+
+def test_blocks_give_the_same_records_losses_and_lineage_as_line_by_line():
+    root = "/Users/paratia-synthetic/Kit/folder-test"
+    rows, seq = [], 0
+
+    def add(path, kind="open", slash=False):
+        nonlocal seq
+        seq += 1
+        line = raw(message(path, seq, kind))
+        rows.append((line.replace(b"/", b"\\/") if slash else line) + b"\n")
+
+    for i in range(20):
+        add("/System/Library/unrelated-%d" % i)
+    add("/System/Library/unrelated", "exec")
+    add("/System/Library/unrelated", "fork")
+    for i in range(18):
+        add("/Users/other/file-%d" % i, slash=i % 2 == 0)
+    add(root + "/inside.txt")
+    for i in range(19):
+        add("/Users/other/perché-%d" % i)
+    creato = message(root, seq + 1, "open")
+    creato["event_type"] = "ES_EVENT_TYPE_NOTIFY_CREATE"
+    creato["event"] = {"create": {"destination_type": 1, "destination": {"new_path": {
+        "dir": {"path": os.path.dirname(root)}, "filename": "folder-test", "mode": 493}}}}
+    seq += 1
+    rows.append(raw(creato) + b"\n")
+    for i in range(19):
+        add("/Users/other/after-%d" % i)
+    seq += 5  # eslogger lost five events here
+    for i in range(25):
+        add("/Users/other/gap-%d" % i)
+    add(root + "/escaped.txt", slash=True)
+    add(root.replace("K", "K") + "/kelvin.txt")  # NFC turns the Kelvin sign into K
+    add("/System/Library/unrelated", "exit")
+    for i in range(30):
+        add("/Users/other/tail-%d" % i)
+
+    def outcome(flow, observer, records):
+        senza_ora = [{k: v for k, v in r.items() if k not in ("quando", "registrato_il")} for r in records]
+        return (senza_ora, observer.persi, observer.globale, flow.raw_lines, flow.parsed_lines,
+                flow.filtered_lines, flow.accettate, sorted(observer.discendenza.processi))
+
+    flow, observer, records = stream(root, wall_time=lambda: 1000.0)
+    for line in rows:
+        flow.ricevi(line)
+    one_by_one = outcome(flow, observer, records)
+    assert one_by_one[1] == 5 and len([r for r in records if r.get("evento") == "open"]) == 3
+
+    for size in (len(rows), 50, 13, 7):
+        flow, observer, records = stream(root, wall_time=lambda: 1000.0)
+        for start in range(0, len(rows), size):
+            for line in flow.smista(b"".join(rows[start:start + size])):
+                flow.ricevi(line)
+        assert outcome(flow, observer, records) == one_by_one, size
+
+    # Unrelated opens only: nothing to decode, the sequence still advances.
+    flow, observer, records = stream(root)
+    assert list(flow.smista(b"".join(rows[:20]))) == []
+    assert flow.raw_lines == flow.filtered_lines == 20 and observer.globale == 20 and not records
