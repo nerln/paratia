@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import collections
 import concurrent.futures
+import ctypes
 import datetime
 import fcntl
 import importlib.util
@@ -16,6 +18,7 @@ import signal
 import stat
 import subprocess
 import sys
+import threading
 import time
 import unicodedata
 from pathlib import Path
@@ -36,6 +39,7 @@ _ORA_EVENTO = re.compile(r"([0-9]{4}-[0-9]{2}-[0-9]{2}[Tt ][0-9]{2}:[0-9]{2}:[0-
 # subscribed: a stray unrelated line of those types is dropped cheaply, not decoded.
 _FILE_TYPES = (10, 12, 13, 20, 22, 23, 25, 32, 33, 41, 43,
                *("ES_EVENT_TYPE_NOTIFY_" + n for n in ("OPEN", "CLOSE", "CREATE", "MMAP", "MOUNT", "UNMOUNT", "RENAME", "UNLINK", "WRITE", "TRUNCATE", "LOOKUP")))
+_TIPI_CON_MADRE = (13, 25, "ES_EVENT_TYPE_NOTIFY_CREATE", "ES_EVENT_TYPE_NOTIFY_RENAME")
 sys.dont_write_bytecode = True
 
 
@@ -133,7 +137,7 @@ class FlussoEslogger:
         self.ricompila_radici()
 
     def ricompila_radici(self):
-        radici = set()
+        radici, madri = set(), set()
         self.codifica_incerta = False
         for voce in self.osservatore.protetti:
             for campo in CAMPI_RADICI:
@@ -148,25 +152,30 @@ class FlussoEslogger:
                 for variante in _varianti_radice(p):
                     # create/rename split a newly created watched directory into
                     # its parent and filename. Retain its parent as a candidate.
-                    for candidato in (variante, os.path.dirname(variante)):
+                    # The parent matters only to create and rename: matching it
+                    # for every event decoded all the activity of a whole disk
+                    # whenever a watched folder sat at its root (27/10/2026).
+                    for candidato, insieme in ((variante, radici), (os.path.dirname(variante), madri)):
                         if candidato and candidato != "/":
                             for forma in ("NFC", "NFD"):
                                 try:
-                                    radici.add(unicodedata.normalize(forma, candidato).encode("utf8"))
+                                    insieme.add(unicodedata.normalize(forma, candidato).encode("utf8"))
                                 except UnicodeError:
                                     # Surrogate-escaped filesystem paths do not
                                     # have a trustworthy UTF-8 needle.
                                     self.codifica_incerta = True
         self.radici = tuple(sorted(radici, key=len, reverse=True))
+        self.madri = tuple(sorted(madri - radici, key=len, reverse=True))
 
-    def _pertinente(self, riga):
-        if self.codifica_incerta or any(p in riga for p in self.radici):
+    def _pertinente(self, riga, con_madri=True):
+        aghi = self.radici + self.madri if con_madri else self.radici
+        if self.codifica_incerta or any(p in riga for p in aghi):
             return True
         if b"\\u" in riga or b"\\/" in riga:
             decodificata = _UNICODE.sub(_unicode_utf8, riga).replace(b"\\/", b"/")
             if b"\\u" in decodificata:
                 return True
-            if any(p in decodificata for p in self.radici):
+            if any(p in decodificata for p in aghi):
                 return True
             riga = decodificata
         # A filename can mix composed and decomposed characters within a single
@@ -176,16 +185,16 @@ class FlussoEslogger:
                 canonica = unicodedata.normalize("NFC", riga.decode("utf8")).encode("utf8")
             except UnicodeError:
                 return True
-            return any(p in canonica for p in self.radici)
+            return any(p in canonica for p in aghi)
         return False
 
     def ricevi(self, riga):
         self.raw_lines += 1
-        metadati = None
-        if not self._pertinente(riga):
-            metadati = _metadati_grezzi(riga)
+        metadati = _metadati_grezzi(riga)
         tipo = metadati.get("event_type") if metadati else None
-        if metadati is not None and tipo in _FILE_TYPES:
+        # Uncertain headers decode, as before; only create and rename need the parent.
+        con_madri = metadati is None or tipo in _TIPI_CON_MADRE
+        if metadati is not None and tipo in _FILE_TYPES and not self._pertinente(riga, con_madri):
             self.filtered_lines += 1
             self.osservatore.scarta(metadati)
             msg = metadati
@@ -213,6 +222,127 @@ class FlussoEslogger:
                 "last_event_received_at": self.last_event_received_at,
                 "last_event_age_seconds": round(max(0.0, ora - self.last_event_received_at), 3) if self.last_event_received_at is not None else None,
                 "event_lag_seconds": round(lag, 3) if lag is not None else None}
+
+
+class LettoreTubo:
+    """Drain eslogger's pipe at once, so that eslogger never queues in its own memory.
+
+    Measured on 27/10/2026: with the decoder half an hour behind, eslogger held
+    32 GB of events it could not hand over. A thread now reads the pipe as soon
+    as it has data, and keeps whole lines for the decoder up to ``limite``
+    bytes. Beyond that a line is dropped and counted: its gap in eslogger's
+    sequence numbers then shows as lost events, which is declared, instead of
+    memory growing without bound on either side.
+    """
+    def __init__(self, fd, limite=64 * 1024 * 1024, massimo_riga=MAX_RIGA):
+        self.fd, self.limite, self.massimo_riga = fd, limite, massimo_riga
+        self.righe, self.byte = collections.deque(), 0
+        self.scartate = self.troppo_grandi = 0
+        self.finito = False
+        self._condizione = threading.Condition()
+        self._thread = threading.Thread(target=self._leggi, name="paratia-eslogger", daemon=True)
+        self._thread.start()
+
+    def _leggi(self):
+        parziale, scarta = b"", False
+        try:
+            while True:
+                pezzo = os.read(self.fd, 262144)
+                if not pezzo:
+                    break
+                complete = []
+                for parte in pezzo.splitlines(keepends=True):
+                    if not scarta:
+                        parziale += parte
+                        if len(parziale) > self.massimo_riga:
+                            parziale, scarta = b"", True
+                            with self._condizione:
+                                self.troppo_grandi += 1
+                    if parte.endswith(b"\n"):
+                        if not scarta:
+                            complete.append(parziale)
+                        parziale, scarta = b"", False
+                if complete:
+                    with self._condizione:
+                        for riga in complete:
+                            if self.byte + len(riga) > self.limite:
+                                self.scartate += 1
+                            else:
+                                self.righe.append(riga)
+                                self.byte += len(riga)
+                        self._condizione.notify()
+        except OSError:
+            pass
+        finally:
+            with self._condizione:
+                self.finito = True
+                self.resto = bool(parziale)
+                self._condizione.notify()
+
+    def prendi(self, attesa=1.0, quante=20000):
+        """Up to ``quante`` lines, waiting at most ``attesa`` seconds for the first."""
+        with self._condizione:
+            if not self.righe and not self.finito:
+                self._condizione.wait(attesa)
+            presi = []
+            while self.righe and len(presi) < quante:
+                riga = self.righe.popleft()
+                self.byte -= len(riga)
+                presi.append(riga)
+            return presi
+
+    @property
+    def esaurito(self):
+        with self._condizione:
+            return self.finito and not self.righe
+
+
+class _RusageInfoV2(ctypes.Structure):
+    # struct rusage_info_v2 from sys/resource.h, up to the footprint we read.
+    # Defined once: a class made inside a call stays in ctypes' POINTER cache.
+    _fields_ = [("ri_uuid", ctypes.c_uint8 * 16), ("ri_user_time", ctypes.c_uint64),
+                ("ri_system_time", ctypes.c_uint64), ("ri_pkg_idle_wkups", ctypes.c_uint64),
+                ("ri_interrupt_wkups", ctypes.c_uint64), ("ri_pageins", ctypes.c_uint64),
+                ("ri_wired_size", ctypes.c_uint64), ("ri_resident_size", ctypes.c_uint64),
+                ("ri_phys_footprint", ctypes.c_uint64), ("ri_rest", ctypes.c_uint64 * 32)]
+
+
+_PROC_PID_RUSAGE = None
+
+
+def impronta_memoria(pid):
+    """Physical footprint in bytes, compressed and swapped pages included; None if unknown.
+
+    This is what Activity Monitor calls Memory. `ps -o rss` leaves out
+    compressed pages, and on 27/10/2026 it hid 47 GB.
+    """
+    global _PROC_PID_RUSAGE
+    try:
+        if _PROC_PID_RUSAGE is None:
+            funzione = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True).proc_pid_rusage
+            funzione.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.POINTER(_RusageInfoV2)]
+            funzione.restype = ctypes.c_int
+            _PROC_PID_RUSAGE = funzione
+        dati = _RusageInfoV2()
+        if _PROC_PID_RUSAGE(int(pid), 2, ctypes.byref(dati)):
+            return None
+        return int(dati.ri_phys_footprint)
+    except (AttributeError, OSError, ValueError):
+        return None
+
+
+# Above these the collector writes why, and exits so that launchd restarts it clean.
+TETTO_MEMORIA_RACCOGLITORE = 512 * 1024 * 1024
+TETTO_MEMORIA_ESLOGGER = 1024 * 1024 * 1024
+
+
+def oltre_il_tetto(proprio, eslogger):
+    """Which process is over its cap, or None. Unknown sizes are not a reason to stop."""
+    if proprio is not None and proprio > TETTO_MEMORIA_RACCOGLITORE:
+        return "raccoglitore"
+    if eslogger is not None and eslogger > TETTO_MEMORIA_ESLOGGER:
+        return "eslogger"
+    return None
 
 
 class CaricatoreConfigurazione:
@@ -387,6 +517,14 @@ def main(argv=None):
                     "diagnostic_counts": {}, **flusso.metriche(),
                     "installed_cdhash": R._cdhash_app(SUPPORT / "Paratia.app"),
                     "servizio_impronta": R.impronta_servizio(SUPPORT)}
+    try:
+        # A restart for memory stays visible to the GUI after the new run begins.
+        with open(stato, "rb") as f:
+            riavvio = json.loads(f.read(4194304)).get("memory_restart_at")
+        if isinstance(riavvio, (int, float)) and time.time() - riavvio < 86400:
+            informazioni["memory_restart_at"] = riavvio
+    except (OSError, ValueError, AttributeError):
+        pass
     applica_configurazione(R, osservatore, flusso, informazioni, configurazione, sink)
     informazioni["health_reasons"] = R.motivi_salute(informazioni)
     scrivi_stato(stato, informazioni)
@@ -395,10 +533,24 @@ def main(argv=None):
     fermati = [False]
     for numero in (signal.SIGTERM, signal.SIGINT):
         signal.signal(numero, lambda *_: fermati.__setitem__(0, True))
-    buffer, errori, scarta = b"", b"", False
     ultimo_stato, ultimo_config, visto = 0.0, time.monotonic(), False
-    fdout, fderr = processo.stdout.fileno(), processo.stderr.fileno()
-    aperti = {fdout, fderr}
+    ultimo_controllo_memoria = time.monotonic()
+    lettore = LettoreTubo(processo.stdout.fileno())
+    # eslogger's stderr: only its last 64 KB, to tell a missing Full Disk Access apart.
+    coda_errori = collections.deque(maxlen=64)
+
+    def leggi_errori():
+        try:
+            while True:
+                pezzo = os.read(processo.stderr.fileno(), 1024)
+                if not pezzo:
+                    break
+                coda_errori.append(pezzo)
+        except OSError:
+            pass
+    lettore_errori = threading.Thread(target=leggi_errori, name="paratia-eslogger-stderr", daemon=True)
+    lettore_errori.start()
+    scartate_viste = troppo_grandi_viste = 0
     try:
         while not fermati[0]:
             ora = time.monotonic()
@@ -416,36 +568,41 @@ def main(argv=None):
                 sink(R._diagnostico("registro-cartelle-illeggibile"))
                 # Explicitly unhealthy on an unexpected loader failure; owned
                 # file/entry refusals are handled independently by the loader.
-            leggibili, _, _ = select.select(list(aperti), [], [], 1)
-            for fd in leggibili:
-                pezzo = os.read(fd, 262144)
-                if not pezzo:
-                    aperti.discard(fd)
-                    continue
-                if fd == fderr:
-                    errori = (errori + pezzo)[-65536:]
-                    continue
-                for parte in pezzo.splitlines(keepends=True):
-                    termina = parte.endswith(b"\n")
-                    if not scarta:
-                        buffer += parte
-                        if len(buffer) > MAX_RIGA:
-                            buffer, scarta = b"", True
-                            osservatore.sano = False
-                            sink(R._diagnostico("riga-eslogger-troppo-grande"))
-                    if termina:
-                        if not scarta:
-                            try:
-                                flusso.ricevi(buffer)
-                                visto = True
-                                informazioni["needs_fda"] = False
-                            except (ValueError, TypeError):
-                                osservatore.sano = False
-                                sink(R._diagnostico("json-eslogger-non-valido"))
-                        buffer, scarta = b"", False
+            for riga in lettore.prendi(attesa=1.0):
+                try:
+                    flusso.ricevi(riga)
+                    visto = True
+                    informazioni["needs_fda"] = False
+                except (ValueError, TypeError):
+                    osservatore.sano = False
+                    sink(R._diagnostico("json-eslogger-non-valido"))
+                if osservatore.schema_fatale:
+                    break
+            if lettore.troppo_grandi > troppo_grandi_viste:
+                troppo_grandi_viste = lettore.troppo_grandi
+                osservatore.sano = False
+                sink(R._diagnostico("riga-eslogger-troppo-grande"))
+            if lettore.scartate > scartate_viste:
+                # The gaps in eslogger's sequence numbers count these as lost events too.
+                scartate_viste = lettore.scartate
+                sink(R._diagnostico("coda-piena-righe-scartate", scartate=lettore.scartate))
             if osservatore.schema_fatale:
                 break
             ora = time.monotonic()
+            if ora - ultimo_controllo_memoria >= 10:
+                ultimo_controllo_memoria = ora
+                proprio, di_eslogger = impronta_memoria(os.getpid()), impronta_memoria(processo.pid)
+                informazioni.update(memory_mb=round(proprio / 1048576) if proprio else None,
+                                    eslogger_memory_mb=round(di_eslogger / 1048576) if di_eslogger else None)
+                chi = oltre_il_tetto(proprio, di_eslogger)
+                if chi:
+                    # Exit with an error: launchd restarts the collector and a fresh eslogger.
+                    sink(R._diagnostico("memoria-oltre-il-tetto", processo=chi,
+                                        memoria_mb=informazioni["memory_mb"], eslogger_mb=informazioni["eslogger_memory_mb"]))
+                    informazioni.update(running=False, healthy=False, memory_restart_at=time.time(),
+                                        message="Registro riavviato: aveva superato il tetto di memoria.")
+                    scrivi_stato(stato, informazioni)
+                    raise SystemExit(75)
             if ora - ultimo_stato >= 1:
                 informazioni.update(running=processo.poll() is None and visto,
                                      healthy=osservatore.sano and visto and not config_illeggibile,
@@ -456,6 +613,9 @@ def main(argv=None):
                                      diagnostic_counts={k: max(sink.contatori.get(k, 0), osservatore.diagnostici.get(k, 0))
                                                         for k in set(sink.contatori) | set(osservatore.diagnostici)},
                                      message="Registro attivo." if osservatore.sano and visto else "Registro in avvio o con copertura incompleta: consulta i diagnostici.",
+                                     queue_dropped_lines=lettore.scartate,
+                                     coalesced_writes=osservatore.scritture_raggruppate,
+                                     image_io_skipped=osservatore.io_immagine,
                                      **flusso.metriche())
                 informazioni["health_reasons"] = R.motivi_salute(informazioni)
                 informazioni["healthy"] = informazioni["healthy"] and not informazioni["health_reasons"]
@@ -463,7 +623,7 @@ def main(argv=None):
                     informazioni["message"] = "Registro con copertura incompleta: consulta i motivi e l'elenco cartelle."
                 scrivi_stato(stato, informazioni)
                 ultimo_stato = ora
-            if processo.poll() is not None and not aperti:
+            if processo.poll() is not None and lettore.esaurito:
                 break
     finally:
         caricatore.chiudi()
@@ -476,8 +636,10 @@ def main(argv=None):
                 processo.wait(timeout=5)
         else:
             processo.wait()
-        if buffer:
+        if getattr(lettore, "resto", False):
             sink(R._diagnostico("riga-eslogger-incompleta"))
+        lettore_errori.join(timeout=2)
+        errori = b"".join(coda_errori)[-65536:]
         # Retain only the permission category, never the stderr text itself.
         bisogno = any(x in errori.lower() for x in (b"tcc", b"full disk access", b"not permitted", b"not_permitted"))
         informazioni.update(running=False, healthy=False, needs_fda=bisogno,

@@ -187,27 +187,30 @@ def _cloud(p: Path) -> bool:
     ))
 
 
+class _Statfs(ctypes.Structure):
+    # struct statfs from the macOS SDK's 64-bit sys/mount.h. Defined once: a
+    # class made inside a call stays forever in ctypes' POINTER cache.
+    _fields_ = [("f_bsize", ctypes.c_uint32), ("f_iosize", ctypes.c_int32),
+                *[(nome, ctypes.c_uint64) for nome in (
+                    "f_blocks", "f_bfree", "f_bavail", "f_files", "f_ffree")],
+                ("f_fsid", ctypes.c_int32 * 2), ("f_owner", ctypes.c_uint32),
+                ("f_type", ctypes.c_uint32), ("f_flags", ctypes.c_uint32),
+                ("f_fssubtype", ctypes.c_uint32), ("f_fstypename", ctypes.c_char * 16),
+                ("f_mntonname", ctypes.c_char * 1024),
+                ("f_mntfromname", ctypes.c_char * 1024),
+                ("f_flags_ext", ctypes.c_uint32), ("f_reserved", ctypes.c_uint32 * 7)]
+
+
 def _statfs(dove: Path):
     """struct statfs of the volume holding ``dove``."""
-    class Statfs(ctypes.Structure):
-        # struct statfs from the macOS SDK's 64-bit sys/mount.h.
-        _fields_ = [("f_bsize", ctypes.c_uint32), ("f_iosize", ctypes.c_int32),
-                    *[(nome, ctypes.c_uint64) for nome in (
-                        "f_blocks", "f_bfree", "f_bavail", "f_files", "f_ffree")],
-                    ("f_fsid", ctypes.c_int32 * 2), ("f_owner", ctypes.c_uint32),
-                    ("f_type", ctypes.c_uint32), ("f_flags", ctypes.c_uint32),
-                    ("f_fssubtype", ctypes.c_uint32), ("f_fstypename", ctypes.c_char * 16),
-                    ("f_mntonname", ctypes.c_char * 1024),
-                    ("f_mntfromname", ctypes.c_char * 1024),
-                    ("f_flags_ext", ctypes.c_uint32), ("f_reserved", ctypes.c_uint32 * 7)]
     try:
         # arm64 has only the 64-bit inode ABI under the unsuffixed symbol;
         # Intel also exports an older struct layout, so select its INODE64 ABI.
         simbolo = "statfs" if os.uname().machine.startswith("arm64") else "statfs$INODE64"
         funzione = getattr(ctypes.CDLL(None, use_errno=True), simbolo)
-        funzione.argtypes = [ctypes.c_char_p, ctypes.POINTER(Statfs)]
+        funzione.argtypes = [ctypes.c_char_p, ctypes.POINTER(_Statfs)]
         funzione.restype = ctypes.c_int
-        dati = Statfs()
+        dati = _Statfs()
         if funzione(os.fsencode(dove), ctypes.byref(dati)):
             raise OSError(ctypes.get_errno(), "statfs")
         return dati

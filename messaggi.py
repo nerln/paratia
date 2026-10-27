@@ -16,6 +16,7 @@ _LINGUA = os.environ.get("PARATIA_LANG", "it") if os.environ.get("PARATIA_LANG")
 
 # testo italiano -> (inglese, spagnolo)
 TRADUZIONI = {
+    'Il registro ha superato il tetto di memoria ed è ripartito da solo: per qualche secondo alcuni eventi possono mancare.': ('The log went over its memory cap and restarted by itself: some events may be missing for a few seconds.', 'El registro superó su límite de memoria y se reinició solo: durante unos segundos pueden faltar algunos eventos.'),
     "«{nome}» è sparito mentre Paratia leggeva la cartella: un'app la sta modificando. Chiudila e riprova.": ("“{nome}” disappeared while Paratia was reading the folder: an app is changing it. Quit that app and try again.", "«{nome}» ha desaparecido mientras Paratia leía la carpeta: una app la está modificando. Ciérrala y vuelve a intentarlo."),
     "Paratia non ha il permesso di leggere «{nome}». Nel Finder, con Informazioni, dai a te lettura e scrittura, poi riprova.": ("Paratia is not allowed to read “{nome}”. In Finder, with Get Info, give yourself read and write access, then try again.", "Paratia no tiene permiso para leer «{nome}». En el Finder, con Obtener información, date lectura y escritura y vuelve a intentarlo."),
     "Impossibile leggere gli attributi estesi di «{nome}» (errore {codice}).": ("Could not read the extended attributes of “{nome}” (error {codice}).", "No se pueden leer los atributos extendidos de «{nome}» (error {codice})."),

@@ -354,6 +354,23 @@ def percorso_normale(p):
     return p
 
 
+# Repeated writes by one process to one file are recorded once per window.
+FINESTRA_SCRITTURE = 10.0
+_IO_IMMAGINE = ("/System/Library/PrivateFrameworks/DiskImages2.framework/",
+                "/System/Library/PrivateFrameworks/DiskImages.framework/")
+
+
+def _io_immagine_di_sistema(record):
+    """macOS reading or writing an attached image's bands: the I/O of an open folder.
+
+    The executable path comes from the kernel and lives under SIP-protected
+    /System, so another process cannot pass for it.
+    """
+    processo = record.get("processo")
+    return (isinstance(processo, str) and processo.startswith(_IO_IMMAGINE)
+            and os.path.basename(processo) in ("diskimages-helper", "diskimagesiod"))
+
+
 def corrisponde(record, protetti):
     risultati = []
     percorsi = [percorso_normale(record[k]) for k in ("percorso", "destinazione") if isinstance(record.get(k), str)]
@@ -392,6 +409,7 @@ class Osservatore:
         self.rileva_perdite = False
         self.diagnostici = {}
         self.schema_fatale = False
+        self.scritture, self.scritture_raggruppate, self.io_immagine = {}, 0, 0
 
     def aggiorna_sequenze(self, msg):
         """Track every subscribed message, including intentionally filtered ones."""
@@ -449,11 +467,37 @@ class Osservatore:
                     if self.diagnostici[motivo] > 1:
                         continue  # Bound feedback and disk growth on incompatible input.
                 if cartelle:
+                    if self._superfluo(r, cartelle):
+                        continue
                     r["cartelle"] = cartelle
                     r["cartella"] = cartelle[0]["id"]
                 self.sink(r)
                 scritti.append(r)
         return scritti
+
+    def _superfluo(self, r, cartelle):
+        """Leave out of the chain what says nothing new about who touched the files.
+
+        Measured on 27/10/2026: 83% of the chain was single writes by ditto
+        while a folder was being protected, and most of the rest was the
+        system writing the image's bands while a folder was open. Each was a
+        record with an fsync. The image's own I/O by macOS is skipped (any
+        other process touching the image is still recorded), and repeated
+        writes by one process to one file count once per window.
+        """
+        if all(c["tipo"] == "bundle" for c in cartelle) and _io_immagine_di_sistema(r):
+            self.io_immagine += 1
+            return True
+        if r["evento"] in ("write", "truncate"):
+            chiave = (r.get("pid"), r.get("pidversion"), r["evento"], r.get("percorso"))
+            ora = self.orologio()
+            if ora - self.scritture.get(chiave, -FINESTRA_SCRITTURE) < FINESTRA_SCRITTURE:
+                self.scritture_raggruppate += 1
+                return True
+            if len(self.scritture) >= 4096:
+                self.scritture.clear()
+            self.scritture[chiave] = ora
+        return False
 
 
 class ScrittoreDiagnostici:
@@ -535,27 +579,45 @@ def _esito_configurazione(identificatore, code=None):
             "message": ESITI_CONFIGURAZIONE[code] if code else _t("Cartella confermata dal raccoglitore.")}
 
 
-def _statfs_configurazione(dove):
-    """Read mount flags from the kernel, never infer noowners from an UID."""
-    import ctypes
-    if sys.platform != "darwin":
-        raise _RifiutoConfigurazione("noowners_volume_unverified")
+_STATFS = None
 
-    class Statfs(ctypes.Structure):
-        _fields_ = [("f_bsize", ctypes.c_uint32), ("f_iosize", ctypes.c_int32),
-                    *[(nome, ctypes.c_uint64) for nome in (
-                        "f_blocks", "f_bfree", "f_bavail", "f_files", "f_ffree")],
-                    ("f_fsid", ctypes.c_int32 * 2), ("f_owner", ctypes.c_uint32),
-                    ("f_type", ctypes.c_uint32), ("f_flags", ctypes.c_uint32),
-                    ("f_fssubtype", ctypes.c_uint32), ("f_fstypename", ctypes.c_char * 16),
-                    ("f_mntonname", ctypes.c_char * 1024),
-                    ("f_mntfromname", ctypes.c_char * 1024),
-                    ("f_flags_ext", ctypes.c_uint32), ("f_reserved", ctypes.c_uint32 * 7)]
-    try:
+
+def _funzione_statfs():
+    """One ctypes structure and prototype for the whole process.
+
+    The structure used to be defined inside the call: every call made a new
+    class, and ctypes.POINTER() keeps each one in a global cache that is never
+    emptied. With a configuration reload every 5 seconds the collector grew by
+    tens of KB each time (15 GB in five days, measured on 27/10/2026).
+    """
+    global _STATFS
+    if _STATFS is None:
+        import ctypes
+
+        class Statfs(ctypes.Structure):
+            _fields_ = [("f_bsize", ctypes.c_uint32), ("f_iosize", ctypes.c_int32),
+                        *[(nome, ctypes.c_uint64) for nome in (
+                            "f_blocks", "f_bfree", "f_bavail", "f_files", "f_ffree")],
+                        ("f_fsid", ctypes.c_int32 * 2), ("f_owner", ctypes.c_uint32),
+                        ("f_type", ctypes.c_uint32), ("f_flags", ctypes.c_uint32),
+                        ("f_fssubtype", ctypes.c_uint32), ("f_fstypename", ctypes.c_char * 16),
+                        ("f_mntonname", ctypes.c_char * 1024),
+                        ("f_mntfromname", ctypes.c_char * 1024),
+                        ("f_flags_ext", ctypes.c_uint32), ("f_reserved", ctypes.c_uint32 * 7)]
         simbolo = "statfs" if os.uname().machine.startswith("arm64") else "statfs$INODE64"
         funzione = getattr(ctypes.CDLL(None, use_errno=True), simbolo)
         funzione.argtypes = [ctypes.c_char_p, ctypes.POINTER(Statfs)]
         funzione.restype = ctypes.c_int
+        _STATFS = (Statfs, funzione, ctypes)
+    return _STATFS
+
+
+def _statfs_configurazione(dove):
+    """Read mount flags from the kernel, never infer noowners from an UID."""
+    if sys.platform != "darwin":
+        raise _RifiutoConfigurazione("noowners_volume_unverified")
+    try:
+        Statfs, funzione, ctypes = _funzione_statfs()
         dati = Statfs()
         if funzione(os.fsencode(dove), ctypes.byref(dati)):
             raise OSError(ctypes.get_errno(), "statfs")
@@ -1475,6 +1537,9 @@ def motivi_salute(dati, ora=None):
     lag = _numero_finito(dati.get("event_lag_seconds"))
     if lag is not None and lag > 2:
         add("event_delay", _t("Gli ultimi eventi ricevuti erano in ritardo di oltre 2 secondi."))
+    riavvio = _numero_finito(dati.get("memory_restart_at"))
+    if riavvio is not None and 0 <= ora - riavvio < 86400:
+        add("memory_restart", _t("Il registro ha superato il tetto di memoria ed è ripartito da solo: per qualche secondo alcuni eventi possono mancare."))
     if _perdita_recente(dati, ora):
         add("dropped_events", _t("Endpoint Security ha perso eventi negli ultimi %d minuti: la copertura di quel periodo è incompleta.") % (PERDITE_RECENTI_SECONDI // 60))
     rejected = [value for value in _stati_sorveglianza(dati.get("watch_status")) if value["status"] == "rejected"]
@@ -1567,8 +1632,10 @@ def stato():
             "local_chain_ok": locale["ok"], "local_chain_error": locale["errore"],
             "message": message}
     for field in ("event_lag_seconds", "last_event_received_at", "lines_per_second",
-                  "raw_lines", "filtered_lines", "parsed_lines"):
+                  "raw_lines", "filtered_lines", "parsed_lines", "memory_mb", "eslogger_memory_mb",
+                  "queue_dropped_lines", "coalesced_writes", "image_io_skipped"):
         result[field] = _numero_finito(dati.get(field)) if fresco else None
+    result["memory_restart_at"] = _numero_finito(dati.get("memory_restart_at"))
     received = result["last_event_received_at"]
     result["last_event_age_seconds"] = max(0.0, now - received) if received is not None and received <= now else None
     result.update(_aggiornamento_build(dati, installed))

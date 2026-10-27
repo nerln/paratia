@@ -5,6 +5,8 @@ import importlib.util
 import datetime
 import json
 import os
+import sys
+import time
 import unicodedata
 from pathlib import Path
 from unittest import mock
@@ -484,3 +486,112 @@ def test_pruning_keeps_the_exited_shell_between_an_agent_and_its_child():
     d.pota()
     assert (11, 1) in d.processi and (13, 1) not in d.processi
     assert d.classifica(child)["agente"] is True
+
+
+def _scrittura(sequence, path, executable="/usr/bin/ditto", pid=4242, kind="write"):
+    msg = message(path, sequence, "open")
+    msg["event_type"] = "ES_EVENT_TYPE_NOTIFY_" + kind.upper()
+    msg["process"] = {**msg["process"], "audit_token": {"pid": pid, "pidversion": 1, "euid": os.getuid()},
+                      "executable": {"path": executable}}
+    msg["event"] = {kind: {"target": {"path": path}}}
+    return msg
+
+
+def test_repeated_writes_by_one_process_to_one_file_are_one_record():
+    records, ora = [], [1000.0]
+    observer = R.Osservatore([{"id": "watch", "origine": ROOT}], records.append, orologio=lambda: ora[0])
+    for n in range(1, 201):  # ditto copying two files in many chunks
+        observer.ricevi(_scrittura(n, ROOT + "/a.bin" if n <= 100 else ROOT + "/b.bin"))
+    assert [r["percorso"] for r in records if r["evento"] == "write"] == [ROOT + "/a.bin", ROOT + "/b.bin"]
+    assert observer.scritture_raggruppate == 198
+    ora[0] += R.FINESTRA_SCRITTURE + 1
+    observer.ricevi(_scrittura(201, ROOT + "/a.bin"))
+    assert sum(r["evento"] == "write" for r in records) == 3
+    observer.ricevi(_scrittura(202, ROOT + "/a.bin", pid=5555))  # another process is always new
+    assert sum(r["evento"] == "write" for r in records) == 4
+
+
+def test_the_systems_image_io_is_not_recorded_but_anyone_else_on_the_image_is():
+    bundle = "/Users/paratia-synthetic/.paratia/compartimenti.noindex/x-1.sparsebundle"
+    records = []
+    observer = R.Osservatore([{"id": "watch", "origine": ROOT, "bundle": bundle}], records.append)
+    helper = "/System/Library/PrivateFrameworks/DiskImages2.framework/Versions/A/Resources/diskimages-helper"
+    for n in range(1, 51):
+        observer.ricevi(_scrittura(n, bundle + "/bands/%x" % n, executable=helper))
+    assert not [r for r in records if r["evento"] == "write"] and observer.io_immagine == 50
+    observer.ricevi(_scrittura(51, bundle + "/bands/1", executable="/bin/cp", pid=777))
+    copiato = [r for r in records if r["evento"] == "write"]
+    assert len(copiato) == 1 and copiato[0]["processo"] == "/bin/cp"
+    fake = "/tmp/System/Library/PrivateFrameworks/DiskImages2.framework/diskimages-helper"
+    observer.ricevi(_scrittura(52, bundle + "/bands/2", executable=fake, pid=778))
+    assert len([r for r in records if r["evento"] == "write"]) == 2
+
+
+def test_the_parent_folder_decodes_only_create_and_rename():
+    flow, observer, records = stream(root="/Volumes/Finto/prova")
+    for n in range(1, 101):  # the rest of the same disk, busy
+        flow.ricevi(raw(message("/Volumes/Finto/build/obj%d.o" % n, n)))
+    assert flow.parsed_lines == 0 and flow.filtered_lines == 100
+    creato = message("/Volumes/Finto", 101, "open")
+    creato["event_type"] = "ES_EVENT_TYPE_NOTIFY_CREATE"
+    creato["event"] = {"create": {"destination_type": 1, "destination": {"new_path": {
+        "dir": {"path": "/Volumes/Finto"}, "filename": "prova", "mode": 493}}}}
+    flow.ricevi(raw(creato))
+    assert flow.parsed_lines == 1
+    assert [r for r in records if r.get("evento") == "create"]
+
+
+def test_reader_drains_the_pipe_and_declares_what_it_cannot_keep():
+    lettura, scrittura = os.pipe()
+    lettore = D.LettoreTubo(lettura, limite=2000)
+    riga = b'{"x":"' + b"a" * 90 + b'"}\n'  # 100 bytes
+    for _ in range(500):  # 50 KB, the writer is never blocked by a slow decoder
+        os.write(scrittura, riga)
+    os.close(scrittura)
+    while not lettore.finito:
+        time.sleep(0.01)
+    assert lettore.byte <= 2000 and len(lettore.righe) == 20 and lettore.scartate == 480
+    assert lettore.prendi(attesa=0) == [riga] * 20 and lettore.esaurito
+    os.close(lettura)
+
+
+def test_memory_caps_and_the_footprint_that_counts_compressed_pages():
+    assert D.oltre_il_tetto(None, None) is None
+    assert D.oltre_il_tetto(D.TETTO_MEMORIA_RACCOGLITORE + 1, 0) == "raccoglitore"
+    assert D.oltre_il_tetto(0, D.TETTO_MEMORIA_ESLOGGER + 1) == "eslogger"
+    if sys.platform == "darwin":
+        assert D.impronta_memoria(os.getpid()) > 1024 * 1024
+        assert D.impronta_memoria(999999999) is None
+
+
+def test_a_memory_restart_is_a_notice_for_a_day():
+    now = 10_000_000.0
+    stato = {"running": True, "healthy": True, "needs_fda": False, "watched_ids": ["watch"],
+             "memory_restart_at": now - 60}
+    assert "memory_restart" in {r["code"] for r in R.motivi_salute(stato, now)}
+    stato["memory_restart_at"] = now - 90_000
+    assert "memory_restart" not in {r["code"] for r in R.motivi_salute(stato, now)}
+
+
+def test_configuration_reloads_keep_no_memory(tmp_path, monkeypatch):
+    import tracemalloc
+    casa = tmp_path / "casa"
+    (casa / ".paratia").mkdir(parents=True)
+    sorvegliata = casa / "sorvegliata"
+    sorvegliata.mkdir()
+    monkeypatch.setenv("PARATIA_HOME", str(casa / ".paratia"))
+    spec = importlib.util.spec_from_file_location("registro_reload", Path(R.__file__))
+    modulo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modulo)
+    modulo.sorveglia("watch-1", sorvegliata, "prova")
+    precedenti, cache = None, {}
+    for _ in range(20):
+        precedenti = modulo.leggi_configurazione(casa, os.getuid(), precedenti=precedenti, cache_volumi=cache)
+    tracemalloc.start()
+    prima = tracemalloc.get_traced_memory()[0]
+    for _ in range(300):  # 25 minutes of the collector's 5-second reloads
+        precedenti = modulo.leggi_configurazione(casa, os.getuid(), precedenti=precedenti, cache_volumi=cache)
+    cresciuta = tracemalloc.get_traced_memory()[0] - prima
+    tracemalloc.stop()
+    # Before the fix each reload kept a ctypes class: about 49 KB, 14 MB here.
+    assert cresciuta < 1024 * 1024, cresciuta
