@@ -655,3 +655,20 @@ def test_blocks_give_the_same_records_losses_and_lineage_as_line_by_line():
     flow, observer, records = stream(root)
     assert list(flow.smista(b"".join(rows[:20]))) == []
     assert flow.raw_lines == flow.filtered_lines == 20 and observer.globale == 20 and not records
+    assert flow.bulk_lines == 20 and flow.metriche()["fallback_lines"] == {}
+    # A block with a watched path goes line by line, and says why.
+    flow, observer, records = stream(root)
+    vero = raw(message(root + "/x", 8, "open")) + b"\n"
+    assert len(list(flow.smista(b"".join(rows[:7]) + vero))) == 8
+    assert flow.fallback_lines == {"relevant": 8} and flow.bulk_lines == 0
+
+
+def test_reader_joins_consecutive_reads_up_to_a_cap():
+    lettura, scrittura = os.pipe()
+    lettore = D.LettoreTubo(lettura)
+    lettore.blocchi.extend([b"a\n" * 10, b"b\n" * 10, b"c\n" * 10])
+    lettore.byte = 60
+    assert lettore.prendi(attesa=0, unisci=40) == [b"a\n" * 10 + b"b\n" * 10, b"c\n" * 10]
+    assert lettore.byte == 0
+    os.close(scrittura)
+    os.close(lettura)

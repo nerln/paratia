@@ -147,6 +147,8 @@ class FlussoEslogger:
         self.contatore_campione = 0
         self.raw_lines = self.filtered_lines = self.parsed_lines = 0
         self.accettate = 0
+        # Lines accounted in bulk, and the others by why they went one by one.
+        self.bulk_lines, self.fallback_lines, self.raw_bytes = 0, {}, 0
         self.lines_per_second = 0.0
         self.last_event_received_at = None
         self.last_event_time = None
@@ -249,12 +251,19 @@ class FlussoEslogger:
         Anything uncertain falls back to the line-by-line path.
         """
         righe = blocco.count(b"\n")
-        if righe < 8 or self.codifica_incerta or self._blocco_pertinente(blocco, self.aghi_blocco):
-            yield from blocco.splitlines(keepends=True)
+        self.raw_bytes += len(blocco)
+        if righe < 8:
+            yield from self._ripiega("short", blocco)
+            return
+        if self.codifica_incerta:
+            yield from self._ripiega("uncertain", blocco)
+            return
+        if self._blocco_pertinente(blocco, self.aghi_blocco):
+            yield from self._ripiega("relevant", blocco)
             return
         tipi = list(_TIPO.finditer(blocco))
         if len(tipi) != righe:
-            yield from blocco.splitlines(keepends=True)
+            yield from self._ripiega("types", blocco)
             return
         madri, inizio = None, 0
         for m in tipi:
@@ -271,17 +280,17 @@ class FlussoEslogger:
             a = blocco.rfind(b"\n", 0, m.start()) + 1
             b = blocco.find(b"\n", m.end()) + 1
             if a < inizio:
-                yield from blocco[inizio:].splitlines(keepends=True)
+                yield from self._ripiega("overlap", blocco[inizio:])
                 return
             yield from self._in_blocco(blocco[inizio:a])
-            yield blocco[a:b]
+            yield from self._ripiega("special", blocco[a:b])
             inizio = b
         yield from self._in_blocco(blocco[inizio:])
 
     def _in_blocco(self, tratto):
         righe = tratto.count(b"\n")
         if righe < 2:
-            yield from tratto.splitlines(keepends=True)
+            yield from self._ripiega("run", tratto)
             return
         primo = _metadati_grezzi(tratto[:tratto.find(b"\n") + 1])
         ultimo = _metadati_grezzi(tratto[tratto.rfind(b"\n", 0, len(tratto) - 1) + 1:])
@@ -290,8 +299,9 @@ class FlussoEslogger:
         prima = self.osservatore.globale
         if g0 is None or g1 is None or g1 - g0 + 1 != righe or (prima is not None and g0 != prima + 1):
             # A gap, a restart or an unfamiliar header: located line by line.
-            yield from tratto.splitlines(keepends=True)
+            yield from self._ripiega("header" if g0 is None or g1 is None else "sequence", tratto)
             return
+        self.bulk_lines += righe
         self.osservatore.globale = g1
         self.osservatore.rileva_perdite = True
         # Per-type numbers are only a fallback for messages without a global one.
@@ -301,6 +311,10 @@ class FlussoEslogger:
         self.accettate += righe
         self.last_event_received_at = self.wall_time()
         self.last_event_time = ultimo.get("time") if isinstance(ultimo.get("time"), str) else None
+
+    def _ripiega(self, motivo, tratto):
+        self.fallback_lines[motivo] = self.fallback_lines.get(motivo, 0) + tratto.count(b"\n")
+        return tratto.splitlines(keepends=True)
 
     def metriche(self):
         ora, mono = self.wall_time(), self.monotonic()
@@ -314,7 +328,8 @@ class FlussoEslogger:
             if data is not None:
                 lag = max(0.0, self.last_event_received_at - data)
         return {"raw_lines": self.raw_lines, "filtered_lines": self.filtered_lines,
-                "parsed_lines": self.parsed_lines, "lines_per_second": round(self.lines_per_second, 2),
+                "parsed_lines": self.parsed_lines, "raw_bytes": self.raw_bytes, "bulk_lines": self.bulk_lines,
+                "fallback_lines": dict(self.fallback_lines), "lines_per_second": round(self.lines_per_second, 2),
                 "last_event_received_at": self.last_event_received_at,
                 "last_event_age_seconds": round(max(0.0, ora - self.last_event_received_at), 3) if self.last_event_received_at is not None else None,
                 "event_lag_seconds": round(lag, 3) if lag is not None else None}
@@ -396,8 +411,12 @@ class LettoreTubo:
                         self.byte += len(riga)
             self._condizione.notify()
 
-    def prendi(self, attesa=1.0, quanti=64):
-        """Up to ``quanti`` blocks of whole lines, waiting at most ``attesa`` seconds for the first."""
+    def prendi(self, attesa=1.0, quanti=64, unisci=1 << 20):
+        """Up to ``quanti`` reads of whole lines, waiting at most ``attesa`` seconds for the first.
+
+        Consecutive reads are joined up to ``unisci`` bytes: one pipe read holds
+        a handful of eslogger's lines, often too few for the decoder's block path.
+        """
         with self._condizione:
             if not self.blocchi and not self.finito:
                 self._condizione.wait(attesa)
@@ -406,7 +425,16 @@ class LettoreTubo:
                 blocco = self.blocchi.popleft()
                 self.byte -= len(blocco)
                 presi.append(blocco)
-            return presi
+        gruppi, gruppo, byte = [], [], 0
+        for blocco in presi:
+            if gruppo and byte + len(blocco) > unisci:
+                gruppi.append(b"".join(gruppo))
+                gruppo, byte = [], 0
+            gruppo.append(blocco)
+            byte += len(blocco)
+        if gruppo:
+            gruppi.append(b"".join(gruppo))
+        return gruppi
 
     @property
     def esaurito(self):
