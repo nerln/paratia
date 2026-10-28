@@ -478,11 +478,14 @@ def impronta_memoria(pid):
 
 # Above these the collector writes why, and exits so that launchd restarts it clean.
 # eslogger keeps every event it has not yet written: on 27/10/2026, under a
-# simulator boot, it grew by 20 MB a second. Checked every 2 s, so it stays
-# near 512 MB; a lagging eslogger slows down further once its backlog compresses.
+# simulator boot, it grew by 20 MB a second. On 28/10/2026 its one JSON thread
+# was the ceiling, at about 18,000 events a second on one full core, never
+# waiting on the pipe: above that rate nothing on this side drains it, and
+# under 140,000 opens a second it grew by about 250 MB a second. Checked every
+# half second, so it stops not far above 512 MB; checked every 2 s it reached 850.
 TETTO_MEMORIA_RACCOGLITORE = 512 * 1024 * 1024
 TETTO_MEMORIA_ESLOGGER = 512 * 1024 * 1024
-CONTROLLO_MEMORIA = 2.0
+CONTROLLO_MEMORIA = 0.5
 
 
 def oltre_il_tetto(proprio, eslogger):
