@@ -303,6 +303,14 @@ class RegistroTests(unittest.TestCase):
             tutte = R.query(filtri)
             for limite in (0, 1, 3, 4, 7, 100):
                 self.assertEqual(R.cerca(filtri, limite), {"rows": tutte[:limite], "total": len(tutte)})
+            # The export streams the same rows in the same order.
+            atteso = io.StringIO(newline="")
+            scrittore = csv.DictWriter(atteso, fieldnames=["quando", "sorgente", "source", "evento", "cartella", "percorso",
+                "destinazione", "processo", "pid", "pidversion", "uid", "utente", "app_responsabile", "agente",
+                "nome_agente", "esito", "errno", "rc", "precedente"], extrasaction="ignore")
+            scrittore.writeheader()
+            scrittore.writerows(tutte)
+            self.assertEqual(R.export_csv(filtri), atteso.getvalue())
 
     def test_capped_owned_registry_and_universal_or_symlink_refusal(self):
         source = self.base / "folder"

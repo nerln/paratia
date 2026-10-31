@@ -1373,11 +1373,18 @@ def export_csv(filters=None):
     output = io.StringIO(newline="")
     writer = csv.DictWriter(output, fieldnames=campi, extrasaction="ignore")
     writer.writeheader()
-    for r in query(filters):
+    testata, righe = output.getvalue(), []
+    # Each record becomes its CSV line at once, and only the lines are sorted:
+    # query's order without holding every decoded record.
+    for timestamp, r in _voci(filters):
+        output.seek(0)
+        output.truncate()
         # Spreadsheet programs must not interpret a file name as a formula.
         writer.writerow({k: "'" + v if isinstance(v, str) and (v.startswith(("\t", "\r", "\n")) or v.lstrip(" \t\r\n").startswith(("=", "+", "-", "@"))) else v
                          for k, v in r.items() if k in campi})
-    return output.getvalue()
+        righe.append((timestamp or 0, output.getvalue()))
+    righe.sort(key=lambda riga: riga[0], reverse=True)
+    return testata + "".join(testo for _, testo in righe)
 
 
 def verifica():

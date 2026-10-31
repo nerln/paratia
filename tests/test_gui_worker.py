@@ -367,7 +367,7 @@ def test_registry_csv_uses_backend_escaping_and_complete_rows(W, monkeypatch, tm
     rows = [{"evento": value, "percorso": "/fake/path\nwith-newline"} for value in malicious]
     rows += [{"evento": "open"} for _ in range(2501)]
     seen = []
-    monkeypatch.setattr(registro, "query", lambda filters: seen.append(filters) or rows)
+    monkeypatch.setattr(registro, "_voci", lambda filters: seen.append(filters) or [(None, r) for r in rows])
     monkeypatch.setattr(registro, "raccolta_kernel", lambda filters: collection_fixture())
     monkeypatch.setattr(W, "_load", lambda name: registro)
     target = str(tmp_path.resolve() / "registro.csv")
