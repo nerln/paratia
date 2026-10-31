@@ -375,8 +375,8 @@ def dispatch(action, params, key=b""):
             return module.rimuovi_sorveglianza(params["id"])
         filters = params.get("filters", {})
         if verb == "query":
-            rows = module.query(filters)
-            return {"rows": rows[:MAX_ROWS], "total": len(rows), "truncated": len(rows) > MAX_ROWS,
+            trovati = module.cerca(filters, MAX_ROWS)
+            return {"rows": trovati["rows"], "total": trovati["total"], "truncated": trovati["total"] > MAX_ROWS,
                     **module.raccolta_kernel(filters)}
         if verb == "export_csv":
             contents = module.export_csv(filters)

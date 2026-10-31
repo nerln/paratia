@@ -24,6 +24,7 @@ import csv
 import datetime
 import fcntl
 import hashlib
+import heapq
 import io
 import importlib.util
 import json
@@ -1301,10 +1302,10 @@ def _corrisponde_file(filtro, valore):
     return unicodedata.normalize("NFC", filtro).casefold() in unicodedata.normalize("NFC", valore).casefold()
 
 
-def query(filters=None):
+def _voci(filters):
+    """The records that match ``filters``, with their timestamp, in the order of the chains."""
     filters = filters or {}
     folder = risolvi_cartella(filters.get("folder"))
-    risultati = []
     for p in _catene():
         if not p.exists():
             continue
@@ -1338,8 +1339,32 @@ def query(filters=None):
                     continue
                 if filters.get("until") and (timestamp is None or timestamp > _data(filters["until"])):
                     continue
-                risultati.append(r)
-    return sorted(risultati, key=lambda r: _data(r.get("quando")) or 0, reverse=True)
+                yield timestamp, r
+
+
+def query(filters=None):
+    voci = list(_voci(filters))
+    voci.sort(key=lambda voce: voce[0] or 0, reverse=True)
+    return [r for _, r in voci]
+
+
+def cerca(filters=None, limite=2500):
+    """The first ``limite`` records of ``query``, and how many ``query`` returns.
+
+    Only those are kept in memory. Measured on 31/10/2026: on a 245 MB chain
+    an unfiltered query held all 210,000 records, 1.2 GB, to show 2,500.
+    """
+    tenuti, totale = [], 0
+    for n, (timestamp, r) in enumerate(_voci(filters)):
+        totale += 1
+        # Newest first, and among equal times the chain order, as query's stable sort.
+        voce = ((timestamp or 0, -n), r)
+        if len(tenuti) < limite:
+            heapq.heappush(tenuti, voce)
+        elif limite > 0 and voce[0] > tenuti[0][0]:
+            heapq.heapreplace(tenuti, voce)
+    tenuti.sort(key=lambda voce: voce[0], reverse=True)
+    return {"rows": [r for _, r in tenuti], "total": totale}
 
 
 def export_csv(filters=None):

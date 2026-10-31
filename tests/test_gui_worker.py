@@ -237,15 +237,16 @@ def test_query_passes_all_filters_and_truncates_only_display(W, monkeypatch):
     seen = []
     rows = [{"pid": n} for n in range(3100)]
     monkeypatch.setattr(W, "_load", lambda name: SimpleNamespace(
-        query=lambda f: seen.append(f) or rows, raccolta_kernel=lambda f: collection_fixture(True)))
+        cerca=lambda f, limite: seen.append((f, limite)) or {"rows": rows[:limite], "total": len(rows)},
+        raccolta_kernel=lambda f: collection_fixture(True)))
     result = W.dispatch("registro.query", {"filters": filters})
-    assert seen == [filters]
+    assert seen == [(filters, 2500)]
     assert result == {"rows": rows[:2500], "total": 3100, "truncated": True, **collection_fixture(True)}
 
 
 def test_short_query_is_not_marked_truncated(W, monkeypatch):
     monkeypatch.setattr(W, "_load", lambda name: SimpleNamespace(
-        query=lambda f: [], raccolta_kernel=lambda f: collection_fixture()))
+        cerca=lambda f, limite: {"rows": [], "total": 0}, raccolta_kernel=lambda f: collection_fixture()))
     assert W.dispatch("registro.query", {}) == {"rows": [], "total": 0, "truncated": False,
                                               **collection_fixture()}
 
@@ -261,7 +262,7 @@ def test_empty_registry_results_preserve_kernel_state_for_query_and_csv(W, monke
         return collection_fixture(active)
 
     monkeypatch.setattr(W, "_load", lambda name: SimpleNamespace(
-        query=lambda f: [], export_csv=lambda f: "evento\n", raccolta_kernel=health))
+        cerca=lambda f, limite: {"rows": [], "total": 0}, export_csv=lambda f: "evento\n", raccolta_kernel=health))
     params = {"filters": filters}
     if action.endswith("export_csv"):
         params["path"] = str(tmp_path.resolve() / "empty.csv")
@@ -285,7 +286,7 @@ def test_registry_collection_metadata_survives_ipc_even_without_rows(W, monkeypa
     }}
     filters = {"folder": "synthetic-rejected"}
     monkeypatch.setattr(W, "_load", lambda name: SimpleNamespace(
-        query=lambda f: [], export_csv=lambda f: "evento\n", raccolta_kernel=lambda f: collection))
+        cerca=lambda f, limite: {"rows": [], "total": 0}, export_csv=lambda f: "evento\n", raccolta_kernel=lambda f: collection))
     params = {"filters": filters}
     if action.endswith("export_csv"):
         params["path"] = str(tmp_path.resolve() / "empty-with-health.csv")
@@ -343,7 +344,7 @@ def test_registry_errors_reach_the_app_without_raw_diagnostics_or_export(W, monk
         raise ErroreRegistro()
 
     monkeypatch.setattr(W, "_load", lambda name: SimpleNamespace(
-        query=fail, export_csv=fail, sorveglia=fail))
+        query=fail, cerca=fail, export_csv=fail, sorveglia=fail))
     target = tmp_path.resolve() / "must-not-exist.csv"
     if action.endswith("sorveglia"):
         params = {"id": "stable-folder", "percorso": str(tmp_path.resolve())}

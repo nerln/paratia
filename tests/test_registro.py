@@ -291,6 +291,19 @@ class RegistroTests(unittest.TestCase):
         self.assertEqual(rows[0]["percorso"], "'=danger")
         self.assertTrue(R.verifica()["ok"])
 
+    def test_bounded_search_returns_the_head_of_query_and_its_total(self):
+        kernel = R.SYSTEM / str(os.getuid()) / "catena.jsonl"
+        # Equal times, times out of order, both chains, a missing time and a filter.
+        for i, ora in enumerate(["21:00", "20:00", "21:00", "22:00", "20:30", "21:00", None, "19:00"]):
+            voce = {"cartella": "a" if i != 5 else "b", "percorso": "f%d" % i}
+            if ora:
+                voce["quando"] = "2026-10-07T%s:00+00:00" % ora
+            catena.appendi(kernel if i % 2 else R.CATENA, voce, durevole=False)
+        for filtri in ({}, {"folder": "a"}, {"until": "2026-10-07T21:00:00Z"}):
+            tutte = R.query(filtri)
+            for limite in (0, 1, 3, 4, 7, 100):
+                self.assertEqual(R.cerca(filtri, limite), {"rows": tutte[:limite], "total": len(tutte)})
+
     def test_capped_owned_registry_and_universal_or_symlink_refusal(self):
         source = self.base / "folder"
         source.mkdir()
