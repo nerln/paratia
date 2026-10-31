@@ -644,7 +644,7 @@ def test_blocks_give_the_same_records_losses_and_lineage_as_line_by_line():
     one_by_one = outcome(flow, observer, records)
     assert one_by_one[1] == 5 and len([r for r in records if r.get("evento") == "open"]) == 3
 
-    for size in (len(rows), 50, 13, 7):
+    for size in (len(rows), 50, 13, 7, 3, 2, 1):
         flow, observer, records = stream(root, wall_time=lambda: 1000.0)
         for start in range(0, len(rows), size):
             for line in flow.smista(b"".join(rows[start:start + size])):
@@ -661,6 +661,10 @@ def test_blocks_give_the_same_records_losses_and_lineage_as_line_by_line():
     vero = raw(message(root + "/x", 8, "open")) + b"\n"
     assert len(list(flow.smista(b"".join(rows[:7]) + vero))) == 8
     assert flow.fallback_lines == {"relevant": 8} and flow.bulk_lines == 0
+    # Two unrelated lines are already a block: a burst arrives a few lines per read.
+    flow, observer, records = stream(root)
+    assert list(flow.smista(b"".join(rows[:2]))) == [] and flow.bulk_lines == 2
+    assert list(flow.smista(rows[2])) == [rows[2]] and flow.fallback_lines == {"short": 1}
 
 
 def test_reader_joins_consecutive_reads_up_to_a_cap():

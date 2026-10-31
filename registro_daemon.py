@@ -42,6 +42,11 @@ _ORA_EVENTO = re.compile(r"([0-9]{4}-[0-9]{2}-[0-9]{2}[Tt ][0-9]{2}:[0-9]{2}:[0-
 _FILE_TYPES = (10, 12, 13, 20, 22, 23, 25, 32, 33, 41, 43,
                *("ES_EVENT_TYPE_NOTIFY_" + n for n in ("OPEN", "CLOSE", "CREATE", "MMAP", "MOUNT", "UNMOUNT", "RENAME", "UNLINK", "WRITE", "TRUNCATE", "LOOKUP")))
 _TIPI_CON_MADRE = (13, 25, "ES_EVENT_TYPE_NOTIFY_CREATE", "ES_EVENT_TYPE_NOTIFY_RENAME")
+# Blocks shorter than this go line by line (see ``FlussoEslogger.smista``). Under a
+# burst one pipe read holds 6 or 7 of eslogger's 2 KB lines: measured on 31/10/2026
+# at 18,000 lines a second, a threshold of 8 cost 20 µs a line and 2 cost 14.
+RIGHE_MINIME_BLOCCO = 2
+
 sys.dont_write_bytecode = True
 
 
@@ -252,7 +257,7 @@ class FlussoEslogger:
         """
         righe = blocco.count(b"\n")
         self.raw_bytes += len(blocco)
-        if righe < 8:
+        if righe < RIGHE_MINIME_BLOCCO:
             yield from self._ripiega("short", blocco)
             return
         if self.codifica_incerta:
