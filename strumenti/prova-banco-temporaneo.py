@@ -121,11 +121,11 @@ def fixture(base, key, configure_disks=None, mock_mdls=None):
         # is the real implementation, so Python 3.9 date parsing is exercised.
         registry.SYSTEM = base / "kernel-fixture"
 
-        def only_fixture_external(path):
+        def only_fixture_disk(path):
             if Path(path) != disk:
                 raise folders.Rifiuto("Il test accetta soltanto il proprio disco temporaneo")
 
-        folders._esterno = only_fixture_external
+        folders._disco_fisico = only_fixture_disk
         if configure_disks is not None:
             configure_disks(folders)
         guard = SubprocessGuard(key, calls, timers)

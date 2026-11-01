@@ -477,7 +477,7 @@ def test_migrazione_nativa_fixture_temporanea(C, albero, monkeypatch):
     import base64
     import secrets
     fonte, disco = albero
-    monkeypatch.setattr(C, "_esterno", lambda _: None)
+    monkeypatch.setattr(C, "_disco_fisico", lambda _: None)
     monkeypatch.setattr(C, "_avvia_timer", lambda *_: None)
     key = base64.urlsafe_b64encode(secrets.token_bytes(32))
     try:

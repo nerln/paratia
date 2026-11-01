@@ -39,7 +39,7 @@ class Images:
     """Metadata-preserving simulated disks; no hdiutil process can be called."""
 
     def __init__(self, folders):
-        self.folders, self.mounted, self.keys = folders, {}, {}
+        self.folders, self.mounted, self.keys, self.sizes = folders, {}, {}, {}
         self.real_command = folders._corri
         folders._corri = self.command
         folders._montato = lambda path: str(path) in self.mounted
@@ -75,6 +75,16 @@ class Images:
             if passphrase != self.keys[str(Path(argv[2]))]:
                 return subprocess.CompletedProcess(argv, 1, b"", b"")
             return subprocess.CompletedProcess(argv, 0, plistlib.dumps({"Properties": {"Encrypted": True}}), b"")
+        elif argv[1] in ("compact", "resize"):
+            # Capacity fitting before an opening: compact, read the limits, resize.
+            bundle = Path(argv[2] if argv[1] == "compact" else argv[-1])
+            if passphrase != self.keys[str(bundle)]:
+                return subprocess.CompletedProcess(argv, 1, b"", b"")
+            if "-limits" in argv:
+                current = self.sizes.get(str(bundle), 268435456) // 512
+                return subprocess.CompletedProcess(argv, 0, b"%d %d %d\n" % (65536, current, 1 << 40), b"")
+            if argv[1] == "resize":
+                self.sizes[str(bundle)] = int(argv[argv.index("-size") + 1].rstrip("m")) * 1024**2
         elif argv[1] == "attach":
             bundle, mount = Path(argv[2]), Path(argv[argv.index("-mountpoint") + 1])
             if passphrase != self.keys[str(bundle)]:
