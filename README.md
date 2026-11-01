@@ -191,6 +191,11 @@ The repeatable synthetic throughput measurement is documented in
 [the October status](docs/stato-2026-10.md). It measures Python processing,
 excluding eslogger and log fsync; live idle CPU and delay must be measured again
 after installing this build.
+Collector and eslogger each have a 512 MB memory cap, checked every half
+second; above it the service restarts itself and reports `memory_restart` for a
+day. eslogger's own JSON writer tops out at about 18,000 events a second on one
+core (measured 28/10/2026): above that rate events are lost and declared, never
+held without bound. Details in [the registry document](docs/registro-accessi.md).
 
 The registry keeps metadata from Paratia operations and observed kernel events,
 with distinct sources. An open event does not prove a byte read; missing events

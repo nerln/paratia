@@ -74,6 +74,47 @@ seq_num/global_seq_num sono segnalati. Quando questi campi mancano, lo stato
 indica che il rilevamento delle perdite non è disponibile. I diagnostici
 ripetuti vengono aggregati per evitare crescita illimitata e feedback.
 
+### Carico e memoria
+
+Il 27 ottobre 2026 il servizio era arrivato a 24 GB per eslogger e 15 GB per il
+raccoglitore Python, con 42 minuti di ritardo e 14,8 GB di swap. Il raccoglitore
+decodificava più lentamente di quanto eslogger scrivesse, ed eslogger tiene in
+memoria ogni evento non ancora consegnato. Da allora:
+
+- un thread svuota subito la pipe di eslogger in una coda di al massimo 64 MiB;
+  oltre quel limite le righe sono scartate e contate, e il buco nei numeri di
+  sequenza le dichiara come eventi persi;
+- un blocco di righe che non nomina nessuna radice sorvegliata e ha numeri di
+  sequenza globali consecutivi viene contato in una volta sola, senza decodifica;
+  exec, fork, exit e ogni riga incerta passano dal percorso riga per riga. Due
+  righe bastano a fare un blocco: sotto raffica una lettura della pipe ne porta
+  6 o 7;
+- le scritture ripetute di un processo sullo stesso file contano una volta per
+  finestra, e l'I/O di macOS sulle bande dell'immagine non entra nella catena;
+- raccoglitore ed eslogger hanno ciascuno un tetto di 512 MB, controllato ogni
+  mezzo secondo: oltre il tetto il raccoglitore scrive il motivo ed esce con
+  codice 75, e launchd lo riavvia con un eslogger nuovo dopo circa 10 secondi.
+  Per un giorno la salute riporta `memory_restart`.
+
+**Il limite è eslogger.** Misurato il 28 ottobre per thread: il thread di
+eslogger che scrive il JSON gira sempre, a un core pieno, e non aspetta mai la
+pipe; arriva a circa 18.000 eventi al secondo. Oltre quel ritmo nessun lettore
+può svuotarlo. Con 140.000 aperture al secondo da quattro processi eslogger
+cresce di circa 250 MB al secondo, il tetto lo riavvia due volte e per una
+decina di secondi a riavvio il registro ha un buco, dichiarato nella salute.
+Superarlo richiederebbe un client Endpoint Security nativo che filtri le
+cartelle nel kernel, con l'entitlement che Apple concede su richiesta.
+
+`stato.json` riporta, oltre a memoria e ritardo (`memory_mb`,
+`eslogger_memory_mb`, `event_lag_seconds`, `lines_per_second`), i byte letti
+(`raw_bytes`), le righe contate in blocco (`bulk_lines`) e quelle passate una
+per una con il motivo (`fallback_lines`: `short`, `uncertain`, `relevant`,
+`types`, `special`, `run`, `header`, `sequence`, `overlap`).
+
+La ricerca nell'app tiene in memoria solo le 2.500 voci più recenti che mostra
+e conta le altre: su una catena di 245 MB, 35 MB invece di 1,2 GB. L'esportazione
+CSV ordina solo le righe già formattate: 406 MB invece di 1,3 GB per 210.000 voci.
+
 ## Catena e confine root
 
 `catena.py` estende il formato esistente di `fanale.annota`: ogni riga nomina
