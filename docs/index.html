@@ -392,7 +392,7 @@
     </article>
     <article class="card">
       <h3>Two sources, kept apart</h3>
-      <p>The app's own operations, such as opening or closing a protected folder, form one source. Kernel events form the other. They come from eslogger, a command-line tool from Apple that reads Endpoint Security, the macOS framework that reports file and process events to security tools. Apple does not present eslogger as a stable interface.</p>
+      <p>The app's own operations, such as opening or closing a protected folder, form one source. Kernel events form the other. They come from eslogger, a command-line tool from Apple that reads Endpoint Security, the macOS framework that reports file and process events to security tools. Apple does not present eslogger as a stable interface. Above about 18,000 events a second, the most eslogger can write, the registry loses events and says so: a memory cap restarts it instead of letting it grow.</p>
       <p>Each source is a chain: every entry carries a fingerprint (a hash) of the one before it, so an edit inside a chain breaks verification. The app's records belong to your account, so a program running as you can rewrite them. The kernel log is a root-owned file, and your account has read access to it only. Cutting entries off the end is not detected without an outside checkpoint.</p>
     </article>
   </div>

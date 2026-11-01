@@ -134,6 +134,8 @@ Registry records contain metadata only. Paratia annotations and eslogger events
 retain separate sources. An open event does not prove bytes were read; failed
 syscalls do not always emit kernel events. Agent ancestry can remain unknown.
 Do not convert a missing match or an unknown classification into certainty.
+Above about 18,000 events a second (eslogger's own JSON writer, one core) events are
+lost and declared; collector and eslogger have 512 MB memory caps and restart themselves.
 
 The human bank on ~/Desktop/folder-test is not executed. It requires an active registry
 and acknowledged watches. It asks for no destination and no key: it uses a one-time

@@ -392,7 +392,7 @@
     </article>
     <article class="card">
       <h3>Due fonti, tenute separate</h3>
-      <p>Le operazioni della stessa app, come aprire o chiudere una cartella protetta, costituiscono una fonte. Gli eventi del kernel costituiscono l'altra. Provengono da eslogger, uno strumento a riga di comando di Apple che legge Endpoint Security, il framework di macOS che segnala gli eventi di file e processi agli strumenti di sicurezza. Apple non presenta eslogger come un'interfaccia stabile.</p>
+      <p>Le operazioni della stessa app, come aprire o chiudere una cartella protetta, costituiscono una fonte. Gli eventi del kernel costituiscono l'altra. Provengono da eslogger, uno strumento a riga di comando di Apple che legge Endpoint Security, il framework di macOS che segnala gli eventi di file e processi agli strumenti di sicurezza. Apple non presenta eslogger come un'interfaccia stabile. Sopra circa 18.000 eventi al secondo, il massimo che eslogger riesce a scrivere, il registro perde eventi e lo dichiara: un tetto di memoria lo fa ripartire da solo invece di lasciarlo crescere.</p>
       <p>Ogni fonte è una catena: ogni voce porta un'impronta (un hash) della precedente, quindi una modifica dentro la catena fa fallire la verifica. I registri dell'app appartengono al tuo account, quindi un programma che gira come te può riscriverli. Il registro del kernel è un file di proprietà di root, e il tuo account ha solo accesso in lettura. Il troncamento in coda non viene rilevato senza un punto di controllo esterno.</p>
     </article>
   </div>

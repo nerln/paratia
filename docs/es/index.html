@@ -392,7 +392,7 @@
     </article>
     <article class="card">
       <h3>Dos fuentes, separadas</h3>
-      <p>Las operaciones propias de la app, como abrir o cerrar una carpeta protegida, forman una fuente. Los eventos del kernel forman la otra. Vienen de eslogger, una herramienta de línea de comandos de Apple que lee Endpoint Security, el marco de macOS que informa de los eventos de archivos y procesos a las herramientas de seguridad. Apple no presenta eslogger como una interfaz estable.</p>
+      <p>Las operaciones propias de la app, como abrir o cerrar una carpeta protegida, forman una fuente. Los eventos del kernel forman la otra. Vienen de eslogger, una herramienta de línea de comandos de Apple que lee Endpoint Security, el marco de macOS que informa de los eventos de archivos y procesos a las herramientas de seguridad. Apple no presenta eslogger como una interfaz estable. Por encima de unos 18.000 eventos por segundo, lo máximo que eslogger consigue escribir, el registro pierde eventos y lo declara: un tope de memoria lo reinicia en lugar de dejarlo crecer.</p>
       <p>Cada fuente es una cadena: cada entrada lleva una huella (un hash) de la anterior, así que una edición dentro de la cadena rompe la verificación. Los registros de la app pertenecen a tu cuenta, así que un programa que se ejecute como tú puede reescribirlos. El registro del kernel es un archivo propiedad de root, y tu cuenta solo tiene acceso de lectura. Cortar entradas al final no se detecta sin un punto de control externo.</p>
     </article>
   </div>
